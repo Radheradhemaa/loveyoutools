@@ -42,7 +42,7 @@ const svgContent = `<svg viewBox="0 0 800 240" width="800" height="240" xmlns="h
     <text x="0" y="0" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="95" fill="#e60033" letter-spacing="-2">Love</text>
     <text x="0" y="80" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="95" fill="#111827" letter-spacing="-3">You</text>
     <text x="170" y="80" font-family="system-ui, -apple-system, sans-serif" font-weight="500" font-size="95" fill="#8b95a5" letter-spacing="-4">Tools</text>
-    <text x="5" y="115" font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="16" fill="#e60033" letter-spacing="6">SMART WEB UTILITIES PLATFORM</text>
+    <text x="5" y="125" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="26" fill="#e60033" letter-spacing="4">SMART WEB UTILITIES PLATFORM</text>
   </g>
 </svg>`;
 

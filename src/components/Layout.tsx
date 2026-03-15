@@ -41,13 +41,13 @@ export default function Layout() {
       
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white dark:bg-surface/80 backdrop-blur-md border-b border-border shadow-sm">
-        <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+        <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 h-24 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2 group" onClick={() => setSearchQuery('')}>
             <div className="relative flex items-center">
               <img 
                 src="/logo/loveyoutools-logo.svg" 
                 alt="LoveYouTools Logo" 
-                className="h-10 sm:h-12 w-auto object-contain transition-opacity duration-300"
+                className="h-14 sm:h-16 w-auto object-contain transition-opacity duration-300"
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
                   target.style.display = 'none';
@@ -210,7 +210,7 @@ export default function Layout() {
                   <img 
                     src="/logo/loveyoutools-logo.svg" 
                     alt="LoveYouTools Logo" 
-                    className="h-16 w-auto object-contain block"
+                    className="h-24 w-auto object-contain block"
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
                       target.style.display = 'none';
