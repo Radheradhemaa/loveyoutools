@@ -1,0 +1,114 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-bg: var(--color-bg-light);
+  --color-surface: var(--color-surface-light);
+  --color-bg-secondary: var(--color-bg-secondary-light);
+  --color-text-primary: var(--color-text-primary-light);
+  --color-text-secondary: var(--color-text-secondary-light);
+  --color-text-muted: var(--color-text-muted-light);
+  --color-accent: var(--color-accent-light);
+  --color-accent-hover: var(--color-accent-hover-light);
+  --color-border: var(--color-border-light);
+  --color-success: var(--color-success-light);
+}
+
+@layer base {
+  :root {
+    --color-bg-light: #f5f3ef;
+    --color-surface-light: #ffffff;
+    --color-bg-secondary-light: #edeae3;
+    --color-text-primary-light: #18120e;
+    --color-text-secondary-light: #5c5248;
+    --color-text-muted-light: #a09488;
+    --color-accent-light: #e8501a;
+    --color-accent-hover-light: #c94015;
+    --color-border-light: #ddd8ce;
+    --color-success-light: #059669;
+  }
+
+  .dark {
+    --color-bg-light: #100d0a;
+    --color-surface-light: #1a1612;
+    --color-bg-secondary-light: #241f19;
+    --color-text-primary-light: #f5f3ef;
+    --color-text-secondary-light: #a09488;
+    --color-text-muted-light: #5c5248;
+    --color-border-light: #332c24;
+  }
+
+  body {
+    @apply bg-bg text-text-primary font-sans antialiased transition-colors duration-200;
+  }
+}
+
+@layer components {
+  .ws {
+    @apply bg-surface border border-border rounded-[14px] p-7 shadow-sm;
+  }
+  .fg {
+    @apply flex flex-col gap-[7px];
+  }
+  .fl {
+    @apply text-sm font-bold text-text-secondary;
+  }
+  .fi {
+    @apply bg-bg-secondary border border-border rounded-[9px] px-4 py-2.5 text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all;
+  }
+  .fta {
+    @apply bg-bg-secondary border border-border rounded-[9px] px-4 py-2.5 text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all font-mono min-h-[120px] resize-y;
+  }
+  .fsl {
+    @apply bg-bg-secondary border border-border rounded-[9px] px-4 py-2.5 text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all appearance-none bg-no-repeat bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%235c5248%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E')] bg-[position:right_1rem_center] bg-[length:1.2em_1.2em] pr-10;
+  }
+  .frow {
+    @apply grid grid-cols-1 sm:grid-cols-2 gap-4;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center rounded-[9px] px-5 py-2.5 font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn.bp {
+    @apply bg-accent text-white hover:bg-accent-hover shadow-sm hover:shadow-md hover:-translate-y-[1px];
+  }
+  .btn.bs2 {
+    @apply bg-bg-secondary text-text-primary hover:bg-border;
+  }
+  .btn.bg {
+    @apply bg-success text-white hover:bg-emerald-700 shadow-sm hover:shadow-md hover:-translate-y-[1px];
+  }
+  .brow {
+    @apply flex flex-wrap gap-3 mt-4;
+  }
+  .obox {
+    @apply bg-bg-secondary border border-border rounded-[9px] p-4 relative min-h-[60px];
+  }
+  .otxt {
+    @apply font-mono text-sm text-text-primary break-all whitespace-pre-wrap;
+  }
+  .cpb {
+    @apply absolute top-2 right-2 p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-border transition-colors;
+  }
+
+  /* Logo styles */
+  .site-header {
+    @apply sticky top-0 z-50 bg-white dark:bg-surface/80 backdrop-blur-md border-b border-border shadow-sm;
+  }
+
+  .logo {
+    height: 60px;
+    width: auto;
+    object-fit: contain;
+  }
+
+  .logo-container a {
+    display: flex;
+    align-items: center;
+  }
+}
+
+
