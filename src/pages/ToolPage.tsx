@@ -11,6 +11,7 @@ import JsonFormatter from '../tools/JsonFormatter';
 import AgeCalculator from '../tools/AgeCalculator';
 import QrGenerator from '../tools/QrGenerator';
 import ImageCompressor from '../tools/ImageCompressor';
+import PassportPhotoMaker from '../tools/PassportPhotoMaker';
 import GenericTool from '../tools/GenericTool';
 
 // Import unified tools
@@ -78,6 +79,7 @@ export default function ToolPage() {
     if (tool.id === 'json-formatter-validator') return <JsonFormatter />;
     if (tool.id === 'age-calculator') return <AgeCalculator />;
     if (tool.id === 'qr-code-generator') return <QrGenerator />;
+    if (tool.id === 'passport-photo-maker') return <PassportPhotoMaker />;
     if (tool.id === 'image-compressor') return <ImageCompressor />;
     if (tool.id === 'photo-sign-resizer') return <PhotoSignResizer />;
     if (tool.id === 'edit-pdf') return <AdvancedPdfEditor />;
@@ -227,7 +229,7 @@ export default function ToolPage() {
       <nav className="flex items-center gap-2 text-xs sm:text-sm text-text-muted mb-4 sm:mb-6">
         <Link to="/" className="hover:text-accent transition-colors">Home</Link>
         <ChevronRight className="w-3 h-3 sm:w-4 h-4" />
-        <Link to="/" onClick={() => window.dispatchEvent(new CustomEvent('filter-category', { detail: tool.c }))} className="hover:text-accent transition-colors">
+        <Link to={`/?c=${tool.c}`} className="hover:text-accent transition-colors">
           {category?.name}
         </Link>
         <ChevronRight className="w-3 h-3 sm:w-4 h-4" />
