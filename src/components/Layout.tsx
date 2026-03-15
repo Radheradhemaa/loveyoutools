@@ -45,18 +45,14 @@ export default function Layout() {
           <Link to="/" className="flex items-center gap-2 group" onClick={() => setSearchQuery('')}>
             <div className="relative flex items-center">
               <img 
-                src="/logo-transparent.png" 
-                alt="LoveYouTools" 
+                src="/logo/loveyoutools-logo.svg" 
+                alt="LoveYouTools Logo" 
                 className="h-10 sm:h-12 w-auto object-contain transition-opacity duration-300"
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
-                  if (target.src.includes('logo-transparent.png')) {
-                    target.src = '/logo/logo-512.png';
-                  } else {
-                    target.style.display = 'none';
-                    const fallback = target.parentElement?.querySelector('.logo-fallback');
-                    if (fallback) fallback.classList.remove('hidden');
-                  }
+                  target.style.display = 'none';
+                  const fallback = target.parentElement?.querySelector('.logo-fallback');
+                  if (fallback) fallback.classList.remove('hidden');
                 }}
               />
               <span className="logo-fallback hidden font-black text-2xl sm:text-3xl tracking-tighter text-accent">
@@ -212,18 +208,14 @@ export default function Layout() {
               <Link to="/" className="flex items-center mb-6" onClick={() => setSearchQuery('')}>
                 <div className="relative flex items-center">
                   <img 
-                    src="/logo-transparent.png" 
-                    alt="LoveYouTools" 
+                    src="/logo/loveyoutools-logo.svg" 
+                    alt="LoveYouTools Logo" 
                     className="h-16 w-auto object-contain block"
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
-                      if (target.src.includes('logo-transparent.png')) {
-                        target.src = '/logo/logo-512.png';
-                      } else {
-                        target.style.display = 'none';
-                        const fallback = target.parentElement?.querySelector('.logo-fallback-footer');
-                        if (fallback) fallback.classList.remove('hidden');
-                      }
+                      target.style.display = 'none';
+                      const fallback = target.parentElement?.querySelector('.logo-fallback-footer');
+                      if (fallback) fallback.classList.remove('hidden');
                     }}
                   />
                   <span className="logo-fallback-footer hidden font-black text-3xl tracking-tighter text-accent">
