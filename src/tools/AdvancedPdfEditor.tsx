@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Upload, Download, ZoomIn, ZoomOut, MousePointer2, Type as TextIcon, Square, Circle as CircleIcon, Highlighter, Eraser, PenTool, Image as ImageIcon, ChevronLeft, ChevronRight, CheckSquare, Trash2, Settings, Search, X } from 'lucide-react';
+import { Upload, Download, ZoomIn, ZoomOut, MousePointer2, Type as TextIcon, Square, Circle as CircleIcon, Highlighter, Eraser, PenTool, Image as ImageIcon, ChevronLeft, ChevronRight, CheckSquare, Trash2, Settings, Search, X, Undo, Redo, Pipette } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import { Canvas, IText, Rect, Circle, Path, Image as FabricImage, StaticCanvas, Text as FabricText } from 'fabric';
 import { PDFDocument, rgb, degrees } from 'pdf-lib';
@@ -57,6 +57,12 @@ export default function AdvancedPdfEditor() {
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [thumbnails, setThumbnails] = useState<string[]>([]);
   
+  // History state for Undo/Redo
+  const historyRef = useRef<Record<number, any>[]>([]);
+  const historyIndexRef = useRef<number>(-1);
+  const isHistoryAction = useRef(false);
+  const [historyState, setHistoryState] = useState({ index: -1, length: 0 });
+  
   // Password handling
   const [needsPassword, setNeedsPassword] = useState(false);
   const [password, setPassword] = useState('');
@@ -71,6 +77,9 @@ export default function AdvancedPdfEditor() {
       setPageData({});
       isInitialRender.current = {};
       setThumbnails([]);
+      historyRef.current = [];
+      historyIndexRef.current = -1;
+      setHistoryState({ index: -1, length: 0 });
       await loadPdf(selectedFile);
     }
   };
@@ -246,12 +255,34 @@ export default function AdvancedPdfEditor() {
             
             textObj.on('editing:entered', () => {
               if (textObj.fill === 'transparent') {
+                let maskColor = textObj.get('data')?.maskColor || 'white';
+                
+                // Auto-detect background color from the PDF canvas
+                if (!textObj.get('data')?.maskColor && canvasRef.current) {
+                  try {
+                    const ctx = canvasRef.current.getContext('2d');
+                    if (ctx) {
+                      // Sample a pixel slightly above the text to avoid hitting the text itself
+                      const x = Math.max(0, textObj.left || 0);
+                      const y = Math.max(0, (textObj.top || 0) - 2);
+                      const pixel = ctx.getImageData(x, y, 1, 1).data;
+                      // Only use if it's not fully transparent
+                      if (pixel[3] > 0) {
+                        maskColor = `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
+                        textObj.set('data', { ...textObj.get('data'), maskColor });
+                      }
+                    }
+                  } catch (e) {
+                    console.error('Could not auto-detect background color', e);
+                  }
+                }
+
                 const mask = new Rect({
                   left: textObj.left,
                   top: textObj.top,
                   width: textObj.width,
                   height: textObj.height,
-                  fill: textObj.get('data')?.maskColor || 'white',
+                  fill: maskColor,
                   selectable: false,
                   evented: false,
                   data: { isMask: true, parentId: textId }
@@ -297,10 +328,58 @@ export default function AdvancedPdfEditor() {
 
   const savePageState = () => {
     if (fabricRef.current) {
-      setPageData(prev => ({
-        ...prev,
-        [pageNum]: fabricRef.current?.toJSON(['data', 'selectable', 'evented', 'hasBorders', 'hasControls'])
-      }));
+      const json = fabricRef.current.toJSON(['data', 'selectable', 'evented', 'hasBorders', 'hasControls']);
+      setPageData(prev => {
+        const newData = { ...prev, [pageNum]: json };
+        
+        if (!isHistoryAction.current) {
+          const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+          newHistory.push(newData);
+          historyRef.current = newHistory;
+          historyIndexRef.current = newHistory.length - 1;
+          setHistoryState({ index: historyIndexRef.current, length: historyRef.current.length });
+        }
+        
+        return newData;
+      });
+    }
+  };
+
+  const undo = async () => {
+    if (historyIndexRef.current > 0) {
+      isHistoryAction.current = true;
+      const newIndex = historyIndexRef.current - 1;
+      historyIndexRef.current = newIndex;
+      setHistoryState({ index: newIndex, length: historyRef.current.length });
+      
+      const previousState = historyRef.current[newIndex];
+      setPageData(previousState);
+      
+      if (previousState[pageNum] && fabricRef.current) {
+        await fabricRef.current.loadFromJSON(previousState[pageNum]);
+        fabricRef.current.renderAll();
+      }
+      
+      setTimeout(() => { isHistoryAction.current = false; }, 100);
+    }
+  };
+
+  const redo = async () => {
+    if (historyIndexRef.current < historyRef.current.length - 1) {
+      isHistoryAction.current = true;
+      const newIndex = historyIndexRef.current + 1;
+      historyIndexRef.current = newIndex;
+      setHistoryState({ index: newIndex, length: historyRef.current.length });
+      
+      const nextState = historyRef.current[newIndex];
+      setPageData(nextState);
+      
+      if (nextState[pageNum] && fabricRef.current) {
+        await fabricRef.current.loadFromJSON(nextState[pageNum]);
+        fabricRef.current.renderAll();
+      }
+      
+      setTimeout(() => { isHistoryAction.current = false; }, 100);
     }
   };
 
@@ -507,12 +586,32 @@ export default function AdvancedPdfEditor() {
           // If it was transparent (original text), make it visible and add mask
           if (obj.fill === 'transparent') {
             const textId = obj.get('data')?.id;
+            let maskColor = obj.get('data')?.maskColor || 'white';
+            
+            // Auto-detect background color from the PDF canvas
+            if (!obj.get('data')?.maskColor && canvasRef.current) {
+              try {
+                const ctx = canvasRef.current.getContext('2d');
+                if (ctx) {
+                  const x = Math.max(0, obj.left || 0);
+                  const y = Math.max(0, (obj.top || 0) - 2);
+                  const pixel = ctx.getImageData(x, y, 1, 1).data;
+                  if (pixel[3] > 0) {
+                    maskColor = `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
+                    obj.set('data', { ...obj.get('data'), maskColor });
+                  }
+                }
+              } catch (e) {
+                console.error('Could not auto-detect background color', e);
+              }
+            }
+
             const mask = new Rect({
               left: obj.left,
               top: obj.top,
               width: obj.width,
               height: obj.height,
-              fill: obj.get('data')?.maskColor || 'white',
+              fill: maskColor,
               selectable: false,
               evented: false,
               data: { isMask: true, parentId: textId }
@@ -792,6 +891,23 @@ export default function AdvancedPdfEditor() {
         <div className="bg-surface border-b border-border p-2 flex items-center justify-between gap-2 overflow-x-auto">
           <div className="flex items-center gap-1">
             <button 
+              onClick={undo}
+              disabled={historyState.index <= 0}
+              className={`p-2 rounded-lg transition-all ${historyState.index <= 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-bg-secondary text-text-primary'}`}
+              title="Undo"
+            >
+              <Undo size={18} />
+            </button>
+            <button 
+              onClick={redo}
+              disabled={historyState.index >= historyState.length - 1}
+              className={`p-2 rounded-lg transition-all ${historyState.index >= historyState.length - 1 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-bg-secondary text-text-primary'}`}
+              title="Redo"
+            >
+              <Redo size={18} />
+            </button>
+            <div className="w-px h-6 bg-border mx-1"></div>
+            <button 
               onClick={() => setActiveTool('select')}
               className={`p-2 rounded-lg transition-all ${activeTool === 'select' ? 'bg-accent text-white shadow-sm' : 'hover:bg-bg-secondary'}`}
               title="Select"
@@ -995,32 +1111,82 @@ export default function AdvancedPdfEditor() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] text-text-muted uppercase">Text Color</label>
-                    <input 
-                      type="color" 
-                      value={typeof selectedObject.fill === 'string' ? rgbToHex(selectedObject.fill) : '#000000'}
-                      onChange={e => updateSelectedObject({ fill: e.target.value })}
-                      className="w-full h-8 rounded cursor-pointer"
-                    />
+                    <div className="flex gap-2">
+                      <input 
+                        type="color" 
+                        value={typeof selectedObject.fill === 'string' ? rgbToHex(selectedObject.fill) : '#000000'}
+                        onChange={e => updateSelectedObject({ fill: e.target.value })}
+                        className="w-full h-8 rounded cursor-pointer"
+                      />
+                      {/* @ts-ignore */}
+                      {window.EyeDropper && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              // @ts-ignore
+                              const eyeDropper = new window.EyeDropper();
+                              const result = await eyeDropper.open();
+                              updateSelectedObject({ fill: result.sRGBHex });
+                            } catch (e) {
+                              console.log('EyeDropper cancelled');
+                            }
+                          }}
+                          className="p-1.5 bg-bg-secondary rounded border border-border hover:bg-surface flex-shrink-0"
+                          title="Pick color from PDF"
+                        >
+                          <Pipette size={16} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {selectedObject.get('data')?.isOriginal && (
                     <div className="space-y-2">
                       <label className="text-[10px] text-text-muted uppercase">Mask Color (Background)</label>
-                      <input 
-                        type="color" 
-                        value={selectedObject.get('data')?.maskColor || '#ffffff'}
-                        onChange={e => {
-                          const data = selectedObject.get('data');
-                          updateSelectedObject({ data: { ...data, maskColor: e.target.value } });
-                          // Find existing mask and update it
-                          const objects = fabricRef.current?.getObjects();
-                          const mask = objects?.find(o => o.get('data')?.isMask && o.get('data')?.parentId === selectedObject.get('data')?.id);
-                          if (mask) {
-                            mask.set('fill', e.target.value);
-                            fabricRef.current?.renderAll();
-                          }
-                        }}
-                        className="w-full h-8 rounded cursor-pointer"
-                      />
+                      <div className="flex gap-2">
+                        <input 
+                          type="color" 
+                          value={selectedObject.get('data')?.maskColor || '#ffffff'}
+                          onChange={e => {
+                            const data = selectedObject.get('data');
+                            updateSelectedObject({ data: { ...data, maskColor: e.target.value } });
+                            // Find existing mask and update it
+                            const objects = fabricRef.current?.getObjects();
+                            const mask = objects?.find(o => o.get('data')?.isMask && o.get('data')?.parentId === selectedObject.get('data')?.id);
+                            if (mask) {
+                              mask.set('fill', e.target.value);
+                              fabricRef.current?.renderAll();
+                            }
+                          }}
+                          className="w-full h-8 rounded cursor-pointer"
+                        />
+                        {/* @ts-ignore */}
+                        {window.EyeDropper && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                // @ts-ignore
+                                const eyeDropper = new window.EyeDropper();
+                                const result = await eyeDropper.open();
+                                const newColor = result.sRGBHex;
+                                const data = selectedObject.get('data');
+                                updateSelectedObject({ data: { ...data, maskColor: newColor } });
+                                const objects = fabricRef.current?.getObjects();
+                                const mask = objects?.find(o => o.get('data')?.isMask && o.get('data')?.parentId === selectedObject.get('data')?.id);
+                                if (mask) {
+                                  mask.set('fill', newColor);
+                                  fabricRef.current?.renderAll();
+                                }
+                              } catch (e) {
+                                console.log('EyeDropper cancelled');
+                              }
+                            }}
+                            className="p-1.5 bg-bg-secondary rounded border border-border hover:bg-surface flex-shrink-0"
+                            title="Pick color from PDF"
+                          >
+                            <Pipette size={16} />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </>
