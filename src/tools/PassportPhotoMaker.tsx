@@ -522,7 +522,7 @@ export default function PassportPhotoMaker() {
       );
     }
 
-    // CSS-based preview for multiple copies
+    // Exact proportional preview for multiple copies
     const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
     const isA4 = printLayout === 'a4';
     
@@ -537,28 +537,42 @@ export default function PassportPhotoMaker() {
     const cols = Math.floor((sheetWidthMm - marginMm) / (photoWidthMm + marginMm));
     const rows = Math.floor((sheetHeightMm - marginMm) / (photoHeightMm + marginMm));
     
+    const startXMm = (sheetWidthMm - (cols * photoWidthMm + (cols - 1) * marginMm)) / 2;
+    const startYMm = (sheetHeightMm - (rows * photoHeightMm + (rows - 1) * marginMm)) / 2;
+    
     const totalPhotos = cols * rows;
+    
+    // Scale for preview (e.g., 2 pixels per mm for A4, 3 for 4x6)
+    const scale = isA4 ? 2 : 3.5;
     
     return (
       <div className="w-full h-full flex flex-col items-center justify-center overflow-auto p-4 bg-gray-100">
         <div 
           className="bg-white shadow-xl relative"
           style={{
-            width: isA4 ? '420px' : '300px', // Scaled down for preview
-            height: isA4 ? '594px' : '450px',
-            padding: '20px',
-            display: 'grid',
-            gridTemplateColumns: `repeat(${cols}, 1fr)`,
-            gridTemplateRows: `repeat(${rows}, 1fr)`,
-            gap: '10px',
-            alignContent: 'center',
-            justifyContent: 'center'
+            width: `${sheetWidthMm * scale}px`,
+            height: `${sheetHeightMm * scale}px`,
           }}
         >
-          {Array.from({ length: totalPhotos }).map((_, i) => (
-            <div key={i} className="border border-gray-300 flex items-center justify-center p-1">
-              <img src={finalImageSrc} alt={`Copy ${i+1}`} className="w-full h-full object-cover" />
-            </div>
+          {Array.from({ length: rows }).map((_, r) => (
+            Array.from({ length: cols }).map((_, c) => {
+              const x = startXMm + c * (photoWidthMm + marginMm);
+              const y = startYMm + r * (photoHeightMm + marginMm);
+              return (
+                <div 
+                  key={`${r}-${c}`} 
+                  className="absolute border border-gray-300 p-[1px] bg-white flex items-center justify-center"
+                  style={{
+                    left: `${(x / sheetWidthMm) * 100}%`,
+                    top: `${(y / sheetHeightMm) * 100}%`,
+                    width: `${(photoWidthMm / sheetWidthMm) * 100}%`,
+                    height: `${(photoHeightMm / sheetHeightMm) * 100}%`,
+                  }}
+                >
+                  <img src={finalImageSrc} alt={`Copy`} className="w-full h-full object-fill" />
+                </div>
+              );
+            })
           ))}
         </div>
         <div className="mt-4 text-sm text-text-muted font-medium">
