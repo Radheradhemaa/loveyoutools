@@ -88,14 +88,14 @@ export default function PassportPhotoMaker() {
     if (selectedPreset.id !== 'free') {
       const aspect = selectedPreset.width / selectedPreset.height;
       const initialCrop = centerCrop(
-        makeAspectCrop({ unit: '%', width: 90 }, aspect, width, height),
+        makeAspectCrop({ unit: '%', width: 50 }, aspect, width, height),
         width,
         height
       );
       setCrop(initialCrop);
     } else {
       const initialCrop = centerCrop(
-        makeAspectCrop({ unit: '%', width: 90 }, 1, width, height),
+        makeAspectCrop({ unit: '%', width: 50 }, 1, width, height),
         width,
         height
       );
@@ -108,7 +108,7 @@ export default function PassportPhotoMaker() {
       const { width, height } = imgRef.current;
       const aspect = selectedPreset.width / selectedPreset.height;
       const initialCrop = centerCrop(
-        makeAspectCrop({ unit: '%', width: 90 }, aspect, width, height),
+        makeAspectCrop({ unit: '%', width: 50 }, aspect, width, height),
         width,
         height
       );
@@ -152,58 +152,25 @@ export default function PassportPhotoMaker() {
     setStep('process');
     setFinalImageSrc(null);
     setIsEraserMode(false);
-    
-    // Automatically trigger background removal for a faster workflow
-    processBackgroundRemoval(croppedDataUrl);
   };
 
   const processBackgroundRemoval = async (imgSrc: string) => {
     setIsProcessing(true);
-    setProgress(5);
-    setStatusText('AI Analysis...');
+    setProgress(10);
+    setStatusText('Removing background (AI Processing)...');
     setIsEraserMode(false);
 
     try {
-      // 1. Resize image to a reasonable size for 2-second processing
-      // Passport photos don't need 4K resolution for background removal
-      const img = new Image();
-      await new Promise((resolve) => {
-        img.onload = resolve;
-        img.src = imgSrc;
-      });
-
-      const maxDim = 800; // Optimized for speed
-      let width = img.width;
-      let height = img.height;
-      if (width > maxDim || height > maxDim) {
-        if (width > height) {
-          height = (height / width) * maxDim;
-          width = maxDim;
-        } else {
-          width = (width / height) * maxDim;
-          height = maxDim;
-        }
-      }
-
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx?.drawImage(img, 0, 0, width, height);
+      // Convert the cropped data URL directly to a Blob
+      const res = await fetch(imgSrc);
+      const blob = await res.blob();
       
-      const resizedBlob = await new Promise<Blob>((resolve) => 
-        canvas.toBlob((b) => resolve(b!), 'image/png')
-      );
-
-      setStatusText('Removing background...');
-      setProgress(20);
-      
-      // 2. Use faster model
-      const bgRemovedBlob = await removeBackground(resizedBlob, {
-        model: 'isnet', // Fast and compatible model
+      // High quality background removal
+      const bgRemovedBlob = await removeBackground(blob, {
+        model: 'isnet_fp16', // Use high quality model for clean edges
         progress: (key, current, total) => {
           if (total > 0) {
-            setProgress(20 + Math.round((current / total) * 70));
+            setProgress(10 + Math.round((current / total) * 80));
           }
         }
       });
@@ -211,8 +178,6 @@ export default function PassportPhotoMaker() {
       const reader = new FileReader();
       reader.onloadend = () => {
         const dataUrl = reader.result as string;
-        
-        // Update history and current image
         const newHistory = history.slice(0, historyIndex + 1);
         newHistory.push(dataUrl);
         setHistory(newHistory);
@@ -223,7 +188,7 @@ export default function PassportPhotoMaker() {
         
         setProgress(100);
         setStatusText('Done!');
-        setTimeout(() => setIsProcessing(false), 300);
+        setTimeout(() => setIsProcessing(false), 500);
       };
       reader.readAsDataURL(bgRemovedBlob);
       
@@ -499,13 +464,13 @@ export default function PassportPhotoMaker() {
       // Pass 3: Sharpening & Contrast (Excellent Photo Quality)
       // Makes the photo look crisp and professional
       const sharpenedData = new Uint8ClampedArray(data);
-      const amount = 0.6; // Studio-grade sharpening
-      const contrast = 1.12; // 12% contrast boost for premium look
+      const amount = 0.5; // Sharpening intensity
+      const contrast = 1.08; // 8% contrast boost for "pop"
       
       for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
           const idx = (y * width + x) * 4;
-          if (data[idx + 3] < 5) continue;
+          if (data[idx + 3] < 10) continue;
 
           for (let c = 0; c < 3; c++) {
             // 1. Sharpen (Unsharp Mask)
@@ -641,8 +606,8 @@ export default function PassportPhotoMaker() {
     
     if (printLayout === 'single') {
       return (
-        <div className="relative shadow-xl rounded-sm overflow-hidden max-h-full max-w-full flex items-center justify-center bg-white p-4 sm:p-8">
-          <img src={finalImageSrc} alt="Single Print" className="max-h-[60vh] sm:max-h-[80vh] object-contain shadow-md" />
+        <div className="relative shadow-xl rounded-sm overflow-hidden max-h-full max-w-full flex items-center justify-center bg-white p-4">
+          <img src={finalImageSrc} alt="Single Print" className="max-h-[50vh] sm:max-h-[60vh] object-contain" />
         </div>
       );
     }
@@ -669,12 +634,12 @@ export default function PassportPhotoMaker() {
     
     // Scale for preview - use a container-relative scale
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center overflow-auto p-4 sm:p-8 bg-gray-100 min-h-[450px]">
+      <div className="w-full h-full flex flex-col items-center justify-center overflow-auto p-2 sm:p-4 bg-gray-100 min-h-[400px]">
         <div 
-          className="bg-white shadow-2xl relative mx-auto"
+          className="bg-white shadow-xl relative mx-auto"
           style={{
             width: '100%',
-            maxWidth: isA4 ? '500px' : '400px',
+            maxWidth: isA4 ? '400px' : '320px',
             aspectRatio: `${sheetWidthMm} / ${sheetHeightMm}`,
           }}
         >
@@ -708,7 +673,7 @@ export default function PassportPhotoMaker() {
   };
 
   return (
-    <div className="flex flex-col min-h-[600px] lg:h-[calc(100vh-6rem)]">
+    <div className="flex flex-col min-h-[500px] lg:h-[calc(100vh-12rem)]">
       {/* Stepper Header */}
       <div className="flex items-center justify-between mb-4 sm:mb-6 bg-surface p-3 sm:p-4 rounded-2xl border border-border overflow-x-auto no-scrollbar">
         <div className={`flex items-center gap-2 shrink-0 ${step === 'upload' ? 'text-accent font-bold' : 'text-text-muted'}`}>
@@ -770,7 +735,7 @@ export default function PassportPhotoMaker() {
                       src={imageSrc} 
                       alt="Upload" 
                       onLoad={onImageLoad}
-                      className="max-w-full max-h-full object-contain shadow-lg"
+                      className="max-w-full max-h-[50vh] sm:max-h-[70vh] object-contain"
                     />
                   </ReactCrop>
                 </div>
@@ -779,13 +744,11 @@ export default function PassportPhotoMaker() {
 
             {/* STEP 3: PROCESS */}
             {step === 'process' && (
-              <div className="relative w-full h-full flex items-center justify-center p-4 sm:p-8">
+              <div className="relative w-full h-full flex items-center justify-center p-2 sm:p-4">
                 <div 
-                  className="relative shadow-2xl rounded-sm overflow-hidden flex items-center justify-center bg-white" 
+                  className="relative shadow-2xl rounded-sm overflow-hidden" 
                   style={{
                     aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : 'auto',
-                    height: 'auto',
-                    width: 'auto',
                     maxHeight: '100%',
                     maxWidth: '100%',
                     backgroundColor: bgColor === 'custom' ? customColor : (bgColor !== 'transparent' ? bgColor : 'transparent'),
@@ -796,8 +759,7 @@ export default function PassportPhotoMaker() {
                     <div className="relative w-full h-full group overflow-hidden">
                       <canvas
                         ref={eraserCanvasRef}
-                        className="w-full h-full object-contain cursor-none touch-none"
-                        style={{ maxHeight: '100%', maxWidth: '100%' }}
+                        className="w-full h-full object-contain cursor-none touch-none max-h-[50vh] sm:max-h-full"
                         onMouseDown={startDrawing}
                         onMouseMove={draw}
                         onMouseUp={stopDrawing}
@@ -831,9 +793,9 @@ export default function PassportPhotoMaker() {
                       )}
                     </div>
                   ) : finalImageSrc ? (
-                    <img src={finalImageSrc} alt="Processed" className="w-full h-full object-contain" style={{ maxHeight: '100%', maxWidth: '100%' }} />
+                    <img src={finalImageSrc} alt="Processed" className="w-full h-full object-contain max-h-[50vh] sm:max-h-full" />
                   ) : croppedImageSrc ? (
-                    <img src={croppedImageSrc} alt="Cropped Preview" className="w-full h-full object-contain" style={{ maxHeight: '100%', maxWidth: '100%' }} />
+                    <img src={croppedImageSrc} alt="Cropped Preview" className="w-full h-full object-contain max-h-[50vh] sm:max-h-full" />
                   ) : null}
                 </div>
 
