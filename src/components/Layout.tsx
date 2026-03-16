@@ -37,17 +37,29 @@ export default function Layout() {
         title="LoveYouTools - Free Online Tools Hub" 
         description="Free Online Tools to Simplify Your Digital Tasks – Fast, Smart & Reliable."
         url={typeof window !== 'undefined' ? window.location.href : ''}
+        schema={{
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          "name": "LoveYouTools",
+          "url": "https://loveyou.tools/",
+          "logo": "https://loveyou.tools/loveyoutools-logo.png",
+          "sameAs": [
+            "https://twitter.com/loveyoutools",
+            "https://github.com/loveyoutools"
+          ]
+        }}
       />
       
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white dark:bg-surface/80 backdrop-blur-md border-b border-border shadow-sm">
-        <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 h-28 flex items-center justify-between">
+        <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 h-32 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2 group" onClick={() => setSearchQuery('')}>
             <div className="relative flex items-center">
               <img 
-                src="/logo/loveyoutools-logo.svg" 
+                src="/loveyoutools-logo.png?v=5" 
                 alt="LoveYouTools Logo" 
-                className="h-16 sm:h-20 w-auto object-contain transition-opacity duration-300"
+                loading="eager"
+                className="h-20 md:h-24 w-auto object-contain transition-all duration-300 hover:scale-105"
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
                   target.style.display = 'none';
@@ -208,9 +220,10 @@ export default function Layout() {
               <Link to="/" className="flex items-center mb-6" onClick={() => setSearchQuery('')}>
                 <div className="relative flex items-center">
                   <img 
-                    src="/logo/loveyoutools-logo.svg" 
+                    src="/loveyoutools-logo.png?v=5" 
                     alt="LoveYouTools Logo" 
-                    className="h-32 w-auto object-contain block"
+                    loading="lazy"
+                    className="h-20 w-auto object-contain mb-4"
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
                       target.style.display = 'none';

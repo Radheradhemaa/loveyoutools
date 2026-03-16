@@ -5,12 +5,12 @@ import pngToIco from 'png-to-ico';
 const svgContent = `<svg viewBox="0 0 800 240" width="800" height="240" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <radialGradient id="heartGrad" cx="35%" cy="30%" r="75%">
-      <stop offset="0%" stop-color="#ff4b6b" />
-      <stop offset="40%" stop-color="#e60033" />
-      <stop offset="100%" stop-color="#99001a" />
+      <stop offset="0%" stop-color="#ff8a65" />
+      <stop offset="40%" stop-color="#e8501a" />
+      <stop offset="100%" stop-color="#bf360c" />
     </radialGradient>
     <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
-      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#99001a" flood-opacity="0.25"/>
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#bf360c" flood-opacity="0.25"/>
     </filter>
   </defs>
   
@@ -39,19 +39,19 @@ const svgContent = `<svg viewBox="0 0 800 240" width="800" height="240" xmlns="h
 
   <!-- Text -->
   <g transform="translate(240, 115)">
-    <text x="0" y="0" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="95" fill="#e60033" letter-spacing="-2">Love</text>
+    <text x="0" y="0" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="95" fill="#e8501a" letter-spacing="-2">Love</text>
     <text x="0" y="80" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="95" fill="#111827" letter-spacing="-3">You</text>
     <text x="170" y="80" font-family="system-ui, -apple-system, sans-serif" font-weight="500" font-size="95" fill="#8b95a5" letter-spacing="-4">Tools</text>
-    <text x="5" y="125" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="26" fill="#e60033" letter-spacing="4">SMART WEB UTILITIES PLATFORM</text>
+    <text x="5" y="125" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="26" fill="#e8501a" letter-spacing="4">SMART WEB UTILITY PLATFORM</text>
   </g>
 </svg>`;
 
 const squareSvgContent = `<svg viewBox="0 0 240 240" width="240" height="240" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <radialGradient id="heartGrad" cx="35%" cy="30%" r="75%">
-      <stop offset="0%" stop-color="#ff4b6b" />
-      <stop offset="40%" stop-color="#e60033" />
-      <stop offset="100%" stop-color="#99001a" />
+      <stop offset="0%" stop-color="#ff8a65" />
+      <stop offset="40%" stop-color="#e8501a" />
+      <stop offset="100%" stop-color="#bf360c" />
     </radialGradient>
   </defs>
   <g transform="translate(25, 40)">
