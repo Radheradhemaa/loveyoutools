@@ -49,8 +49,9 @@ export default function PassportPhotoMaker() {
   const [selectedPreset, setSelectedPreset] = useState<Preset>(PRESETS[1]); // Default to India
   const [bgColor, setBgColor] = useState(COLORS[0].value);
   const [customColor, setCustomColor] = useState('#ffffff');
-  const [edgeCleanup, setEdgeCleanup] = useState(180); // Very aggressive default to remove all stray hairs
+  const [edgeCleanup, setEdgeCleanup] = useState(160); // Balanced default for hair
   const [printLayout, setPrintLayout] = useState<'single' | 'a4' | '4x6'>('single');
+  const [hasBorder, setHasBorder] = useState(true);
   
   // Processing states
   const [isProcessing, setIsProcessing] = useState(false);
@@ -61,6 +62,7 @@ export default function PassportPhotoMaker() {
   const [isEraserMode, setIsEraserMode] = useState(false);
   const [eraserSize, setEraserSize] = useState(20);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [cursorPos, setCursorPos] = useState<{x: number, y: number} | null>(null);
   const eraserCanvasRef = useRef<HTMLCanvasElement>(null);
   const lastPos = useRef<{x: number, y: number} | null>(null);
   const [history, setHistory] = useState<string[]>([]);
@@ -155,7 +157,7 @@ export default function PassportPhotoMaker() {
   const processBackgroundRemoval = async (imgSrc: string) => {
     setIsProcessing(true);
     setProgress(10);
-    setStatusText('Removing background (High Quality)...');
+    setStatusText('Removing background (AI Processing)...');
     setIsEraserMode(false);
 
     try {
@@ -220,6 +222,19 @@ export default function PassportPhotoMaker() {
     const pos = getPos(e);
     lastPos.current = pos;
     
+    // Update cursor position for preview
+    if ('clientX' in e || 'touches' in e) {
+      let clientX, clientY;
+      if ('touches' in e) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+      setCursorPos({ x: clientX, y: clientY });
+    }
+    
     const ctx = eraserCanvasRef.current?.getContext('2d');
     if (ctx) {
       ctx.globalCompositeOperation = 'destination-out';
@@ -230,8 +245,22 @@ export default function PassportPhotoMaker() {
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isDrawing || !lastPos.current) return;
     const pos = getPos(e);
+    
+    // Update cursor position for preview
+    if ('clientX' in e || 'touches' in e) {
+      let clientX, clientY;
+      if ('touches' in e) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+      setCursorPos({ x: clientX, y: clientY });
+    }
+
+    if (!isDrawing || !lastPos.current) return;
     
     const ctx = eraserCanvasRef.current?.getContext('2d');
     if (ctx) {
@@ -326,7 +355,7 @@ export default function PassportPhotoMaker() {
       // 1. Draw the raw background-removed image
       ctx.drawImage(img, 0, 0);
       
-      // 2. Defringe and Erode (Remove color halos and smooth edges)
+      // 2. Color Decontamination, Edge Darkening & Sharpening
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
       const width = canvas.width;
@@ -337,12 +366,65 @@ export default function PassportPhotoMaker() {
         originalAlpha[i] = data[i * 4 + 3];
       }
 
-      // Calculate erosion radius based on edgeCleanup slider
-      // 0-50: 0px, 51-100: 1px, 101-150: 2px, 151-200: 3px, 201-250: 4px
-      const radius = Math.floor(edgeCleanup / 50); 
-      const cutoff = edgeCleanup;
+      // Pass 1: Advanced Color Decontamination & Edge Darkening
+      // Specifically targets white halos in dark hair
+      const processedData = new Uint8ClampedArray(data);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = (y * width + x) * 4;
+          const a = data[idx + 3];
 
-      // First pass: Erode the mask
+          if (a > 0 && a < 250) {
+            let sumR = 0, sumG = 0, sumB = 0, weightSum = 0;
+            const searchRadius = 3;
+            
+            for (let dy = -searchRadius; dy <= searchRadius; dy++) {
+              for (let dx = -searchRadius; dx <= searchRadius; dx++) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                  const nIdx = (ny * width + nx) * 4;
+                  const nAlpha = data[nIdx + 3];
+                  if (nAlpha > 240) {
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const weight = 1 / (1 + dist);
+                    sumR += data[nIdx] * weight;
+                    sumG += data[nIdx + 1] * weight;
+                    sumB += data[nIdx + 2] * weight;
+                    weightSum += weight;
+                  }
+                }
+              }
+            }
+
+            if (weightSum > 0) {
+              let r = sumR / weightSum;
+              let g = sumG / weightSum;
+              let b = sumB / weightSum;
+
+              // Edge Darkening: If the nearby color is dark (hair), darken the semi-transparent pixel
+              // to aggressively kill any white glow from the original background
+              const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+              if (brightness < 80) { // Dark hair threshold
+                const darkenFactor = 0.85;
+                r *= darkenFactor;
+                g *= darkenFactor;
+                b *= darkenFactor;
+              }
+
+              processedData[idx] = r;
+              processedData[idx + 1] = g;
+              processedData[idx + 2] = b;
+            }
+          }
+        }
+      }
+      data.set(processedData);
+
+      // Pass 2: Erode & Smooth Mask
+      const radius = Math.floor(edgeCleanup / 70); 
+      const cutoff = Math.max(2, edgeCleanup - 140);
+
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const alphaIdx = y * width + x;
@@ -362,7 +444,7 @@ export default function PassportPhotoMaker() {
                 
                 for (let ny = minY; ny <= maxY; ny++) {
                   for (let nx = minX; nx <= maxX; nx++) {
-                    if (originalAlpha[ny * width + nx] < cutoff) {
+                    if (originalAlpha[ny * width + nx] < 30) {
                       erode = true;
                       break;
                     }
@@ -372,47 +454,46 @@ export default function PassportPhotoMaker() {
               }
               
               if (erode) {
-                data[idx + 3] = 0;
-              } else {
-                data[idx + 3] = 255; // Solidify the inside
+                data[idx + 3] = a * 0.25; 
               }
             }
           }
         }
       }
 
-      // Second pass: Anti-alias the newly eroded hard edges
-      const erodedAlpha = new Uint8Array(width * height);
-      for (let i = 0; i < width * height; i++) {
-        erodedAlpha[i] = data[i * 4 + 3];
-      }
-
+      // Pass 3: Sharpening & Contrast (Excellent Photo Quality)
+      // Makes the photo look crisp and professional
+      const sharpenedData = new Uint8ClampedArray(data);
+      const amount = 0.5; // Sharpening intensity
+      const contrast = 1.08; // 8% contrast boost for "pop"
+      
       for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
-          const alphaIdx = y * width + x;
-          const idx = alphaIdx * 4;
-          
-          let sum = 0;
-          let hasZero = false;
-          let hasFull = false;
-          
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const a = erodedAlpha[(y + dy) * width + (x + dx)];
-              sum += a;
-              if (a === 0) hasZero = true;
-              if (a === 255) hasFull = true;
-            }
-          }
-          
-          // If it's an edge pixel (mix of 0 and 255 in neighborhood)
-          if (hasZero && hasFull) {
-            data[idx + 3] = sum / 9;
+          const idx = (y * width + x) * 4;
+          if (data[idx + 3] < 10) continue;
+
+          for (let c = 0; c < 3; c++) {
+            // 1. Sharpen (Unsharp Mask)
+            const current = data[idx + c];
+            const neighbors = (
+              data[((y - 1) * width + x) * 4 + c] +
+              data[((y + 1) * width + x) * 4 + c] +
+              data[(y * width + (x - 1)) * 4 + c] +
+              data[(y * width + (x + 1)) * 4 + c]
+            ) / 4;
+            
+            let val = current + (current - neighbors) * amount;
+            
+            // 2. Contrast Adjustment
+            val = ((val / 255 - 0.5) * contrast + 0.5) * 255;
+            
+            sharpenedData[idx + c] = Math.min(255, Math.max(0, val));
           }
         }
       }
+      data.set(sharpenedData);
       
-      // 3. Create a temporary canvas with the defringed image
+      // 3. Create a temporary canvas with the processed image
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = canvas.width;
       tempCanvas.height = canvas.height;
@@ -429,10 +510,17 @@ export default function PassportPhotoMaker() {
       // 5. Draw the defringed image over the background
       ctx.drawImage(tempCanvas, 0, 0);
 
+      // 6. Add black border if enabled
+      if (hasBorder) {
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = Math.max(2, Math.round(canvas.width / 150)); // Proportional border
+        ctx.strokeRect(0, 0, canvas.width, canvas.height);
+      }
+
       setFinalImageSrc(canvas.toDataURL('image/png', 1.0));
     };
     img.src = bgRemovedImageSrc;
-  }, [bgRemovedImageSrc, bgColor, customColor, edgeCleanup]);
+  }, [bgRemovedImageSrc, bgColor, customColor, edgeCleanup, hasBorder]);
 
   const handleDownload = () => {
     if (!finalImageSrc) return;
@@ -493,10 +581,12 @@ export default function PassportPhotoMaker() {
           const x = startX + c * (photoWidth + margin);
           const y = startY + r * (photoHeight + margin);
           
-          // Draw cut lines
-          ctx.strokeStyle = '#cccccc';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(x - 1, y - 1, photoWidth + 2, photoHeight + 2);
+          // Draw cut lines if border is disabled
+          if (!hasBorder) {
+            ctx.strokeStyle = '#cccccc';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x - 1, y - 1, photoWidth + 2, photoHeight + 2);
+          }
           
           ctx.drawImage(img, x, y, photoWidth, photoHeight);
         }
@@ -517,7 +607,7 @@ export default function PassportPhotoMaker() {
     if (printLayout === 'single') {
       return (
         <div className="relative shadow-xl rounded-sm overflow-hidden max-h-full max-w-full flex items-center justify-center bg-white p-4">
-          <img src={finalImageSrc} alt="Single Print" className="max-h-[60vh] object-contain border border-gray-200" />
+          <img src={finalImageSrc} alt="Single Print" className="max-h-[50vh] sm:max-h-[60vh] object-contain" />
         </div>
       );
     }
@@ -542,16 +632,15 @@ export default function PassportPhotoMaker() {
     
     const totalPhotos = cols * rows;
     
-    // Scale for preview (e.g., 2 pixels per mm for A4, 3 for 4x6)
-    const scale = isA4 ? 2 : 3.5;
-    
+    // Scale for preview - use a container-relative scale
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center overflow-auto p-4 bg-gray-100">
+      <div className="w-full h-full flex flex-col items-center justify-center overflow-auto p-2 sm:p-4 bg-gray-100 min-h-[400px]">
         <div 
-          className="bg-white shadow-xl relative"
+          className="bg-white shadow-xl relative mx-auto"
           style={{
-            width: `${sheetWidthMm * scale}px`,
-            height: `${sheetHeightMm * scale}px`,
+            width: '100%',
+            maxWidth: isA4 ? '400px' : '320px',
+            aspectRatio: `${sheetWidthMm} / ${sheetHeightMm}`,
           }}
         >
           {Array.from({ length: rows }).map((_, r) => (
@@ -561,12 +650,13 @@ export default function PassportPhotoMaker() {
               return (
                 <div 
                   key={`${r}-${c}`} 
-                  className="absolute border border-gray-300 p-[1px] bg-white flex items-center justify-center"
+                  className={`absolute bg-white flex items-center justify-center ${!hasBorder ? 'border border-gray-300' : ''}`}
                   style={{
                     left: `${(x / sheetWidthMm) * 100}%`,
                     top: `${(y / sheetHeightMm) * 100}%`,
                     width: `${(photoWidthMm / sheetWidthMm) * 100}%`,
                     height: `${(photoHeightMm / sheetHeightMm) * 100}%`,
+                    padding: !hasBorder ? '1px' : '0'
                   }}
                 >
                   <img src={finalImageSrc} alt={`Copy`} className="w-full h-full object-fill" />
@@ -575,7 +665,7 @@ export default function PassportPhotoMaker() {
             })
           ))}
         </div>
-        <div className="mt-4 text-sm text-text-muted font-medium">
+        <div className="mt-4 text-sm text-text-muted font-medium text-center">
           Preview: {totalPhotos} copies on {isA4 ? 'A4' : '4x6'} sheet
         </div>
       </div>
@@ -583,52 +673,46 @@ export default function PassportPhotoMaker() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-12rem)] min-h-[600px]">
+    <div className="flex flex-col min-h-[500px] lg:h-[calc(100vh-12rem)]">
       {/* Stepper Header */}
-      <div className="flex items-center justify-between mb-6 bg-surface p-4 rounded-2xl border border-border">
-        <div className={`flex items-center gap-2 ${step === 'upload' ? 'text-accent font-bold' : 'text-text-muted'}`}>
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === 'upload' ? 'bg-accent text-white' : 'bg-bg-secondary'}`}>1</div>
-          <span className="hidden sm:inline">Upload</span>
+      <div className="flex items-center justify-between mb-4 sm:mb-6 bg-surface p-3 sm:p-4 rounded-2xl border border-border overflow-x-auto no-scrollbar">
+        <div className={`flex items-center gap-2 shrink-0 ${step === 'upload' ? 'text-accent font-bold' : 'text-text-muted'}`}>
+          <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-base ${step === 'upload' ? 'bg-accent text-white' : 'bg-bg-secondary'}`}>1</div>
+          <span className="text-xs sm:text-sm">Upload</span>
         </div>
-        <div className="flex-1 h-1 bg-border mx-4 rounded-full overflow-hidden">
-          <div className="h-full bg-accent transition-all" style={{ width: step === 'upload' ? '0%' : '100%' }}></div>
+        <div className="w-4 sm:flex-1 h-px bg-border mx-2 sm:mx-4 shrink-0"></div>
+        <div className={`flex items-center gap-2 shrink-0 ${step === 'crop' ? 'text-accent font-bold' : 'text-text-muted'}`}>
+          <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-base ${step === 'crop' ? 'bg-accent text-white' : step === 'process' || step === 'print' ? 'bg-accent text-white' : 'bg-bg-secondary'}`}>2</div>
+          <span className="text-xs sm:text-sm">Crop</span>
         </div>
-        <div className={`flex items-center gap-2 ${step === 'crop' ? 'text-accent font-bold' : 'text-text-muted'}`}>
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === 'crop' ? 'bg-accent text-white' : step === 'process' || step === 'print' ? 'bg-accent text-white' : 'bg-bg-secondary'}`}>2</div>
-          <span className="hidden sm:inline">Crop</span>
+        <div className="w-4 sm:flex-1 h-px bg-border mx-2 sm:mx-4 shrink-0"></div>
+        <div className={`flex items-center gap-2 shrink-0 ${step === 'process' ? 'text-accent font-bold' : 'text-text-muted'}`}>
+          <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-base ${step === 'process' ? 'bg-accent text-white' : step === 'print' ? 'bg-accent text-white' : 'bg-bg-secondary'}`}>3</div>
+          <span className="text-xs sm:text-sm">Edit</span>
         </div>
-        <div className="flex-1 h-1 bg-border mx-4 rounded-full overflow-hidden">
-          <div className="h-full bg-accent transition-all" style={{ width: step === 'crop' || step === 'upload' ? '0%' : '100%' }}></div>
-        </div>
-        <div className={`flex items-center gap-2 ${step === 'process' ? 'text-accent font-bold' : 'text-text-muted'}`}>
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === 'process' ? 'bg-accent text-white' : step === 'print' ? 'bg-accent text-white' : 'bg-bg-secondary'}`}>3</div>
-          <span className="hidden sm:inline">Background</span>
-        </div>
-        <div className="flex-1 h-1 bg-border mx-4 rounded-full overflow-hidden">
-          <div className="h-full bg-accent transition-all" style={{ width: step === 'print' ? '100%' : '0%' }}></div>
-        </div>
-        <div className={`flex items-center gap-2 ${step === 'print' ? 'text-accent font-bold' : 'text-text-muted'}`}>
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${step === 'print' ? 'bg-accent text-white' : 'bg-bg-secondary'}`}>4</div>
-          <span className="hidden sm:inline">Print</span>
+        <div className="w-4 sm:flex-1 h-px bg-border mx-2 sm:mx-4 shrink-0"></div>
+        <div className={`flex items-center gap-2 shrink-0 ${step === 'print' ? 'text-accent font-bold' : 'text-text-muted'}`}>
+          <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-base ${step === 'print' ? 'bg-accent text-white' : 'bg-bg-secondary'}`}>4</div>
+          <span className="text-xs sm:text-sm">Print</span>
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
+      <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 flex-1 min-h-0">
         {/* Left Panel - Editor/Preview */}
-        <div className="flex-1 bg-surface border border-border rounded-2xl overflow-hidden flex flex-col relative">
-          <div className="flex-1 bg-bg-secondary relative flex items-center justify-center p-6 overflow-hidden">
+        <div className="flex-1 bg-surface border border-border rounded-2xl overflow-hidden flex flex-col relative min-h-[400px] lg:min-h-0">
+          <div className="flex-1 bg-bg-secondary relative flex items-center justify-center p-2 sm:p-6 overflow-hidden">
             
             {/* STEP 1: UPLOAD */}
             {step === 'upload' && (
               <div 
-                className="w-full max-w-md border-2 border-dashed border-border rounded-2xl p-12 flex flex-col items-center justify-center text-center hover:border-accent/50 hover:bg-accent/5 transition-all cursor-pointer"
+                className="w-full max-w-md border-2 border-dashed border-border rounded-2xl p-6 sm:p-12 flex flex-col items-center justify-center text-center hover:border-accent/50 hover:bg-accent/5 transition-all cursor-pointer mx-auto"
                 onClick={() => fileInputRef.current?.click()}
               >
-                <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center mb-4">
-                  <Upload className="w-8 h-8" />
+                <div className="w-12 h-12 sm:w-16 sm:h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center mb-4">
+                  <Upload className="w-6 h-6 sm:w-8 sm:h-8" />
                 </div>
-                <h3 className="text-xl font-bold mb-2">Upload Photo</h3>
-                <p className="text-text-muted text-sm mb-6">
+                <h3 className="text-lg sm:text-xl font-bold mb-2">Upload Photo</h3>
+                <p className="text-text-muted text-xs sm:text-sm mb-6">
                   Drag & drop or click to upload.<br/>
                   We'll guide you step by step.
                 </p>
@@ -638,28 +722,29 @@ export default function PassportPhotoMaker() {
 
             {/* STEP 2: CROP */}
             {step === 'crop' && imageSrc && (
-              <div className="w-full h-full flex items-center justify-center overflow-auto">
-                <ReactCrop
-                  crop={crop}
-                  onChange={(_, percentCrop) => setCrop(percentCrop)}
-                  onComplete={(c) => setCompletedCrop(c)}
-                  aspect={selectedPreset.id !== 'free' ? selectedPreset.width / selectedPreset.height : undefined}
-                  className="max-h-full"
-                >
-                  <img 
-                    ref={imgRef}
-                    src={imageSrc} 
-                    alt="Upload" 
-                    onLoad={onImageLoad}
-                    className="max-h-[60vh] object-contain"
-                  />
-                </ReactCrop>
+              <div className="w-full h-full flex items-center justify-center p-2 sm:p-4 overflow-auto">
+                <div className="max-w-full max-h-full flex items-center justify-center">
+                  <ReactCrop
+                    crop={crop}
+                    onChange={(_, percentCrop) => setCrop(percentCrop)}
+                    onComplete={(c) => setCompletedCrop(c)}
+                    aspect={selectedPreset.id !== 'free' ? selectedPreset.width / selectedPreset.height : undefined}
+                  >
+                    <img 
+                      ref={imgRef}
+                      src={imageSrc} 
+                      alt="Upload" 
+                      onLoad={onImageLoad}
+                      className="max-w-full max-h-[50vh] sm:max-h-[70vh] object-contain"
+                    />
+                  </ReactCrop>
+                </div>
               </div>
             )}
 
             {/* STEP 3: PROCESS */}
             {step === 'process' && (
-              <div className="relative w-full h-full flex items-center justify-center">
+              <div className="relative w-full h-full flex items-center justify-center p-2 sm:p-4">
                 <div 
                   className="relative shadow-2xl rounded-sm overflow-hidden" 
                   style={{
@@ -671,29 +756,54 @@ export default function PassportPhotoMaker() {
                   }}
                 >
                   {isEraserMode ? (
-                    <canvas
-                      ref={eraserCanvasRef}
-                      className="w-full h-full object-contain cursor-crosshair touch-none"
-                      onMouseDown={startDrawing}
-                      onMouseMove={draw}
-                      onMouseUp={stopDrawing}
-                      onMouseLeave={stopDrawing}
-                      onTouchStart={startDrawing}
-                      onTouchMove={draw}
-                      onTouchEnd={stopDrawing}
-                    />
+                    <div className="relative w-full h-full group overflow-hidden">
+                      <canvas
+                        ref={eraserCanvasRef}
+                        className="w-full h-full object-contain cursor-none touch-none max-h-[50vh] sm:max-h-full"
+                        onMouseDown={startDrawing}
+                        onMouseMove={draw}
+                        onMouseUp={stopDrawing}
+                        onMouseLeave={() => {
+                          stopDrawing();
+                          setCursorPos(null);
+                        }}
+                        onMouseEnter={(e) => {
+                          setCursorPos({ x: e.clientX, y: e.clientY });
+                        }}
+                        onTouchStart={startDrawing}
+                        onTouchMove={draw}
+                        onTouchEnd={() => {
+                          stopDrawing();
+                          setCursorPos(null);
+                        }}
+                      />
+                      {cursorPos && (
+                        <div 
+                          className="fixed pointer-events-none z-50 border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.5)] rounded-full bg-white/10 flex items-center justify-center"
+                          style={{
+                            left: cursorPos.x,
+                            top: cursorPos.y,
+                            width: eraserCanvasRef.current ? (eraserSize * (eraserCanvasRef.current.getBoundingClientRect().width / eraserCanvasRef.current.width)) : eraserSize,
+                            height: eraserCanvasRef.current ? (eraserSize * (eraserCanvasRef.current.getBoundingClientRect().height / eraserCanvasRef.current.height)) : eraserSize,
+                            transform: 'translate(-50%, -50%)'
+                          }}
+                        >
+                          <div className="w-1 h-1 bg-white rounded-full shadow-sm" />
+                        </div>
+                      )}
+                    </div>
                   ) : finalImageSrc ? (
-                    <img src={finalImageSrc} alt="Processed" className="w-full h-full object-contain" />
+                    <img src={finalImageSrc} alt="Processed" className="w-full h-full object-contain max-h-[50vh] sm:max-h-full" />
                   ) : croppedImageSrc ? (
-                    <img src={croppedImageSrc} alt="Cropped Preview" className="w-full h-full object-contain" />
+                    <img src={croppedImageSrc} alt="Cropped Preview" className="w-full h-full object-contain max-h-[50vh] sm:max-h-full" />
                   ) : null}
                 </div>
 
                 {isProcessing && (
-                  <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center z-10 rounded-2xl text-white">
-                    <Loader2 className="w-12 h-12 animate-spin mb-4" />
-                    <div className="text-lg font-bold mb-2 drop-shadow-md">{statusText}</div>
-                    <div className="w-64 h-2 bg-white/20 rounded-full overflow-hidden backdrop-blur-sm">
+                  <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center z-10 rounded-2xl text-white p-4">
+                    <Loader2 className="w-8 h-8 sm:w-12 sm:h-12 animate-spin mb-4" />
+                    <div className="text-sm sm:text-lg font-bold mb-2 drop-shadow-md text-center">{statusText}</div>
+                    <div className="w-full max-w-[200px] sm:max-w-xs h-1.5 sm:h-2 bg-white/20 rounded-full overflow-hidden backdrop-blur-sm">
                       <div 
                         className="h-full bg-white transition-all duration-300 ease-out"
                         style={{ width: `${progress}%` }}
@@ -826,6 +936,24 @@ export default function PassportPhotoMaker() {
                   </div>
 
                   <div className="space-y-4 pt-4 border-t border-border">
+                    <h3 className="font-bold text-sm text-text-muted uppercase tracking-wider">Photo Options</h3>
+                    <div className="flex items-center justify-between p-3 bg-bg-secondary rounded-xl border border-border">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center">
+                          <Layout className="w-4 h-4 text-accent" />
+                        </div>
+                        <span className="text-sm font-medium">Black Border</span>
+                      </div>
+                      <button 
+                        onClick={() => setHasBorder(!hasBorder)}
+                        className={`w-12 h-6 rounded-full transition-all relative ${hasBorder ? 'bg-accent' : 'bg-border'}`}
+                      >
+                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${hasBorder ? 'left-7' : 'left-1'}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4 border-t border-border">
                     <h3 className="font-bold text-sm text-text-muted uppercase tracking-wider">Background Color</h3>
                     <div className="grid grid-cols-2 gap-2">
                       {COLORS.map(color => (
@@ -941,19 +1069,19 @@ export default function PassportPhotoMaker() {
             </div>
 
             {/* Navigation Buttons */}
-            <div className="p-4 border-t border-border bg-bg-secondary/50 flex gap-2">
+            <div className="p-4 border-t border-border bg-bg-secondary/50 flex gap-2 sticky bottom-0 z-20">
               {step === 'crop' && (
                 <>
                   <button 
                     onClick={() => setStep('upload')}
-                    className="flex-1 btn bg-white border border-border text-text-primary hover:bg-bg-secondary"
+                    className="flex-1 btn bg-white border border-border text-text-primary hover:bg-bg-secondary text-sm"
                   >
                     Back
                   </button>
                   <button 
                     onClick={handleCropComplete}
                     disabled={!completedCrop?.width || !completedCrop?.height}
-                    className="flex-1 btn btn-primary flex items-center justify-center gap-2"
+                    className="flex-1 btn btn-primary flex items-center justify-center gap-2 text-sm"
                   >
                     Next <ArrowRight className="w-4 h-4" />
                   </button>
@@ -965,14 +1093,14 @@ export default function PassportPhotoMaker() {
                   <button 
                     onClick={() => setStep('crop')}
                     disabled={isProcessing}
-                    className="flex-1 btn bg-white border border-border text-text-primary hover:bg-bg-secondary"
+                    className="flex-1 btn bg-white border border-border text-text-primary hover:bg-bg-secondary text-sm"
                   >
                     Back
                   </button>
                   <button 
                     onClick={() => setStep('print')}
                     disabled={isProcessing}
-                    className="flex-1 btn btn-primary flex items-center justify-center gap-2"
+                    className="flex-1 btn btn-primary flex items-center justify-center gap-2 text-sm"
                   >
                     Next <ArrowRight className="w-4 h-4" />
                   </button>
@@ -983,15 +1111,15 @@ export default function PassportPhotoMaker() {
                 <>
                   <button 
                     onClick={() => setStep('process')}
-                    className="flex-1 btn bg-white border border-border text-text-primary hover:bg-bg-secondary"
+                    className="flex-1 btn bg-white border border-border text-text-primary hover:bg-bg-secondary text-sm"
                   >
                     Back
                   </button>
                   <button 
                     onClick={handleDownload}
-                    className="flex-1 btn btn-primary flex items-center justify-center gap-2"
+                    className="flex-1 btn btn-primary flex items-center justify-center gap-2 text-sm"
                   >
-                    <Download className="w-4 h-4" /> Download
+                    Download <Download className="w-4 h-4" />
                   </button>
                 </>
               )}

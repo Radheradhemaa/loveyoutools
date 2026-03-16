@@ -49,7 +49,7 @@
 
 @layer components {
   .ws {
-    @apply bg-surface border border-border rounded-[14px] p-7 shadow-sm;
+    @apply bg-surface border border-border rounded-[14px] p-4 sm:p-7 shadow-sm;
   }
   .fg {
     @apply flex flex-col gap-[7px];
@@ -108,6 +108,16 @@
   .logo-container a {
     display: flex;
     align-items: center;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
 }
 
