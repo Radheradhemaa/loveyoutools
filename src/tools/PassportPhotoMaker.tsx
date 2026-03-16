@@ -88,14 +88,14 @@ export default function PassportPhotoMaker() {
     if (selectedPreset.id !== 'free') {
       const aspect = selectedPreset.width / selectedPreset.height;
       const initialCrop = centerCrop(
-        makeAspectCrop({ unit: '%', width: 50 }, aspect, width, height),
+        makeAspectCrop({ unit: '%', width: 90 }, aspect, width, height),
         width,
         height
       );
       setCrop(initialCrop);
     } else {
       const initialCrop = centerCrop(
-        makeAspectCrop({ unit: '%', width: 50 }, 1, width, height),
+        makeAspectCrop({ unit: '%', width: 90 }, 1, width, height),
         width,
         height
       );
@@ -108,7 +108,7 @@ export default function PassportPhotoMaker() {
       const { width, height } = imgRef.current;
       const aspect = selectedPreset.width / selectedPreset.height;
       const initialCrop = centerCrop(
-        makeAspectCrop({ unit: '%', width: 50 }, aspect, width, height),
+        makeAspectCrop({ unit: '%', width: 90 }, aspect, width, height),
         width,
         height
       );
@@ -708,7 +708,7 @@ export default function PassportPhotoMaker() {
   };
 
   return (
-    <div className="flex flex-col min-h-[600px] lg:h-[calc(100vh-8rem)]">
+    <div className="flex flex-col min-h-[600px] lg:h-[calc(100vh-6rem)]">
       {/* Stepper Header */}
       <div className="flex items-center justify-between mb-4 sm:mb-6 bg-surface p-3 sm:p-4 rounded-2xl border border-border overflow-x-auto no-scrollbar">
         <div className={`flex items-center gap-2 shrink-0 ${step === 'upload' ? 'text-accent font-bold' : 'text-text-muted'}`}>
@@ -770,7 +770,7 @@ export default function PassportPhotoMaker() {
                       src={imageSrc} 
                       alt="Upload" 
                       onLoad={onImageLoad}
-                      className="max-w-full max-h-[60vh] sm:max-h-[80vh] object-contain shadow-lg"
+                      className="max-w-full max-h-full object-contain shadow-lg"
                     />
                   </ReactCrop>
                 </div>
