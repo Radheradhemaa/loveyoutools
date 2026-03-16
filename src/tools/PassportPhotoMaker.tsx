@@ -641,8 +641,8 @@ export default function PassportPhotoMaker() {
     
     if (printLayout === 'single') {
       return (
-        <div className="relative shadow-xl rounded-sm overflow-hidden max-h-full max-w-full flex items-center justify-center bg-white p-4">
-          <img src={finalImageSrc} alt="Single Print" className="max-h-[50vh] sm:max-h-[60vh] object-contain" />
+        <div className="relative shadow-xl rounded-sm overflow-hidden max-h-full max-w-full flex items-center justify-center bg-white p-4 sm:p-8">
+          <img src={finalImageSrc} alt="Single Print" className="max-h-[60vh] sm:max-h-[80vh] object-contain shadow-md" />
         </div>
       );
     }
@@ -669,12 +669,12 @@ export default function PassportPhotoMaker() {
     
     // Scale for preview - use a container-relative scale
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center overflow-auto p-2 sm:p-4 bg-gray-100 min-h-[400px]">
+      <div className="w-full h-full flex flex-col items-center justify-center overflow-auto p-4 sm:p-8 bg-gray-100 min-h-[450px]">
         <div 
-          className="bg-white shadow-xl relative mx-auto"
+          className="bg-white shadow-2xl relative mx-auto"
           style={{
             width: '100%',
-            maxWidth: isA4 ? '400px' : '320px',
+            maxWidth: isA4 ? '500px' : '400px',
             aspectRatio: `${sheetWidthMm} / ${sheetHeightMm}`,
           }}
         >
@@ -708,7 +708,7 @@ export default function PassportPhotoMaker() {
   };
 
   return (
-    <div className="flex flex-col min-h-[500px] lg:h-[calc(100vh-12rem)]">
+    <div className="flex flex-col min-h-[600px] lg:h-[calc(100vh-8rem)]">
       {/* Stepper Header */}
       <div className="flex items-center justify-between mb-4 sm:mb-6 bg-surface p-3 sm:p-4 rounded-2xl border border-border overflow-x-auto no-scrollbar">
         <div className={`flex items-center gap-2 shrink-0 ${step === 'upload' ? 'text-accent font-bold' : 'text-text-muted'}`}>
@@ -770,7 +770,7 @@ export default function PassportPhotoMaker() {
                       src={imageSrc} 
                       alt="Upload" 
                       onLoad={onImageLoad}
-                      className="max-w-full max-h-[50vh] sm:max-h-[70vh] object-contain"
+                      className="max-w-full max-h-[60vh] sm:max-h-[80vh] object-contain shadow-lg"
                     />
                   </ReactCrop>
                 </div>
@@ -779,11 +779,13 @@ export default function PassportPhotoMaker() {
 
             {/* STEP 3: PROCESS */}
             {step === 'process' && (
-              <div className="relative w-full h-full flex items-center justify-center p-2 sm:p-4">
+              <div className="relative w-full h-full flex items-center justify-center p-4 sm:p-8">
                 <div 
-                  className="relative shadow-2xl rounded-sm overflow-hidden" 
+                  className="relative shadow-2xl rounded-sm overflow-hidden flex items-center justify-center bg-white" 
                   style={{
                     aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : 'auto',
+                    height: 'auto',
+                    width: 'auto',
                     maxHeight: '100%',
                     maxWidth: '100%',
                     backgroundColor: bgColor === 'custom' ? customColor : (bgColor !== 'transparent' ? bgColor : 'transparent'),
@@ -794,7 +796,8 @@ export default function PassportPhotoMaker() {
                     <div className="relative w-full h-full group overflow-hidden">
                       <canvas
                         ref={eraserCanvasRef}
-                        className="w-full h-full object-contain cursor-none touch-none max-h-[50vh] sm:max-h-full"
+                        className="w-full h-full object-contain cursor-none touch-none"
+                        style={{ maxHeight: '100%', maxWidth: '100%' }}
                         onMouseDown={startDrawing}
                         onMouseMove={draw}
                         onMouseUp={stopDrawing}
@@ -828,9 +831,9 @@ export default function PassportPhotoMaker() {
                       )}
                     </div>
                   ) : finalImageSrc ? (
-                    <img src={finalImageSrc} alt="Processed" className="w-full h-full object-contain max-h-[50vh] sm:max-h-full" />
+                    <img src={finalImageSrc} alt="Processed" className="w-full h-full object-contain" style={{ maxHeight: '100%', maxWidth: '100%' }} />
                   ) : croppedImageSrc ? (
-                    <img src={croppedImageSrc} alt="Cropped Preview" className="w-full h-full object-contain max-h-[50vh] sm:max-h-full" />
+                    <img src={croppedImageSrc} alt="Cropped Preview" className="w-full h-full object-contain" style={{ maxHeight: '100%', maxWidth: '100%' }} />
                   ) : null}
                 </div>
 
