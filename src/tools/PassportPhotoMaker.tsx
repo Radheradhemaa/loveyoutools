@@ -152,25 +152,58 @@ export default function PassportPhotoMaker() {
     setStep('process');
     setFinalImageSrc(null);
     setIsEraserMode(false);
+    
+    // Automatically trigger background removal for a faster workflow
+    processBackgroundRemoval(croppedDataUrl);
   };
 
   const processBackgroundRemoval = async (imgSrc: string) => {
     setIsProcessing(true);
-    setProgress(10);
-    setStatusText('Removing background (AI Processing)...');
+    setProgress(5);
+    setStatusText('AI Analysis...');
     setIsEraserMode(false);
 
     try {
-      // Convert the cropped data URL directly to a Blob
-      const res = await fetch(imgSrc);
-      const blob = await res.blob();
+      // 1. Resize image to a reasonable size for 2-second processing
+      // Passport photos don't need 4K resolution for background removal
+      const img = new Image();
+      await new Promise((resolve) => {
+        img.onload = resolve;
+        img.src = imgSrc;
+      });
+
+      const maxDim = 800; // Optimized for speed
+      let width = img.width;
+      let height = img.height;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = (height / width) * maxDim;
+          width = maxDim;
+        } else {
+          width = (width / height) * maxDim;
+          height = maxDim;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(img, 0, 0, width, height);
       
-      // High quality background removal
-      const bgRemovedBlob = await removeBackground(blob, {
-        model: 'isnet_fp16', // Use high quality model for clean edges
+      const resizedBlob = await new Promise<Blob>((resolve) => 
+        canvas.toBlob((b) => resolve(b!), 'image/png')
+      );
+
+      setStatusText('Removing background...');
+      setProgress(20);
+      
+      // 2. Use faster model
+      const bgRemovedBlob = await removeBackground(resizedBlob, {
+        model: 'isnet', // Fast and compatible model
         progress: (key, current, total) => {
           if (total > 0) {
-            setProgress(10 + Math.round((current / total) * 80));
+            setProgress(20 + Math.round((current / total) * 70));
           }
         }
       });
@@ -178,6 +211,8 @@ export default function PassportPhotoMaker() {
       const reader = new FileReader();
       reader.onloadend = () => {
         const dataUrl = reader.result as string;
+        
+        // Update history and current image
         const newHistory = history.slice(0, historyIndex + 1);
         newHistory.push(dataUrl);
         setHistory(newHistory);
@@ -188,7 +223,7 @@ export default function PassportPhotoMaker() {
         
         setProgress(100);
         setStatusText('Done!');
-        setTimeout(() => setIsProcessing(false), 500);
+        setTimeout(() => setIsProcessing(false), 300);
       };
       reader.readAsDataURL(bgRemovedBlob);
       
@@ -464,13 +499,13 @@ export default function PassportPhotoMaker() {
       // Pass 3: Sharpening & Contrast (Excellent Photo Quality)
       // Makes the photo look crisp and professional
       const sharpenedData = new Uint8ClampedArray(data);
-      const amount = 0.5; // Sharpening intensity
-      const contrast = 1.08; // 8% contrast boost for "pop"
+      const amount = 0.6; // Studio-grade sharpening
+      const contrast = 1.12; // 12% contrast boost for premium look
       
       for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
           const idx = (y * width + x) * 4;
-          if (data[idx + 3] < 10) continue;
+          if (data[idx + 3] < 5) continue;
 
           for (let c = 0; c < 3; c++) {
             // 1. Sharpen (Unsharp Mask)
