@@ -57,6 +57,7 @@ export default function PassportPhotoMaker() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState('');
+  const [bgRemovalChoice, setBgRemovalChoice] = useState<'auto' | 'manual' | null>(null);
 
   // Eraser states
   const [isEraserMode, setIsEraserMode] = useState(false);
@@ -88,14 +89,14 @@ export default function PassportPhotoMaker() {
     if (selectedPreset.id !== 'free') {
       const aspect = selectedPreset.width / selectedPreset.height;
       const initialCrop = centerCrop(
-        makeAspectCrop({ unit: '%', width: 50 }, aspect, width, height),
+        makeAspectCrop({ unit: '%', width: 90 }, aspect, width, height),
         width,
         height
       );
       setCrop(initialCrop);
     } else {
       const initialCrop = centerCrop(
-        makeAspectCrop({ unit: '%', width: 50 }, 1, width, height),
+        makeAspectCrop({ unit: '%', width: 90 }, 1, width, height),
         width,
         height
       );
@@ -108,7 +109,7 @@ export default function PassportPhotoMaker() {
       const { width, height } = imgRef.current;
       const aspect = selectedPreset.width / selectedPreset.height;
       const initialCrop = centerCrop(
-        makeAspectCrop({ unit: '%', width: 50 }, aspect, width, height),
+        makeAspectCrop({ unit: '%', width: 90 }, aspect, width, height),
         width,
         height
       );
@@ -152,25 +153,57 @@ export default function PassportPhotoMaker() {
     setStep('process');
     setFinalImageSrc(null);
     setIsEraserMode(false);
+    setBgRemovalChoice(null); // Reset choice
   };
 
   const processBackgroundRemoval = async (imgSrc: string) => {
+    setBgRemovalChoice('auto');
     setIsProcessing(true);
-    setProgress(10);
-    setStatusText('Removing background (AI Processing)...');
+    setProgress(5);
+    setStatusText('AI Analysis...');
     setIsEraserMode(false);
 
     try {
-      // Convert the cropped data URL directly to a Blob
-      const res = await fetch(imgSrc);
-      const blob = await res.blob();
+      // 1. Resize image to a reasonable size for 2-second processing
+      // Passport photos don't need 4K resolution for background removal
+      const img = new Image();
+      await new Promise((resolve) => {
+        img.onload = resolve;
+        img.src = imgSrc;
+      });
+
+      const maxDim = 640; // Reduced from 800 for even faster processing (target 2s)
+      let width = img.width;
+      let height = img.height;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = (height / width) * maxDim;
+          width = maxDim;
+        } else {
+          width = (width / height) * maxDim;
+          height = maxDim;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(img, 0, 0, width, height);
       
-      // High quality background removal
-      const bgRemovedBlob = await removeBackground(blob, {
-        model: 'isnet_fp16', // Use high quality model for clean edges
+      const resizedBlob = await new Promise<Blob>((resolve) => 
+        canvas.toBlob((b) => resolve(b!), 'image/png')
+      );
+
+      setStatusText('Removing background...');
+      setProgress(20);
+      
+      // 2. Use faster model
+      const bgRemovedBlob = await removeBackground(resizedBlob, {
+        model: 'isnet', // Fast and compatible model
         progress: (key, current, total) => {
           if (total > 0) {
-            setProgress(10 + Math.round((current / total) * 80));
+            setProgress(20 + Math.round((current / total) * 70));
           }
         }
       });
@@ -178,6 +211,8 @@ export default function PassportPhotoMaker() {
       const reader = new FileReader();
       reader.onloadend = () => {
         const dataUrl = reader.result as string;
+        
+        // Update history and current image
         const newHistory = history.slice(0, historyIndex + 1);
         newHistory.push(dataUrl);
         setHistory(newHistory);
@@ -188,7 +223,7 @@ export default function PassportPhotoMaker() {
         
         setProgress(100);
         setStatusText('Done!');
-        setTimeout(() => setIsProcessing(false), 500);
+        setTimeout(() => setIsProcessing(false), 300);
       };
       reader.readAsDataURL(bgRemovedBlob);
       
@@ -366,17 +401,17 @@ export default function PassportPhotoMaker() {
         originalAlpha[i] = data[i * 4 + 3];
       }
 
-      // Pass 1: Advanced Color Decontamination & Edge Darkening
-      // Specifically targets white halos in dark hair
+      // Pass 1: Advanced Color Decontamination & Edge Darkening (Anti-Halo + Color Spill)
+      // Specifically targets white halos and color bleeding in hair
       const processedData = new Uint8ClampedArray(data);
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const idx = (y * width + x) * 4;
           const a = data[idx + 3];
 
-          if (a > 0 && a < 250) {
+          if (a > 0 && a < 255) {
             let sumR = 0, sumG = 0, sumB = 0, weightSum = 0;
-            const searchRadius = 3;
+            const searchRadius = Math.max(2, Math.floor(edgeCleanup / 60));
             
             for (let dy = -searchRadius; dy <= searchRadius; dy++) {
               for (let dx = -searchRadius; dx <= searchRadius; dx++) {
@@ -385,9 +420,9 @@ export default function PassportPhotoMaker() {
                 if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                   const nIdx = (ny * width + nx) * 4;
                   const nAlpha = data[nIdx + 3];
-                  if (nAlpha > 240) {
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    const weight = 1 / (1 + dist);
+                  if (nAlpha > 250) { // Only sample from fully opaque pixels
+                    const distSq = dx * dx + dy * dy;
+                    const weight = 1 / (1 + distSq);
                     sumR += data[nIdx] * weight;
                     sumG += data[nIdx + 1] * weight;
                     sumB += data[nIdx + 2] * weight;
@@ -405,25 +440,31 @@ export default function PassportPhotoMaker() {
               // Edge Darkening: If the nearby color is dark (hair), darken the semi-transparent pixel
               // to aggressively kill any white glow from the original background
               const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-              if (brightness < 80) { // Dark hair threshold
-                const darkenFactor = 0.85;
+              
+              // Dynamic darkening based on edgeCleanup
+              const darkenThreshold = 120; 
+              if (brightness < darkenThreshold) {
+                const darkenFactor = 0.7 + (0.2 * (1 - edgeCleanup / 255)); // More aggressive when cleanup is high
                 r *= darkenFactor;
                 g *= darkenFactor;
                 b *= darkenFactor;
               }
 
-              processedData[idx] = r;
-              processedData[idx + 1] = g;
-              processedData[idx + 2] = b;
+              // Color Spill Removal: Blend original color with decontamination color
+              // based on alpha (more decontamination at edges)
+              const blend = 1 - (a / 255);
+              processedData[idx] = data[idx] * (1 - blend) + r * blend;
+              processedData[idx + 1] = data[idx + 1] * (1 - blend) + g * blend;
+              processedData[idx + 2] = data[idx + 2] * (1 - blend) + b * blend;
             }
           }
         }
       }
       data.set(processedData);
 
-      // Pass 2: Erode & Smooth Mask
-      const radius = Math.floor(edgeCleanup / 70); 
-      const cutoff = Math.max(2, edgeCleanup - 140);
+      // Pass 2: Hair-Aware Erode & Smooth Mask
+      const radius = Math.floor(edgeCleanup / 80); 
+      const cutoff = Math.max(1, edgeCleanup - 180);
 
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
@@ -434,43 +475,38 @@ export default function PassportPhotoMaker() {
           if (a > 0) {
             if (a < cutoff) {
               data[idx + 3] = 0;
-            } else {
-              let erode = false;
-              if (radius > 0) {
-                const minY = Math.max(0, y - radius);
-                const maxY = Math.min(height - 1, y + radius);
-                const minX = Math.max(0, x - radius);
-                const maxX = Math.min(width - 1, x + radius);
-                
-                for (let ny = minY; ny <= maxY; ny++) {
-                  for (let nx = minX; nx <= maxX; nx++) {
-                    if (originalAlpha[ny * width + nx] < 30) {
-                      erode = true;
-                      break;
-                    }
-                  }
-                  if (erode) break;
+            } else if (radius > 0) {
+              let minAlpha = 255;
+              const minY = Math.max(0, y - radius);
+              const maxY = Math.min(height - 1, y + radius);
+              const minX = Math.max(0, x - radius);
+              const maxX = Math.min(width - 1, x + radius);
+              
+              for (let ny = minY; ny <= maxY; ny++) {
+                for (let nx = minX; nx <= maxX; nx++) {
+                  const na = originalAlpha[ny * width + nx];
+                  if (na < minAlpha) minAlpha = na;
                 }
               }
               
-              if (erode) {
-                data[idx + 3] = a * 0.25; 
+              // Soft erosion to preserve hair strands
+              if (minAlpha < 50) {
+                data[idx + 3] = a * (minAlpha / 255) * 0.8;
               }
             }
           }
         }
       }
 
-      // Pass 3: Sharpening & Contrast (Excellent Photo Quality)
-      // Makes the photo look crisp and professional
+      // Pass 3: High-Fidelity Sharpening & Contrast
       const sharpenedData = new Uint8ClampedArray(data);
-      const amount = 0.5; // Sharpening intensity
-      const contrast = 1.08; // 8% contrast boost for "pop"
+      const amount = 0.75; // Increased for better detail
+      const contrast = 1.15; // 15% contrast boost
       
       for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
           const idx = (y * width + x) * 4;
-          if (data[idx + 3] < 10) continue;
+          if (data[idx + 3] < 5) continue;
 
           for (let c = 0; c < 3; c++) {
             // 1. Sharpen (Unsharp Mask)
@@ -606,8 +642,8 @@ export default function PassportPhotoMaker() {
     
     if (printLayout === 'single') {
       return (
-        <div className="relative shadow-xl rounded-sm overflow-hidden max-h-full max-w-full flex items-center justify-center bg-white p-4">
-          <img src={finalImageSrc} alt="Single Print" className="max-h-[50vh] sm:max-h-[60vh] object-contain" />
+        <div className="relative shadow-xl rounded-sm overflow-hidden max-h-full max-w-full flex items-center justify-center bg-white p-4 sm:p-8">
+          <img src={finalImageSrc} alt="Single Print" className="max-h-[60vh] sm:max-h-[80vh] object-contain shadow-md" />
         </div>
       );
     }
@@ -634,12 +670,12 @@ export default function PassportPhotoMaker() {
     
     // Scale for preview - use a container-relative scale
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center overflow-auto p-2 sm:p-4 bg-gray-100 min-h-[400px]">
+      <div className="w-full h-full flex flex-col items-center justify-center overflow-auto p-4 sm:p-8 bg-gray-100 min-h-[450px]">
         <div 
-          className="bg-white shadow-xl relative mx-auto"
+          className="bg-white shadow-2xl relative mx-auto"
           style={{
             width: '100%',
-            maxWidth: isA4 ? '400px' : '320px',
+            maxWidth: isA4 ? '500px' : '400px',
             aspectRatio: `${sheetWidthMm} / ${sheetHeightMm}`,
           }}
         >
@@ -673,7 +709,7 @@ export default function PassportPhotoMaker() {
   };
 
   return (
-    <div className="flex flex-col min-h-[500px] lg:h-[calc(100vh-12rem)]">
+    <div className="flex flex-col min-h-[600px] lg:h-[calc(100vh-6rem)]">
       {/* Stepper Header */}
       <div className="flex items-center justify-between mb-4 sm:mb-6 bg-surface p-3 sm:p-4 rounded-2xl border border-border overflow-x-auto no-scrollbar">
         <div className={`flex items-center gap-2 shrink-0 ${step === 'upload' ? 'text-accent font-bold' : 'text-text-muted'}`}>
@@ -735,7 +771,7 @@ export default function PassportPhotoMaker() {
                       src={imageSrc} 
                       alt="Upload" 
                       onLoad={onImageLoad}
-                      className="max-w-full max-h-[50vh] sm:max-h-[70vh] object-contain"
+                      className="max-w-full max-h-full object-contain shadow-lg"
                     />
                   </ReactCrop>
                 </div>
@@ -744,60 +780,107 @@ export default function PassportPhotoMaker() {
 
             {/* STEP 3: PROCESS */}
             {step === 'process' && (
-              <div className="relative w-full h-full flex items-center justify-center p-2 sm:p-4">
-                <div 
-                  className="relative shadow-2xl rounded-sm overflow-hidden" 
-                  style={{
-                    aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : 'auto',
-                    maxHeight: '100%',
-                    maxWidth: '100%',
-                    backgroundColor: bgColor === 'custom' ? customColor : (bgColor !== 'transparent' ? bgColor : 'transparent'),
-                    backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 20px 20px' : 'none'
-                  }}
-                >
-                  {isEraserMode ? (
-                    <div className="relative w-full h-full group overflow-hidden">
-                      <canvas
-                        ref={eraserCanvasRef}
-                        className="w-full h-full object-contain cursor-none touch-none max-h-[50vh] sm:max-h-full"
-                        onMouseDown={startDrawing}
-                        onMouseMove={draw}
-                        onMouseUp={stopDrawing}
-                        onMouseLeave={() => {
-                          stopDrawing();
-                          setCursorPos(null);
-                        }}
-                        onMouseEnter={(e) => {
-                          setCursorPos({ x: e.clientX, y: e.clientY });
-                        }}
-                        onTouchStart={startDrawing}
-                        onTouchMove={draw}
-                        onTouchEnd={() => {
-                          stopDrawing();
-                          setCursorPos(null);
-                        }}
-                      />
-                      {cursorPos && (
-                        <div 
-                          className="fixed pointer-events-none z-50 border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.5)] rounded-full bg-white/10 flex items-center justify-center"
-                          style={{
-                            left: cursorPos.x,
-                            top: cursorPos.y,
-                            width: eraserCanvasRef.current ? (eraserSize * (eraserCanvasRef.current.getBoundingClientRect().width / eraserCanvasRef.current.width)) : eraserSize,
-                            height: eraserCanvasRef.current ? (eraserSize * (eraserCanvasRef.current.getBoundingClientRect().height / eraserCanvasRef.current.height)) : eraserSize,
-                            transform: 'translate(-50%, -50%)'
-                          }}
-                        >
-                          <div className="w-1 h-1 bg-white rounded-full shadow-sm" />
-                        </div>
-                      )}
+              <div className="relative w-full h-full flex items-center justify-center p-4 sm:p-8">
+                {!bgRemovalChoice && !isProcessing ? (
+                  <div className="flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-300">
+                    <div className="text-center space-y-2">
+                      <h3 className="text-xl font-bold">Remove Background?</h3>
+                      <p className="text-text-muted text-sm max-w-xs">Choose how you want to handle the background removal process.</p>
                     </div>
-                  ) : finalImageSrc ? (
-                    <img src={finalImageSrc} alt="Processed" className="w-full h-full object-contain max-h-[50vh] sm:max-h-full" />
-                  ) : croppedImageSrc ? (
-                    <img src={croppedImageSrc} alt="Cropped Preview" className="w-full h-full object-contain max-h-[50vh] sm:max-h-full" />
-                  ) : null}
-                </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-md">
+                      <button 
+                        onClick={() => processBackgroundRemoval(croppedImageSrc!)}
+                        className="flex flex-col items-center gap-4 p-6 bg-surface border-2 border-accent/20 hover:border-accent rounded-2xl transition-all group"
+                      >
+                        <div className="w-16 h-16 bg-accent/10 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
+                          <Wand2 className="w-8 h-8 text-accent" />
+                        </div>
+                        <div className="text-center">
+                          <div className="font-bold">Auto Mode</div>
+                          <div className="text-xs text-text-muted mt-1">AI-powered, fast & precise (2s)</div>
+                        </div>
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setBgRemovalChoice('manual');
+                          setIsEraserMode(true);
+                        }}
+                        className="flex flex-col items-center gap-4 p-6 bg-surface border-2 border-border hover:border-accent/50 rounded-2xl transition-all group"
+                      >
+                        <div className="w-16 h-16 bg-bg-secondary rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
+                          <Eraser className="w-8 h-8 text-text-muted" />
+                        </div>
+                        <div className="text-center">
+                          <div className="font-bold">Manual Mode</div>
+                          <div className="text-xs text-text-muted mt-1">Use eraser for custom control</div>
+                        </div>
+                      </button>
+                    </div>
+                    <button 
+                      onClick={() => setBgRemovalChoice('manual')}
+                      className="text-sm text-text-muted hover:text-accent transition-colors"
+                    >
+                      Skip for now
+                    </button>
+                  </div>
+                ) : (
+                  <div 
+                    className="relative shadow-2xl rounded-sm overflow-hidden flex items-center justify-center bg-white" 
+                    style={{
+                      aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : 'auto',
+                      height: 'auto',
+                      width: 'auto',
+                      maxHeight: '100%',
+                      maxWidth: '100%',
+                      backgroundColor: bgColor === 'custom' ? customColor : (bgColor !== 'transparent' ? bgColor : 'transparent'),
+                      backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 20px 20px' : 'none'
+                    }}
+                  >
+                    {isEraserMode ? (
+                      <div className="relative w-full h-full group overflow-hidden">
+                        <canvas
+                          ref={eraserCanvasRef}
+                          className="w-full h-full object-contain cursor-none touch-none"
+                          style={{ maxHeight: '100%', maxWidth: '100%' }}
+                          onMouseDown={startDrawing}
+                          onMouseMove={draw}
+                          onMouseUp={stopDrawing}
+                          onMouseLeave={() => {
+                            stopDrawing();
+                            setCursorPos(null);
+                          }}
+                          onMouseEnter={(e) => {
+                            setCursorPos({ x: e.clientX, y: e.clientY });
+                          }}
+                          onTouchStart={startDrawing}
+                          onTouchMove={draw}
+                          onTouchEnd={() => {
+                            stopDrawing();
+                            setCursorPos(null);
+                          }}
+                        />
+                        {cursorPos && (
+                          <div 
+                            className="fixed pointer-events-none z-50 border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.5)] rounded-full bg-white/10 flex items-center justify-center"
+                            style={{
+                              left: cursorPos.x,
+                              top: cursorPos.y,
+                              width: eraserCanvasRef.current ? (eraserSize * (eraserCanvasRef.current.getBoundingClientRect().width / eraserCanvasRef.current.width)) : eraserSize,
+                              height: eraserCanvasRef.current ? (eraserSize * (eraserCanvasRef.current.getBoundingClientRect().height / eraserCanvasRef.current.height)) : eraserSize,
+                              transform: 'translate(-50%, -50%)'
+                            }}
+                          >
+                            <div className="w-1 h-1 bg-white rounded-full shadow-sm" />
+                          </div>
+                        )}
+                      </div>
+                    ) : finalImageSrc ? (
+                      <img src={finalImageSrc} alt="Processed" className="w-full h-full object-contain" style={{ maxHeight: '100%', maxWidth: '100%' }} />
+                    ) : croppedImageSrc ? (
+                      <img src={croppedImageSrc} alt="Cropped Preview" className="w-full h-full object-contain" style={{ maxHeight: '100%', maxWidth: '100%' }} />
+                    ) : null}
+                  </div>
+                )}
 
                 {isProcessing && (
                   <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center z-10 rounded-2xl text-white p-4">
@@ -900,13 +983,18 @@ export default function PassportPhotoMaker() {
                           processBackgroundRemoval(croppedImageSrc!);
                         }}
                         disabled={isProcessing}
-                        className="p-3 rounded-xl border border-border hover:border-accent/50 flex flex-col items-center justify-center gap-2 transition-all"
+                        className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all ${
+                          bgRemovalChoice === 'auto' ? 'border-accent bg-accent/5 ring-1 ring-accent' : 'border-border hover:border-accent/50'
+                        }`}
                       >
                         <Wand2 className="w-5 h-5 text-accent" />
                         <span className="text-xs font-medium text-center">Auto Remove</span>
                       </button>
                       <button
-                        onClick={() => setIsEraserMode(!isEraserMode)}
+                        onClick={() => {
+                          setBgRemovalChoice('manual');
+                          setIsEraserMode(!isEraserMode);
+                        }}
                         disabled={isProcessing}
                         className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all ${
                           isEraserMode ? 'border-accent bg-accent/5 ring-1 ring-accent' : 'border-border hover:border-accent/50'
