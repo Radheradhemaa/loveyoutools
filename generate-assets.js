@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import pngToIco from 'png-to-ico';
 
-const INPUT_FILE = 'public/loveyoutools-logo.png';
+const INPUT_FILE = 'public/base-logo.png';
 const OUTPUT_DIRS = ['public/logo', 'public/favicon', 'public/pwa-icons', 'public/social-preview'];
 
 async function generateAssets() {
@@ -13,13 +13,34 @@ async function generateAssets() {
       await sharp(INPUT_FILE).metadata();
       isInputValid = true;
     } catch (e) {
-      console.error(`Warning: Input file ${INPUT_FILE} is corrupted or unsupported.`);
+      console.error(`Warning: Input file ${INPUT_FILE} is corrupted or unsupported. Generating a fallback base-logo.png.`);
     }
   }
 
   if (!isInputValid) {
-    console.error(`Error: Input file ${INPUT_FILE} not found or invalid.`);
-    return;
+    if (!fs.existsSync(INPUT_FILE)) {
+      console.error(`Warning: Input file ${INPUT_FILE} not found. Generating a fallback base-logo.png.`);
+    }
+    try {
+      await sharp({
+        create: {
+          width: 1024,
+          height: 1024,
+          channels: 4,
+          background: { r: 255, g: 75, b: 75, alpha: 1 } // #FF4B4B
+        }
+      })
+      .composite([{
+        input: Buffer.from(`<svg width="512" height="512" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`),
+        gravity: 'center'
+      }])
+      .png()
+      .toFile(INPUT_FILE);
+      console.log('Fallback base-logo.png generated successfully.');
+    } catch (e) {
+      console.error('Failed to generate fallback base-logo.png. Skipping asset generation:', e);
+      return;
+    }
   }
 
   // Create output directories
@@ -30,45 +51,37 @@ async function generateAssets() {
   });
 
   console.log('Generating Website Logos...');
-  const trimmedBuffer = await sharp(INPUT_FILE).toBuffer();
-  
-  // Overwrite public/logo.png with the trimmed version for direct use
-  await sharp(trimmedBuffer).toFile('public/logo.png.tmp');
-  fs.renameSync('public/logo.png.tmp', 'public/logo.png');
-
-  await sharp(trimmedBuffer).resize({ width: 512 }).toFile('public/logo/logo-512.png');
-  await sharp(trimmedBuffer).resize({ width: 1024 }).toFile('public/logo/logo-1024.png');
-  await sharp(trimmedBuffer).resize({ width: 2048 }).toFile('public/logo/logo-2048.png');
+  await sharp(INPUT_FILE).resize({ width: 512 }).toFile('public/logo/logo-512.png');
+  await sharp(INPUT_FILE).resize({ width: 1024 }).toFile('public/logo/logo-1024.png');
+  await sharp(INPUT_FILE).resize({ width: 2048 }).toFile('public/logo/logo-2048.png');
   
   // Generate the transparent logo used in Layout.tsx
-  await sharp(trimmedBuffer).resize({ width: 512 }).toFile('public/logo-transparent.png');
+  await sharp(INPUT_FILE).resize({ width: 512 }).toFile('public/logo-transparent.png');
 
   console.log('Generating Favicon Pack...');
-  await sharp(trimmedBuffer).resize(16, 16).toFile('public/favicon/favicon-16x16.png');
-  await sharp(trimmedBuffer).resize(32, 32).toFile('public/favicon/favicon-32x32.png');
-  await sharp(trimmedBuffer).resize(48, 48).toFile('public/favicon/favicon-48x48.png');
-  await sharp(trimmedBuffer).resize(64, 64).toFile('public/favicon/favicon-64x64.png');
+  await sharp(INPUT_FILE).resize(16, 16).toFile('public/favicon/favicon-16x16.png');
+  await sharp(INPUT_FILE).resize(32, 32).toFile('public/favicon/favicon-32x32.png');
+  await sharp(INPUT_FILE).resize(48, 48).toFile('public/favicon/favicon-48x48.png');
+  await sharp(INPUT_FILE).resize(64, 64).toFile('public/favicon/favicon-64x64.png');
   
   try {
     const icoBuffer = await pngToIco('public/favicon/favicon-32x32.png');
     fs.writeFileSync('public/favicon/favicon.ico', icoBuffer);
-    fs.writeFileSync('public/favicon.ico', icoBuffer); // Also in root
   } catch (e) {
     console.error('Warning: Failed to generate favicon.ico:', e);
   }
 
   console.log('Generating Apple Touch Icon...');
-  await sharp(trimmedBuffer).resize(180, 180).toFile('public/favicon/apple-touch-icon.png');
-  await sharp(trimmedBuffer).resize(180, 180).toFile('public/apple-touch-icon.png'); // Also in root
+  await sharp(INPUT_FILE).resize(180, 180).toFile('public/favicon/apple-touch-icon.png');
 
   console.log('Generating PWA Icons...');
-  await sharp(trimmedBuffer).resize(192, 192).toFile('public/pwa-icons/icon-192x192.png');
-  await sharp(trimmedBuffer).resize(512, 512).toFile('public/pwa-icons/icon-512x512.png');
+  await sharp(INPUT_FILE).resize(192, 192).toFile('public/pwa-icons/icon-192x192.png');
+  await sharp(INPUT_FILE).resize(512, 512).toFile('public/pwa-icons/icon-512x512.png');
 
   console.log('Generating Social Media Preview...');
   // Create a 1200x630 canvas with transparent background
   // Then composite the logo in the center
-  const metadata = await sharp(trimmedBuffer).metadata();
+  const metadata = await sharp(INPUT_FILE).metadata();
   
   // Calculate dimensions to fit within 1200x630 while maintaining aspect ratio
   // Leave some padding (e.g., max width 800, max height 500)
@@ -93,13 +106,13 @@ async function generateAssets() {
     }
   })
   .composite([{
-    input: await sharp(trimmedBuffer).resize({ width: logoWidth, height: logoHeight }).toBuffer(),
+    input: await sharp(INPUT_FILE).resize({ width: logoWidth, height: logoHeight }).toBuffer(),
     gravity: 'center'
   }])
   .toFile('public/social-preview/og-image.png');
 
   console.log('Generating Google Search Favicon...');
-  await sharp(trimmedBuffer).resize(48, 48).toFile('public/favicon/google-favicon-48x48.png');
+  await sharp(INPUT_FILE).resize(48, 48).toFile('public/favicon/google-favicon-48x48.png');
 
   console.log('All assets generated successfully!');
 }

@@ -99,11 +99,9 @@
     @apply sticky top-0 z-50 bg-white dark:bg-surface/80 backdrop-blur-md border-b border-border shadow-sm;
   }
 
-  .site-logo {
-    height: auto;
+  .logo {
+    height: 60px;
     width: auto;
-    max-height: 120px;
-    max-width: 400px;
     object-fit: contain;
   }
 
