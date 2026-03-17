@@ -30,7 +30,7 @@ export default function BlogPost() {
       "name": "LoveYouTools",
       "logo": {
         "@type": "ImageObject",
-        "url": `${window.location.origin}/loveyoutools-logo.png`
+        "url": `${window.location.origin}/assets/images/loveyoutools_transparent.png`
       }
     },
     "mainEntityOfPage": {

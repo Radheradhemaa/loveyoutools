@@ -111,6 +111,29 @@
     display: flex;
     align-items: center;
   }
+
+  .logo {
+    height: 50px;
+    width: auto;
+    object-fit: contain;
+    transition: transform 0.2s ease-in-out;
+  }
+
+  .logo:hover {
+    transform: scale(1.05);
+  }
+
+  @media (max-width: 768px) {
+    .logo {
+      height: 40px;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .logo {
+      height: 32px;
+    }
+  }
 }
 
 @layer utilities {

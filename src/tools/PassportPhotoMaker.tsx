@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Upload, Download, Settings, Image as ImageIcon, Layout, Sliders, Check, Loader2, X, Printer, Crop as CropIcon, ArrowRight, ArrowLeft, Wand2, Eraser, Undo, Redo, ScanFace, ZoomIn, ZoomOut, Scissors } from 'lucide-react';
+import { Upload, Download, Settings, Image as ImageIcon, Layout, Sliders, Check, Loader2, X, Printer, Crop as CropIcon, ArrowRight, ArrowLeft, Wand2, Eraser, Undo, Redo, ScanFace, ZoomIn, ZoomOut, Scissors, Sparkles } from 'lucide-react';
 import { removeBackground } from '@imgly/background-removal';
 import ReactCrop, { type Crop, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
@@ -16,28 +16,90 @@ interface Preset {
 let vision: any = null;
 let faceDetector: any = null;
 let segmenter: any = null;
+let isInitializing = false;
 
-const initAI = async () => {
-  if (vision) return;
-  vision = await FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm"
-  );
-  faceDetector = await FaceDetector.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
-      delegate: "GPU"
-    },
-    runningMode: "IMAGE"
-  });
-  segmenter = await ImageSegmenter.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
-      delegate: "GPU"
-    },
-    runningMode: "IMAGE",
-    outputCategoryMask: true,
-    outputConfidenceMasks: true
-  });
+const isWebGLSupported = () => {
+  try {
+    const canvas = document.createElement('canvas');
+    return !!(window.WebGLRenderingContext && (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')));
+  } catch (e) {
+    return false;
+  }
+};
+
+const initAI = async (onStatus?: (s: string) => void, forceCPU: boolean = false) => {
+  if (vision && faceDetector && segmenter) return;
+  if (isInitializing) {
+    // Wait for existing initialization
+    while (isInitializing) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    if (vision && faceDetector && segmenter) return;
+  }
+  
+  isInitializing = true;
+  
+  const loadAI = async (delegate: "GPU" | "CPU" = "GPU") => {
+    onStatus?.('Downloading AI engine...');
+    // Note: "INFO: Created TensorFlow Lite XNNPACK delegate for CPU" is a normal informational 
+    // message from MediaPipe indicating optimized CPU acceleration is active.
+    if (!vision) {
+      vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+      );
+    }
+    
+    onStatus?.(`Initializing ${delegate} models...`);
+    
+    // Load face detector and segmenter in parallel
+    const [fd, seg] = await Promise.all([
+      FaceDetector.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+          delegate: delegate
+        },
+        runningMode: "IMAGE"
+      }),
+      ImageSegmenter.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
+          delegate: delegate
+        },
+        runningMode: "IMAGE",
+        outputCategoryMask: true,
+        outputConfidenceMasks: true
+      })
+    ]);
+    
+    faceDetector = fd;
+    segmenter = seg;
+  };
+
+  try {
+    if (forceCPU || !isWebGLSupported()) {
+      await loadAI("CPU");
+    } else {
+      // Try with GPU first, with a 15s timeout
+      await Promise.race([
+        loadAI("GPU"),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("AI Init Timeout")), 15000))
+      ]);
+    }
+  } catch (e) {
+    console.warn("GPU AI Init failed or timed out, falling back to CPU:", e);
+    try {
+      // Fallback to CPU
+      await loadAI("CPU");
+    } catch (err) {
+      console.error("AI Initialization failed completely:", err);
+      vision = null;
+      faceDetector = null;
+      segmenter = null;
+      throw err;
+    }
+  } finally {
+    isInitializing = false;
+  }
 };
 
 const PAPER_SIZES = [
@@ -90,7 +152,7 @@ export default function PassportPhotoMaker() {
   const [selectedPreset, setSelectedPreset] = useState<Preset>(PRESETS[1]); // Default to India
   const [bgColor, setBgColor] = useState(COLORS[0].value);
   const [customColor, setCustomColor] = useState('#ffffff');
-  const [edgeCleanup, setEdgeCleanup] = useState(160); // Balanced default for hair
+  const [edgeCleanup, setEdgeCleanup] = useState(180); // Increased default for cleaner white background
   const [paperSizeId, setPaperSizeId] = useState<string>('single');
   const [customPaper, setCustomPaper] = useState({ width: 210, height: 297 });
   const [hasBorder, setHasBorder] = useState(true);
@@ -102,6 +164,16 @@ export default function PassportPhotoMaker() {
   const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState('');
   const [bgRemovalChoice, setBgRemovalChoice] = useState<'auto' | 'manual' | null>(null);
+  const [useCPUOnly, setUseCPUOnly] = useState(false);
+
+  const resetAI = () => {
+    vision = null;
+    faceDetector = null;
+    segmenter = null;
+    setIsProcessing(false);
+    setStatusText('');
+    setProgress(0);
+  };
 
   // Eraser states
   const [isEraserMode, setIsEraserMode] = useState(false);
@@ -211,7 +283,7 @@ export default function PassportPhotoMaker() {
     setIsProcessing(true);
     setStatusText('Detecting face...');
     try {
-      await initAI();
+      await initAI((status) => setStatusText(status), useCPUOnly);
       const img = imgRef.current;
       
       // We need to create a canvas to pass to mediapipe to ensure it reads the natural dimensions correctly
@@ -265,96 +337,128 @@ export default function PassportPhotoMaker() {
     setBgRemovalChoice('auto');
     setIsProcessing(true);
     setProgress(10);
-    setStatusText('Loading AI...');
+    setStatusText('Starting AI...');
     setIsEraserMode(false);
 
     try {
-      await initAI();
+      await initAI((status) => setStatusText(status), useCPUOnly);
       setProgress(30);
-      setStatusText('Segmenting...');
+      setStatusText('Preparing image...');
       
       const img = new Image();
       img.crossOrigin = "anonymous";
-      await new Promise((resolve) => {
+      await new Promise((resolve, reject) => {
         img.onload = resolve;
+        img.onerror = () => reject(new Error("Failed to load image"));
         img.src = imgSrc;
       });
 
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error("No context");
-      ctx.drawImage(img, 0, 0);
+      // Optimization: Resize image for segmentation (MediaPipe works best at smaller sizes)
+      const segmentationCanvas = document.createElement('canvas');
+      const maxSegDim = 1024; // Increased for better edge detail
+      let segW = img.width;
+      let segH = img.height;
+      if (segW > maxSegDim || segH > maxSegDim) {
+        if (segW > segH) {
+          segH = (segH / segW) * maxSegDim;
+          segW = maxSegDim;
+        } else {
+          segW = (segW / segH) * maxSegDim;
+          segH = maxSegDim;
+        }
+      }
+      segmentationCanvas.width = segW;
+      segmentationCanvas.height = segH;
+      const segCtx = segmentationCanvas.getContext('2d');
+      if (!segCtx) throw new Error("No segmentation context");
+      segCtx.drawImage(img, 0, 0, segW, segH);
+
+      setProgress(50);
+      setStatusText('Analyzing background...');
       
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      // Run segmentation on the resized image
+      const segmentationResult = segmenter.segment(segmentationCanvas);
+      if (!segmentationResult) throw new Error("Segmentation failed");
       
-      // Run segmentation
-      const segmentationResult = segmenter.segment(canvas);
       setProgress(80);
-      setStatusText('Refining edges...');
+      setStatusText('Applying mask...');
+
+      // Create the final high-res canvas
+      const finalCanvas = document.createElement('canvas');
+      finalCanvas.width = img.width;
+      finalCanvas.height = img.height;
+      const finalCtx = finalCanvas.getContext('2d');
+      if (!finalCtx) throw new Error("No final context");
+      finalCtx.drawImage(img, 0, 0);
       
-      // The confidence mask for category 0 (usually background) or 1 (person)
-      // selfie_segmenter returns confidence masks. Index 0 is background, Index 1 is person.
+      // Extract the mask
       let personMask: Float32Array;
       if (segmentationResult.confidenceMasks && segmentationResult.confidenceMasks.length > 1) {
         personMask = segmentationResult.confidenceMasks[1].getAsFloat32Array();
       } else if (segmentationResult.confidenceMasks && segmentationResult.confidenceMasks.length === 1) {
         personMask = segmentationResult.confidenceMasks[0].getAsFloat32Array();
       } else {
-        // Fallback to category mask if confidence mask fails
         const catMask = segmentationResult.categoryMask.getAsUint8Array();
         personMask = new Float32Array(catMask.length);
         for (let i = 0; i < catMask.length; i++) {
           personMask[i] = catMask[i] > 0 ? 1.0 : 0.0;
         }
       }
-      
-      const data = imageData.data;
-      if (personMask.length === canvas.width * canvas.height) {
-        for (let i = 0; i < personMask.length; i++) {
-          const confidence = personMask[i];
-          // Multiply original alpha by confidence
-          data[i * 4 + 3] = Math.round(data[i * 4 + 3] * confidence);
-        }
-        ctx.putImageData(imageData, 0, 0);
-      } else {
-        console.warn("Mask size mismatch. Expected", canvas.width * canvas.height, "got", personMask.length);
-        // Fallback to drawing the mask to a canvas and scaling it
-        const maskCanvas = document.createElement('canvas');
-        // The mask is likely 256x256
-        const maskWidth = segmentationResult.confidenceMasks[0].width;
-        const maskHeight = segmentationResult.confidenceMasks[0].height;
-        maskCanvas.width = maskWidth;
-        maskCanvas.height = maskHeight;
-        const maskCtx = maskCanvas.getContext('2d');
-        if (maskCtx) {
-          const maskImageData = maskCtx.createImageData(maskWidth, maskHeight);
-          for (let i = 0; i < personMask.length; i++) {
-            const val = Math.round(personMask[i] * 255);
-            maskImageData.data[i * 4] = val;
-            maskImageData.data[i * 4 + 1] = val;
-            maskImageData.data[i * 4 + 2] = val;
-            maskImageData.data[i * 4 + 3] = val; // Use alpha for destination-in
-          }
-          maskCtx.putImageData(maskImageData, 0, 0);
-          
-          // Draw scaled mask
-          ctx.globalCompositeOperation = 'destination-in';
-          ctx.drawImage(maskCanvas, 0, 0, canvas.width, canvas.height);
-          ctx.globalCompositeOperation = 'source-over';
-        }
-      }
 
-      const highResDataUrl = canvas.toDataURL('image/png', 1.0);
+      // Create a mask canvas to upscale
+      const maskCanvas = document.createElement('canvas');
+      const maskWidth = segmentationResult.confidenceMasks ? segmentationResult.confidenceMasks[0].width : segmentationResult.categoryMask.width;
+      const maskHeight = segmentationResult.confidenceMasks ? segmentationResult.confidenceMasks[0].height : segmentationResult.categoryMask.height;
+      maskCanvas.width = maskWidth;
+      maskCanvas.height = maskHeight;
+      const maskCtx = maskCanvas.getContext('2d');
+      if (maskCtx) {
+        const maskImageData = maskCtx.createImageData(maskWidth, maskHeight);
+        for (let i = 0; i < personMask.length; i++) {
+          // Apply a slight gamma correction to the mask to expand it slightly (5-10%)
+          // and ensure soft edges are preserved.
+          const alpha = Math.pow(personMask[i], 0.7); 
+          const val = Math.round(alpha * 255);
+          maskImageData.data[i * 4] = val;
+          maskImageData.data[i * 4 + 1] = val;
+          maskImageData.data[i * 4 + 2] = val;
+          maskImageData.data[i * 4 + 3] = val;
+        }
+        maskCtx.putImageData(maskImageData, 0, 0);
+        
+        // Refine mask edges
+        const refinedMaskCanvas = document.createElement('canvas');
+        refinedMaskCanvas.width = finalCanvas.width;
+        refinedMaskCanvas.height = finalCanvas.height;
+        const refinedMaskCtx = refinedMaskCanvas.getContext('2d');
+        if (refinedMaskCtx) {
+          refinedMaskCtx.imageSmoothingEnabled = true;
+          refinedMaskCtx.imageSmoothingQuality = 'high';
+          refinedMaskCtx.drawImage(maskCanvas, 0, 0, refinedMaskCanvas.width, refinedMaskCanvas.height);
+          
+          // Soft feathering
+          refinedMaskCtx.filter = 'blur(1.5px)';
+          refinedMaskCtx.globalCompositeOperation = 'copy';
+          refinedMaskCtx.drawImage(refinedMaskCanvas, 0, 0);
+          refinedMaskCtx.filter = 'none';
+        }
+
+        // Apply scaled mask to high-res image
+        finalCtx.globalCompositeOperation = 'destination-in';
+        finalCtx.drawImage(refinedMaskCanvas, 0, 0);
+        finalCtx.globalCompositeOperation = 'source-over';
+        
+        // Final sharpening and enhancement
+        finalCtx.filter = 'contrast(1.05) brightness(1.02)';
+        finalCtx.drawImage(finalCanvas, 0, 0);
+        finalCtx.filter = 'none';
+      }
       
-      // Free WASM memory
-      if (segmentationResult.categoryMask) {
-        segmentationResult.categoryMask.close();
-      }
-      if (segmentationResult.confidenceMasks) {
-        segmentationResult.confidenceMasks.forEach(m => m.close());
-      }
+      const highResDataUrl = finalCanvas.toDataURL('image/png', 1.0);
+      
+      // Cleanup
+      if (segmentationResult.categoryMask) segmentationResult.categoryMask.close();
+      if (segmentationResult.confidenceMasks) segmentationResult.confidenceMasks.forEach(m => m.close());
       
       // Update history
       const newHistory = history.slice(0, historyIndex + 1);
@@ -372,8 +476,9 @@ export default function PassportPhotoMaker() {
       
     } catch (error) {
       console.error('Error removing background:', error);
-      setStatusText('Error processing image');
+      setStatusText('Fast AI failed. You can try HQ AI or Manual Edit.');
       setIsProcessing(false);
+      // Don't auto-fallback to HQ as it might also hang if connection is the issue
     }
   };
 
@@ -393,7 +498,7 @@ export default function PassportPhotoMaker() {
         img.src = imgSrc;
       });
 
-      const maxDim = 640; // Optimized for high quality and speed
+      const maxDim = 1280; // Increased for HD quality
       let width = img.width;
       let height = img.height;
       if (width > maxDim || height > maxDim) {
@@ -465,8 +570,26 @@ export default function PassportPhotoMaker() {
             maskCtx.imageSmoothingQuality = 'high';
             maskCtx.drawImage(bgRemovedImg, 0, 0, originalImg.width, originalImg.height);
             
-            // Optional: Slight blur on the mask to smooth edges after upscaling
-            maskCtx.filter = 'blur(1px)';
+            // Advanced Mask Refinement:
+            // 1. Morphological Closing (Dilation then Erosion) to fill small holes
+            // We simulate this by drawing the mask with slight offsets
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = originalImg.width;
+            tempCanvas.height = originalImg.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            if (tempCtx) {
+              tempCtx.drawImage(maskCanvas, 0, 0);
+              
+              maskCtx.globalAlpha = 0.5;
+              maskCtx.drawImage(tempCanvas, 1, 1);
+              maskCtx.drawImage(tempCanvas, -1, -1);
+              maskCtx.drawImage(tempCanvas, 1, -1);
+              maskCtx.drawImage(tempCanvas, -1, 1);
+              maskCtx.globalAlpha = 1.0;
+            }
+
+            // 2. Soft Feathering for natural blending
+            maskCtx.filter = 'blur(2px)';
             maskCtx.globalCompositeOperation = 'copy';
             maskCtx.drawImage(maskCanvas, 0, 0);
             maskCtx.filter = 'none';
@@ -474,6 +597,13 @@ export default function PassportPhotoMaker() {
             // Apply mask to original image
             finalCtx.globalCompositeOperation = 'destination-in';
             finalCtx.drawImage(maskCanvas, 0, 0);
+            
+            // 3. Final Quality Enhancement: Sharpening
+            // We use a slight contrast and brightness boost to make the subject pop
+            finalCtx.globalCompositeOperation = 'source-over';
+            finalCtx.filter = 'contrast(1.05) brightness(1.02) saturate(1.02)';
+            finalCtx.drawImage(finalCanvas, 0, 0);
+            finalCtx.filter = 'none';
           }
         }
 
@@ -495,9 +625,13 @@ export default function PassportPhotoMaker() {
       };
       reader.readAsDataURL(bgRemovedBlob);
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error removing background:', error);
-      setStatusText('Error processing image');
+      let errorMessage = 'Error processing image';
+      if (error?.message?.includes("_OrtGetInputOutputMetadata")) {
+        errorMessage = "AI Engine incompatibility detected. Please try using 'Force CPU Mode' in troubleshooting or refresh the page.";
+      }
+      setStatusText(errorMessage);
       setIsProcessing(false);
     }
   };
@@ -698,13 +832,20 @@ export default function PassportPhotoMaker() {
       // 2. Color Decontamination, Edge Darkening & Sharpening
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
+      if (!(data instanceof Uint8ClampedArray)) {
+        console.error("ImageData.data is not a Uint8ClampedArray");
+        return;
+      }
       const width = canvas.width;
       const height = canvas.height;
       
       // Pass 1: Alpha Thresholding & Smoothing (Edge Cleanup)
       // This removes the faint halo and sharpens the edge slightly
       // edgeCleanup is 0-250. 
-      const cutoff = Math.floor((edgeCleanup / 250) * 100); // 0 to 100 alpha cutoff
+      // For white background, we use a slightly more aggressive threshold
+      const isWhiteBg = bgColor === '#ffffff';
+      const baseCutoff = Math.floor((edgeCleanup / 255) * 100);
+      const cutoff = isWhiteBg ? Math.max(baseCutoff, 60) : baseCutoff; 
       
       for (let i = 0; i < width * height; i++) {
         const idx = i * 4;
@@ -717,8 +858,10 @@ export default function PassportPhotoMaker() {
             // Rescale alpha to maintain smooth edges but remove the halo
             let newAlpha = ((a - cutoff) / (255 - cutoff)) * 255;
             
-            // Apply a slight curve to make the core solid and edges soft
-            newAlpha = Math.pow(newAlpha / 255, 1.2) * 255;
+            // Apply a curve to make the core solid and edges soft
+            // For white background, we want slightly sharper edges to avoid "gray halo"
+            const power = isWhiteBg ? 1.4 : 1.2;
+            newAlpha = Math.pow(newAlpha / 255, power) * 255;
             
             data[idx + 3] = Math.max(0, Math.min(255, newAlpha));
           }
@@ -729,15 +872,18 @@ export default function PassportPhotoMaker() {
       // For semi-transparent pixels, their color is mixed with the old background.
       // We pull their color towards the nearest fully opaque pixel.
       const processedData = new Uint8ClampedArray(data);
-      const searchRadius = Math.max(2, Math.floor(edgeCleanup / 40));
+      const searchRadius = Math.max(3, Math.floor(edgeCleanup / 35)); // Increased radius
       
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const idx = (y * width + x) * 4;
           const a = data[idx + 3];
+          const r_orig = data[idx];
+          const g_orig = data[idx + 1];
+          const b_orig = data[idx + 2];
 
           // Only process edge pixels
-          if (a > 0 && a < 250) {
+          if (a > 0 && a < 252) {
             let sumR = 0, sumG = 0, sumB = 0, weightSum = 0;
             
             for (let dy = -searchRadius; dy <= searchRadius; dy++) {
@@ -749,7 +895,7 @@ export default function PassportPhotoMaker() {
                   const nAlpha = data[nIdx + 3];
                   
                   // Sample from more opaque pixels
-                  if (nAlpha > a + 20 || nAlpha > 240) { 
+                  if (nAlpha > a + 15 || nAlpha > 245) { 
                     const distSq = dx * dx + dy * dy;
                     const weight = 1 / (1 + distSq);
                     sumR += data[nIdx] * weight;
@@ -768,14 +914,23 @@ export default function PassportPhotoMaker() {
 
               // Darken the edge slightly to hide remaining bright halos (common in hair)
               // The higher the edgeCleanup, the more we darken the edges
-              const darkenFactor = 0.90 - (edgeCleanup / 250) * 0.3; // 0.90 to 0.60
+              let darkenFactor = 0.92 - (edgeCleanup / 250) * 0.35; 
+              
+              // If target background is white, we need to be extra careful with bright fringes
+              if (isWhiteBg) {
+                // Detect if the original pixel was very bright (likely background remnant)
+                const brightness = (r_orig + g_orig + b_orig) / 3;
+                if (brightness > 200) {
+                  darkenFactor *= 0.85; // Extra darkening for bright fringes on white bg
+                }
+              }
+
               r *= darkenFactor;
               g *= darkenFactor;
               b *= darkenFactor;
 
               // Blend the decontaminated color with the original color
-              // The more transparent the pixel, the more we rely on the decontaminated color
-              const blend = Math.pow(1 - (a / 255), 0.7); 
+              const blend = Math.pow(1 - (a / 255), 0.6); 
               processedData[idx] = data[idx] * (1 - blend) + r * blend;
               processedData[idx + 1] = data[idx + 1] * (1 - blend) + g * blend;
               processedData[idx + 2] = data[idx + 2] * (1 - blend) + b * blend;
@@ -783,12 +938,14 @@ export default function PassportPhotoMaker() {
           }
         }
       }
-      data.set(processedData);
+      if (processedData instanceof Uint8ClampedArray && typeof data.set === 'function') {
+        data.set(processedData);
+      }
 
       // Pass 3: Studio Sharpening & Detail Enhancement
       const sharpenedData = new Uint8ClampedArray(data);
-      const amount = 0.85; 
-      const contrast = 1.18; 
+      const amount = isWhiteBg ? 1.4 : 0.9; // Increased sharpening
+      const contrast = isWhiteBg ? 1.35 : 1.2; // Increased contrast
       
       for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
@@ -810,11 +967,38 @@ export default function PassportPhotoMaker() {
             // 2. Contrast Adjustment
             val = ((val / 255 - 0.5) * contrast + 0.5) * 255;
             
+            // 3. Brightness Adjustment (Subtle boost for passport look)
+            if (isWhiteBg) {
+              val += 8; // Slightly more brightness boost
+            }
+            
             sharpenedData[idx + c] = Math.min(255, Math.max(0, val));
           }
         }
       }
-      data.set(sharpenedData);
+      if (sharpenedData instanceof Uint8ClampedArray && typeof data.set === 'function') {
+        data.set(sharpenedData);
+      }
+
+      // Pass 4: Background Whitening (Final Polish)
+      // This ensures that any stray pixels that are almost white are pushed to pure white
+      // if they are near the edges.
+      if (isWhiteBg) {
+        for (let i = 0; i < width * height; i++) {
+          const idx = i * 4;
+          const a = data[idx + 3];
+          if (a < 255 && a > 0) {
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+            // If the pixel is very bright and semi-transparent, it's likely a background artifact
+            // We use a slightly lower threshold (225) to catch more "grayish" artifacts
+            if (r > 225 && g > 225 && b > 225) {
+              data[idx + 3] = Math.max(0, a - 120); // Even stronger fade for artifacts on white bg
+            }
+          }
+        }
+      }
       
       // 3. Create a temporary canvas with the processed image
       const tempCanvas = document.createElement('canvas');
@@ -1149,12 +1333,18 @@ export default function PassportPhotoMaker() {
                   <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center z-10 rounded-2xl text-white p-4">
                     <Loader2 className="w-8 h-8 sm:w-12 sm:h-12 animate-spin mb-4" />
                     <div className="text-sm sm:text-lg font-bold mb-2 drop-shadow-md text-center">{statusText}</div>
-                    <div className="w-full max-w-[200px] sm:max-w-xs h-1.5 sm:h-2 bg-white/20 rounded-full overflow-hidden backdrop-blur-sm">
+                    <div className="w-full max-w-[200px] sm:max-w-xs h-1.5 sm:h-2 bg-white/20 rounded-full overflow-hidden backdrop-blur-sm mb-4">
                       <div 
                         className="h-full bg-white transition-all duration-300 ease-out"
                         style={{ width: `${progress}%` }}
                       />
                     </div>
+                    <button 
+                      onClick={() => setIsProcessing(false)}
+                      className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-medium transition-colors border border-white/20"
+                    >
+                      Cancel / Stop AI
+                    </button>
                   </div>
                 )}
               </div>
@@ -1258,20 +1448,35 @@ export default function PassportPhotoMaker() {
                         }`}
                       >
                         <Wand2 className="w-5 h-5 text-accent" />
-                        <span className="text-xs font-medium text-center">AI Remove (Fast)</span>
+                        <span className="text-[10px] font-medium text-center">AI Remove (Fast)</span>
                       </button>
+                      <button
+                        onClick={() => {
+                          setIsEraserMode(false);
+                          processBackgroundRemoval(croppedImageSrc!);
+                        }}
+                        disabled={isProcessing}
+                        className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all ${
+                          bgRemovalChoice === 'auto' && !isEraserMode ? 'border-accent bg-accent/5 ring-1 ring-accent' : 'border-border hover:border-accent/50'
+                        }`}
+                      >
+                        <ImageIcon className="w-5 h-5 text-accent" />
+                        <span className="text-[10px] font-medium text-center">AI Remove (HQ)</span>
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
                       <button
                         onClick={() => {
                           setBgRemovalChoice('manual');
                           setIsEraserMode(!isEraserMode);
                         }}
                         disabled={isProcessing}
-                        className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all ${
+                        className={`p-3 rounded-xl border flex flex-row items-center justify-center gap-2 transition-all ${
                           isEraserMode ? 'border-accent bg-accent/5 ring-1 ring-accent' : 'border-border hover:border-accent/50'
                         }`}
                       >
                         <Eraser className={`w-5 h-5 ${isEraserMode ? 'text-accent' : 'text-text-muted'}`} />
-                        <span className="text-xs font-medium text-center">Manual Edit</span>
+                        <span className="text-xs font-medium text-center">Manual Eraser / Touch-up</span>
                       </button>
                     </div>
 
@@ -1371,7 +1576,18 @@ export default function PassportPhotoMaker() {
                   </div>
 
                   <div className="space-y-4 pt-4 border-t border-border">
-                    <h3 className="font-bold text-sm text-text-muted uppercase tracking-wider">Background Color</h3>
+                    <div className="flex justify-between items-center">
+                      <h3 className="font-bold text-sm text-text-muted uppercase tracking-wider">Background Color</h3>
+                      <button 
+                        onClick={() => {
+                          setBgColor('#ffffff');
+                          setEdgeCleanup(200);
+                        }}
+                        className="text-[10px] font-bold text-accent hover:underline flex items-center gap-1"
+                      >
+                        <Sparkles className="w-3 h-3" /> Clean White
+                      </button>
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
                       {COLORS.map(color => (
                         <button
@@ -1430,7 +1646,7 @@ export default function PassportPhotoMaker() {
                     <input 
                       type="range" 
                       min="0" 
-                      max="250" 
+                      max="255" 
                       value={edgeCleanup}
                       onChange={(e) => setEdgeCleanup(parseInt(e.target.value))}
                       className="w-full accent-accent"
@@ -1438,6 +1654,33 @@ export default function PassportPhotoMaker() {
                     <p className="text-xs text-text-muted mt-2">
                       Increase to remove stray hairs and color halos. Decrease if the edges look too sharp.
                     </p>
+                  </div>
+
+                  <div className="pt-4 border-t border-border">
+                    <h3 className="font-bold text-sm text-text-muted uppercase tracking-wider mb-2">Troubleshooting</h3>
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2 p-2 rounded-lg hover:bg-bg-secondary cursor-pointer transition-colors">
+                        <input 
+                          type="checkbox" 
+                          checked={useCPUOnly}
+                          onChange={(e) => {
+                            setUseCPUOnly(e.target.checked);
+                            resetAI();
+                          }}
+                          className="w-4 h-4 accent-accent"
+                        />
+                        <span className="text-xs font-medium">Force CPU Mode (Slower but safer)</span>
+                      </label>
+                      <button
+                        onClick={resetAI}
+                        className="w-full p-2 rounded-lg border border-border hover:bg-bg-secondary text-[10px] font-bold uppercase tracking-tighter flex items-center justify-center gap-1"
+                      >
+                        <Wand2 className="w-3 h-3" /> Reset AI Engine
+                      </button>
+                      <p className="text-[10px] text-text-muted leading-tight">
+                        If AI is stuck loading, try switching to CPU mode or resetting the engine.
+                      </p>
+                    </div>
                   </div>
                 </div>
               )}

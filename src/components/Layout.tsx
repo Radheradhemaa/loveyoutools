@@ -42,7 +42,7 @@ export default function Layout() {
           "@type": "Organization",
           "name": "LoveYouTools",
           "url": "https://loveyou.tools/",
-          "logo": "https://loveyou.tools/loveyoutools-logo.png",
+          "logo": "https://ais-pre-g4i6vydec7wo7mixhcz2k6-204752250701.asia-southeast1.run.app/assets/images/loveyoutools_transparent.png",
           "sameAs": [
             "https://twitter.com/loveyoutools",
             "https://github.com/loveyoutools"
@@ -56,10 +56,13 @@ export default function Layout() {
           <Link to="/" className="flex items-center gap-2 group" onClick={() => setSearchQuery('')}>
             <div className="relative flex items-center">
               <img 
-                src="/loveyoutools-logo.png?v=5" 
-                alt="LoveYouTools Logo" 
+                src="/assets/images/loveyoutools_transparent.png" 
+                alt="LoveYouTools - Free Online Tools Platform" 
+                title="LoveYouTools - Free Online Tools Platform"
+                width="200"
+                height="50"
                 loading="eager"
-                className="h-20 md:h-24 w-auto object-contain transition-all duration-300 hover:scale-105"
+                className="logo"
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
                   target.style.display = 'none';
@@ -220,10 +223,13 @@ export default function Layout() {
               <Link to="/" className="flex items-center mb-6" onClick={() => setSearchQuery('')}>
                 <div className="relative flex items-center">
                   <img 
-                    src="/loveyoutools-logo.png?v=5" 
-                    alt="LoveYouTools Logo" 
+                    src="/assets/images/loveyoutools_transparent.png" 
+                    alt="LoveYouTools - Free Online Tools Platform" 
+                    title="LoveYouTools - Free Online Tools Platform"
+                    width="200"
+                    height="50"
                     loading="lazy"
-                    className="h-20 w-auto object-contain mb-4"
+                    className="logo mb-4"
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
                       target.style.display = 'none';
