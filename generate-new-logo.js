@@ -77,30 +77,43 @@ dirs.forEach(dir => {
 fs.writeFileSync('public/logo/loveyoutools-logo.svg', svgContent);
 
 async function generate() {
-  const svgBuffer = Buffer.from(svgContent);
-  const squareBuffer = Buffer.from(squareSvgContent);
+  const inputLogo = 'public/logo.png';
   
+  if (!fs.existsSync(inputLogo)) {
+    console.warn('public/logo.png not found. Please upload the new logo first.');
+    return;
+  }
+
   // Base transparent PNG for the new path
-  await sharp(svgBuffer)
+  await sharp(inputLogo)
+    .resize({ height: 200, fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
     .toFile('public/assets/images/loveyoutools_transparent.png');
   
   // Base transparent PNG
-  await sharp(svgBuffer)
+  await sharp(inputLogo)
+    .resize({ height: 200, fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
     .toFile('public/logo/loveyoutools-logo.png');
   
   // Also keep the root one just in case
-  await sharp(svgBuffer)
+  await sharp(inputLogo)
+    .resize({ height: 200, fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
     .toFile('public/loveyoutools-logo.png');
 
   // Overwrite base-logo.png for other asset generation
-  await sharp(svgBuffer)
+  await sharp(inputLogo)
+    .resize({ height: 200, fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
     .toFile('public/base-logo.png');
 
-  // Favicons
+  // Favicons (using square crop of the logo)
+  const squareBuffer = await sharp(inputLogo)
+    .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toBuffer();
+  
   await sharp(squareBuffer).resize(16, 16).png().toFile('public/favicon/favicon-16x16.png');
   await sharp(squareBuffer).resize(32, 32).png().toFile('public/favicon/favicon-32x32.png');
   await sharp(squareBuffer).resize(192, 192).png().toFile('public/pwa-icons/icon-192x192.png');
@@ -111,7 +124,7 @@ async function generate() {
   const icoBuffer = await pngToIco('public/favicon/favicon-32x32.png');
   fs.writeFileSync('public/favicon/favicon.ico', icoBuffer);
   
-  console.log('All logo assets generated successfully!');
+  console.log('All logo assets generated successfully from public/logo.png!');
 }
 
 generate().catch(console.error);
