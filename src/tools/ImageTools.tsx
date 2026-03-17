@@ -247,7 +247,7 @@ export default function ImageTools({ toolId }: { toolId: string }) {
               </div>
 
               {toolId === 'image-metadata-viewer' ? (
-                <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+                <div className="space-y-4 max-h-[85vh] overflow-y-auto pr-2">
                   {images.map((img, idx) => (
                     <div key={idx} className="bg-surface border border-border rounded-lg p-4 relative group">
                       <button 
@@ -271,7 +271,7 @@ export default function ImageTools({ toolId }: { toolId: string }) {
                   ))}
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-h-[500px] overflow-y-auto pr-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-h-[85vh] overflow-y-auto pr-2">
                   {images.map((img, idx) => (
                     <div key={idx} className="relative group rounded-lg overflow-hidden border border-border bg-surface aspect-square flex flex-col">
                       <div className="flex-1 relative flex items-center justify-center p-2">

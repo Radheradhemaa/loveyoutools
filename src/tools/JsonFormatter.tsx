@@ -61,7 +61,7 @@ export default function JsonFormatter() {
             </button>
           </div>
           <textarea
-            className="fta min-h-[400px] text-sm"
+            className="fta min-h-[80vh] text-sm"
             placeholder='{"key": "value"}'
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -87,14 +87,14 @@ export default function JsonFormatter() {
           </div>
           
           {error ? (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-[9px] p-4 min-h-[400px] flex flex-col items-center justify-center text-center">
+            <div className="bg-red-500/10 border border-red-500/20 rounded-[9px] p-4 min-h-[80vh] flex flex-col items-center justify-center text-center">
               <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
               <h3 className="text-red-600 font-bold text-lg mb-2">Invalid JSON</h3>
               <p className="text-red-500/80 font-mono text-sm break-all">{error}</p>
             </div>
           ) : (
             <textarea
-              className="fta min-h-[400px] text-sm bg-bg-secondary cursor-text"
+              className="fta min-h-[80vh] text-sm bg-bg-secondary cursor-text"
               value={output}
               readOnly
               placeholder="Result will appear here..."

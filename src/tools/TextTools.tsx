@@ -93,11 +93,11 @@ export default function TextTools({ toolId }: { toolId: string }) {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="fg">
             <label className="fl">Original Text</label>
-            <textarea className="fta min-h-[200px]" value={input} onChange={e => setInput(e.target.value)} />
+            <textarea className="fta min-h-[60vh]" value={input} onChange={e => setInput(e.target.value)} />
           </div>
           <div className="fg">
             <label className="fl">Changed Text</label>
-            <textarea className="fta min-h-[200px]" value={input2} onChange={e => setInput2(e.target.value)} />
+            <textarea className="fta min-h-[60vh]" value={input2} onChange={e => setInput2(e.target.value)} />
           </div>
           <div className="col-span-1 lg:col-span-2">
             <button onClick={() => processText('compare')} className="btn bp w-full">Compare Texts</button>
@@ -117,7 +117,7 @@ export default function TextTools({ toolId }: { toolId: string }) {
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
-          <textarea className="fta min-h-[200px]" value={input} onChange={e => setInput(e.target.value)} placeholder="Enter text here..." />
+          <textarea className="fta min-h-[60vh]" value={input} onChange={e => setInput(e.target.value)} placeholder="Enter text here..." />
           
           <div className="brow">
             {toolId === 'case-conv' && (
@@ -177,7 +177,7 @@ export default function TextTools({ toolId }: { toolId: string }) {
             {copied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
           </button>
         </div>
-        <textarea className="fta min-h-[200px] bg-bg-secondary" value={output} readOnly placeholder="Result will appear here..." />
+        <textarea className="fta min-h-[60vh] bg-bg-secondary" value={output} readOnly placeholder="Result will appear here..." />
       </div>
     </div>
   );

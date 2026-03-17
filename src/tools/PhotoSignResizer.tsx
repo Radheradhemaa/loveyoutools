@@ -210,7 +210,7 @@ export default function PhotoSignResizer() {
                 </div>
                 <div className="flex flex-col items-center gap-6">
                   <div className="bg-bg-secondary p-2 rounded-lg border border-border shadow-inner">
-                    <img src={result.url} alt="Result" loading="lazy" className="max-w-full h-auto shadow-sm" />
+                    <img src={result.url} alt="Result" loading="lazy" className="max-w-full max-h-[85vh] object-contain shadow-sm" />
                   </div>
                   <button onClick={downloadResult} className="btn bp w-full max-w-md gap-2">
                     <Download className="w-4 h-4" /> Download {fileName}_{result.width}x{result.height}_{targetKB}kb.jpg

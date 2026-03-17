@@ -73,6 +73,8 @@ export default function AdvancedPdfCropper() {
       const loadingTask = pdfjs.getDocument({
         data: arrayBuffer,
         password: pwd,
+        cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+        cMapPacked: true,
       });
 
       const pdf = await loadingTask.promise;
@@ -102,7 +104,9 @@ export default function AdvancedPdfCropper() {
       setPagesData(newPagesData);
     } catch (error: any) {
       console.error('Error loading PDF:', error);
-      if (error.name === 'PasswordException') {
+      const isPasswordError = error.name === 'PasswordException' || 
+                              error.message?.toLowerCase().includes('password');
+      if (isPasswordError) {
         setNeedsPasswordForFile(fileIdx);
         if (pwd) setPasswordError('Incorrect password');
       } else {
@@ -377,7 +381,7 @@ export default function AdvancedPdfCropper() {
         const file = files[fIdx];
         const arrayBuffer = await file.arrayBuffer();
         const pwd = passwords[fIdx];
-        const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+        const pdfDoc = await PDFDocument.load(arrayBuffer, { password: pwd, ignoreEncryption: true } as any);
         const pages = pdfDoc.getPages();
 
         for (let pIdx = 0; pIdx < pages.length; pIdx++) {
@@ -559,7 +563,7 @@ export default function AdvancedPdfCropper() {
   }
 
   return (
-    <div className="flex flex-col h-[850px] bg-bg-secondary rounded-[14px] border border-border overflow-hidden">
+    <div className="flex flex-col h-[85vh] min-h-[800px] bg-bg-secondary rounded-[14px] border border-border overflow-hidden">
       {/* Top Toolbar */}
       <div className="bg-surface border-b border-border p-3 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">

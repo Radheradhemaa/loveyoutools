@@ -315,7 +315,7 @@ export default function QrGenerator() {
       </div>
 
       <div className="space-y-6">
-        <div className="bg-surface border border-border rounded-2xl p-8 flex flex-col items-center justify-center min-h-[400px] sticky top-8">
+        <div className="bg-surface border border-border rounded-2xl p-8 flex flex-col items-center justify-center min-h-[60vh] sticky top-8">
           <div 
             ref={qrRef} 
             className="p-4 rounded-2xl shadow-xl mb-8 transition-all bg-white flex items-center justify-center"

@@ -43,11 +43,17 @@ export default function PdfTools({ toolId }: { toolId: string }) {
       if (selectedFiles[0] && selectedFiles[0].type === 'application/pdf') {
         try {
           const arrayBuffer = await selectedFiles[0].arrayBuffer();
-          await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          await pdfjsLib.getDocument({ 
+            data: arrayBuffer,
+            cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
+            cMapPacked: true,
+          }).promise;
           setIsEncrypted(false);
           setWarning(null);
         } catch (err: any) {
-          if (err.name === 'PasswordException') {
+          const isPasswordError = err.name === 'PasswordException' || 
+                                  err.message?.toLowerCase().includes('password');
+          if (isPasswordError) {
             setIsEncrypted(true);
             setWarning("This PDF is password protected. Please enter the password in the Settings panel to process it.");
           }
@@ -112,7 +118,9 @@ export default function PdfTools({ toolId }: { toolId: string }) {
         const fileBuffer = await files[0].arrayBuffer();
         const loadingTask = pdfjsLib.getDocument({ 
           data: fileBuffer,
-          password: documentPassword || undefined
+          password: documentPassword || undefined,
+          cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
+          cMapPacked: true,
         });
         const pdf = await loadingTask.promise;
         const numPages = pdf.numPages;
@@ -174,13 +182,19 @@ export default function PdfTools({ toolId }: { toolId: string }) {
         pdfDoc = await PDFDocument.create();
         for (const file of files) {
           const fileBuffer = await file.arrayBuffer();
-          const srcDoc = await PDFDocument.load(fileBuffer, { ignoreEncryption: true });
+          const srcDoc = await PDFDocument.load(fileBuffer, { 
+            password: documentPassword || undefined,
+            ignoreEncryption: true 
+          } as any);
           const copiedPages = await pdfDoc.copyPages(srcDoc, srcDoc.getPageIndices());
           copiedPages.forEach((page) => pdfDoc.addPage(page));
         }
       } else {
         const fileBuffer = await files[0].arrayBuffer();
-        pdfDoc = await PDFDocument.load(fileBuffer, { ignoreEncryption: true });
+        pdfDoc = await PDFDocument.load(fileBuffer, { 
+          password: documentPassword || undefined,
+          ignoreEncryption: true 
+        } as any);
 
         // Helper to parse page numbers
         const parsePages = (inputStr: string, maxPages: number) => {
@@ -353,9 +367,11 @@ export default function PdfTools({ toolId }: { toolId: string }) {
       setOutput(url);
     } catch (err: any) {
       console.error(err);
-      if (err.name === 'PasswordException') {
+      const isPasswordError = err.name === 'PasswordException' || 
+                              err.message?.toLowerCase().includes('password');
+      if (isPasswordError) {
         setError("Incorrect password. Please enter the correct password for this PDF.");
-      } else if (err.message?.toLowerCase().includes('encrypted') || err.message?.toLowerCase().includes('password')) {
+      } else if (err.message?.toLowerCase().includes('encrypted')) {
         setError("This specific tool does not support editing encrypted PDFs. Please remove the password first.");
       } else {
         setError("Failed to process PDF. " + (err.message || "Please ensure the file is valid."));
@@ -449,7 +465,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             </div>
             
             {toolId === 'pdf-reader' && files.length > 0 && (
-              <div className="mt-6 h-[600px]">
+              <div className="mt-6 h-[85vh] min-h-[800px]">
                 <iframe src={URL.createObjectURL(files[0])} className="w-full h-full rounded-lg border border-border" />
               </div>
             )}

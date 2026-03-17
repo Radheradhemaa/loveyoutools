@@ -100,7 +100,7 @@ export default function SeoTools({ toolId }: { toolId: string }) {
               {copied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
             </button>
           </div>
-          <textarea className="fta min-h-[300px] bg-bg-secondary font-mono" value={output} readOnly placeholder="Result will appear here..." />
+          <textarea className="fta min-h-[60vh] bg-bg-secondary font-mono" value={output} readOnly placeholder="Result will appear here..." />
         </div>
       </div>
     </div>

@@ -84,6 +84,7 @@ export const tools = [
   { id: 'text-encoder-decoder', c: 'text', n: 'Text Encoder/Decoder', d: 'Encode/decode text formats.', i: '🔐', b: '#ede9fe' },
 
   // DEVELOPER TOOLS (bg: #dbeafe)
+  { id: 'dynamic-previewer', c: 'developer', n: 'Dynamic File Previewer', d: 'Preview images, PDFs, SVGs, and text files with dynamic resizing.', i: '👁️', b: '#dbeafe', popular: true },
   { id: 'json-formatter-validator', c: 'developer', n: 'JSON Formatter & Validator', d: 'Format and validate JSON.', i: '{ }', b: '#dbeafe', popular: true },
   { id: 'base64-encode-decode', c: 'developer', n: 'Base64 Encode/Decode', d: 'Encode/decode Base64 strings.', i: '🔐', b: '#dbeafe', popular: true },
   { id: 'url-encode-decode', c: 'developer', n: 'URL Encode/Decode', d: 'Encode/decode URLs.', i: '🔗', b: '#dbeafe' },

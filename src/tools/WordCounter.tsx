@@ -72,7 +72,7 @@ export default function WordCounter() {
           </div>
         </div>
         <textarea
-          className="fta min-h-[250px] text-base"
+          className="fta min-h-[60vh] text-base"
           placeholder="Start typing or paste your text here..."
           value={text}
           onChange={(e) => setText(e.target.value)}

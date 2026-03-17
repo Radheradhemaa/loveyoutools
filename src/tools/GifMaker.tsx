@@ -103,7 +103,7 @@ export default function GifMaker() {
             {output && (
               <div className="bg-bg-secondary rounded-[14px] p-4 flex flex-col items-center justify-center min-h-[300px]">
                 <h3 className="font-bold mb-4">Generated GIF</h3>
-                <img src={output} alt="Generated GIF" className="max-w-full max-h-[400px] object-contain rounded-lg shadow-md" />
+                <img src={output} alt="Generated GIF" className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-md" />
               </div>
             )}
             

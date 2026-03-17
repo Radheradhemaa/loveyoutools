@@ -1121,7 +1121,7 @@ export default function PassportPhotoMaker() {
                     src={imageSrc} 
                     alt="Upload" 
                     onLoad={onImageLoad}
-                    style={{ maxHeight: 'calc(100vh - 16rem)', maxWidth: '100%' }}
+                    style={{ maxHeight: 'calc(100vh - 10rem)', maxWidth: '100%' }}
                     className="block w-auto h-auto"
                   />
                 </ReactCrop>
@@ -1136,8 +1136,8 @@ export default function PassportPhotoMaker() {
                   className="relative shadow-2xl rounded-sm overflow-hidden flex items-center justify-center bg-white transition-all duration-200 origin-top" 
                   style={{
                     aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : (completedCrop ? `${completedCrop.width} / ${completedCrop.height}` : 'auto'),
-                    height: `${60 * zoom}vh`,
-                    minHeight: `${60 * zoom}vh`,
+                    height: `${85 * zoom}vh`,
+                    minHeight: `${85 * zoom}vh`,
                     backgroundColor: bgColor === 'custom' ? customColor : (bgColor !== 'transparent' ? bgColor : 'transparent'),
                     backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 20px 20px' : 'none'
                   }}

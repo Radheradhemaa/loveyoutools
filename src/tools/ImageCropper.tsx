@@ -205,7 +205,7 @@ export default function ImageCropper() {
                 <div className="flex flex-col items-center justify-center min-h-[300px] bg-surface rounded-lg p-2">
                   {currentImage.output ? (
                     <div className="relative">
-                      <img src={currentImage.output} alt="Cropped" className="max-w-full max-h-[500px] object-contain shadow-md rounded-lg" />
+                      <img src={currentImage.output} alt="Cropped" className="max-w-full max-h-[85vh] object-contain shadow-md rounded-lg" />
                       <button 
                         onClick={() => {
                           setImages(prev => {
@@ -226,7 +226,7 @@ export default function ImageCropper() {
                       onComplete={(c) => setCompletedCrop(c)}
                       aspect={aspect}
                     >
-                      <img ref={imgRef} src={currentImage.preview} onLoad={onLoad} alt="Crop me" className="max-w-full max-h-[500px] object-contain" />
+                      <img ref={imgRef} src={currentImage.preview} onLoad={onLoad} alt="Crop me" className="max-w-full max-h-[85vh] object-contain" />
                     </ReactCrop>
                   )}
                 </div>

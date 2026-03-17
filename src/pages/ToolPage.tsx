@@ -32,6 +32,7 @@ import ImageCropper from '../tools/ImageCropper';
 import ImageColorPicker from '../tools/ImageColorPicker';
 import GifMaker from '../tools/GifMaker';
 import SvgToPngConverter from '../tools/SvgToPngConverter';
+import DynamicPreviewer from '../components/DynamicPreviewer';
 
 export default function ToolPage() {
   const { id } = useParams<{ id: string }>();
@@ -90,6 +91,7 @@ export default function ToolPage() {
     if (tool.id === 'image-color-picker') return <ImageColorPicker />;
     if (tool.id === 'gif-maker') return <GifMaker />;
     if (tool.id === 'svg-to-png') return <SvgToPngConverter />;
+    if (tool.id === 'dynamic-previewer') return <DynamicPreviewer />;
 
     // Category handlers
     if (tool.c === 'text') return <TextTools toolId={tool.id} />;
@@ -238,9 +240,9 @@ export default function ToolPage() {
         <span className="text-text-primary font-medium truncate">{tool.n}</span>
       </nav>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8">
         {/* Main Tool Area */}
-        <div className="lg:col-span-2 space-y-6 sm:space-y-8">
+        <div className="lg:col-span-9 space-y-6 sm:space-y-8">
           {/* Tool Header */}
           <div className="flex flex-col sm:flex-row items-start gap-4 sm:gap-6">
             <div 
@@ -410,7 +412,7 @@ export default function ToolPage() {
         </div>
 
         {/* Sidebar */}
-        <div className="space-y-8">
+        <div className="lg:col-span-3 space-y-8">
           {/* Share Box */}
           <div className="bg-surface border border-border rounded-[14px] p-6 shadow-sm">
             <h3 className="font-bold text-lg mb-4 flex items-center gap-2">

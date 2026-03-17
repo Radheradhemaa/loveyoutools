@@ -474,7 +474,7 @@ export default function SvgToPngConverter() {
   }
 
   return (
-    <div className="w-full max-w-[1920px] mx-auto p-4 h-[calc(100vh-80px)] flex flex-col">
+    <div className="w-full max-w-[1920px] mx-auto p-4 h-[85vh] min-h-[800px] flex flex-col">
       {/* Top Bar */}
       <div className="bg-bg-surface border border-border rounded-xl p-4 mb-4 flex items-center justify-between shadow-sm shrink-0">
         <div className="flex items-center gap-4">

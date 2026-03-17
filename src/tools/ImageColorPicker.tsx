@@ -160,7 +160,7 @@ export default function ImageColorPicker() {
                     onLoad={handleImageLoad}
                     onMouseMove={handleMouseMove}
                     onClick={() => color && copyToClipboard(color)}
-                    className="max-w-full max-h-[500px] object-contain shadow-md rounded-lg" 
+                    className="max-w-full max-h-[85vh] object-contain shadow-md rounded-lg" 
                   />
                   <canvas ref={canvasRef} className="hidden" />
                 </div>

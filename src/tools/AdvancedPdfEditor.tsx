@@ -106,7 +106,9 @@ export default function AdvancedPdfEditor() {
       generateThumbnails(pdf);
     } catch (error: any) {
       console.error('Error loading PDF:', error);
-      if (error.name === 'PasswordException') {
+      const isPasswordError = error.name === 'PasswordException' || 
+                              error.message?.toLowerCase().includes('password');
+      if (isPasswordError) {
         setNeedsPassword(true);
         if (pwd) setPasswordError('Incorrect password');
       } else {
@@ -645,8 +647,14 @@ export default function AdvancedPdfEditor() {
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const pdfDoc = await PDFDocument.load(arrayBuffer);
+      const pdfDoc = await PDFDocument.load(arrayBuffer, { password, ignoreEncryption: true } as any);
       const pages = pdfDoc.getPages();
+      const pdfjsDoc = await pdfjs.getDocument({ 
+        data: arrayBuffer, 
+        password,
+        cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+        cMapPacked: true,
+      }).promise;
 
       for (let pageNum = 1; pageNum <= pages.length; pageNum++) {
         const pageLib = pages[pageNum - 1];
@@ -664,7 +672,7 @@ export default function AdvancedPdfEditor() {
         await tempCanvas.loadFromJSON(data);
         
         const objects = tempCanvas.getObjects();
-        const currentViewport = (await (await pdfjs.getDocument(arrayBuffer).promise).getPage(pageNum)).getViewport({ scale: zoom });
+        const currentViewport = (await pdfjsDoc.getPage(pageNum)).getViewport({ scale: zoom });
         const scaleX = width / currentViewport.width;
         const scaleY = height / currentViewport.height;
 
@@ -856,7 +864,7 @@ export default function AdvancedPdfEditor() {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[800px]">
+    <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 h-[85vh] min-h-[800px]">
       {/* Sidebar - Thumbnails */}
       <div className="hidden lg:flex flex-col bg-surface border border-border rounded-[14px] overflow-hidden">
         <div className="p-3 border-b border-border bg-bg-secondary font-semibold text-sm">
@@ -886,7 +894,7 @@ export default function AdvancedPdfEditor() {
       </div>
 
       {/* Editor Main Area */}
-      <div className="col-span-1 lg:col-span-2 flex flex-col bg-bg-secondary rounded-[14px] border border-border overflow-hidden">
+      <div className="col-span-1 lg:col-span-3 flex flex-col bg-bg-secondary rounded-[14px] border border-border overflow-hidden">
         {/* Editor Toolbar */}
         <div className="bg-surface border-b border-border p-2 flex items-center justify-between gap-2 overflow-x-auto">
           <div className="flex items-center gap-1">

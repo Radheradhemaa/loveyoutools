@@ -170,7 +170,7 @@ export default function ImageCompressor() {
                 />
               </div>
               
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-h-[500px] overflow-y-auto pr-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-h-[85vh] overflow-y-auto pr-2">
                 {images.map((img, idx) => (
                   <div key={idx} className="relative group rounded-lg overflow-hidden border border-border bg-surface aspect-square flex flex-col">
                     <div className="flex-1 relative flex items-center justify-center p-2">

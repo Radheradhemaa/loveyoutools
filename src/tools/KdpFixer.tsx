@@ -58,7 +58,11 @@ export default function KdpFixer() {
     try {
       if (uploadedFile.type === 'application/pdf') {
         const arrayBuffer = await uploadedFile.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const pdf = await pdfjsLib.getDocument({ 
+          data: arrayBuffer,
+          cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
+          cMapPacked: true,
+        }).promise;
         const numPages = pdf.numPages;
         const loadedPages: KdpPage[] = [];
 
@@ -106,9 +110,15 @@ export default function KdpFixer() {
         runComplianceCheck([page]);
       }
       setActiveTab('configure');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading file:', error);
-      setIssues([{ type: 'error', message: 'Failed to load file. Please ensure it is a valid PDF or image.' }]);
+      const isPasswordError = error.name === 'PasswordException' || 
+                              error.message?.toLowerCase().includes('password');
+      if (isPasswordError) {
+        setIssues([{ type: 'error', message: 'This PDF is password protected. Please remove the password before using KDP Fixer.' }]);
+      } else {
+        setIssues([{ type: 'error', message: 'Failed to load file. Please ensure it is a valid PDF or image.' }]);
+      }
     } finally {
       setLoading(false);
     }
@@ -175,7 +185,7 @@ export default function KdpFixer() {
 
       const pdfDoc = await PDFDocument.create();
       const originalPdfBuffer = await file.arrayBuffer();
-      const originalPdf = await PDFDocument.load(originalPdfBuffer);
+      const originalPdf = await PDFDocument.load(originalPdfBuffer, { ignoreEncryption: true });
       const pagesToCopy = await pdfDoc.copyPages(originalPdf, originalPdf.getPageIndices());
 
       for (let index = 0; index < pagesToCopy.length; index++) {
@@ -210,8 +220,15 @@ export default function KdpFixer() {
       link.href = url;
       link.download = `kdp_interior_${trimSize.width || customWidth}x${trimSize.height || customHeight}_fixed.pdf`;
       link.click();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fixing PDF:', error);
+      const isPasswordError = error.name === 'PasswordException' || 
+                              error.message?.toLowerCase().includes('password');
+      if (isPasswordError) {
+        alert('Cannot process this PDF because it is password protected. Please remove the password first.');
+      } else {
+        alert('Error fixing PDF. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -244,7 +261,7 @@ export default function KdpFixer() {
       </div>
 
       {activeTab === 'upload' && (
-        <div className="max-w-2xl mx-auto">
+        <div className="w-full">
           <div className="border-2 border-dashed border-border rounded-2xl p-12 text-center hover:border-accent transition-colors bg-surface/50">
             <input
               type="file"
