@@ -10,6 +10,8 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 export default defineConfig(({mode}) => {
   // Ensure the transparent logo and other assets are generated before Vite starts building
   try {
+    console.log('Generating final logo...');
+    execSync('node generate-final-logo.js', { stdio: 'inherit' });
     console.log('Generating assets (favicon, social preview, etc.)...');
     execSync('node generate-assets.js', { stdio: 'inherit' });
     console.log('Generating sitemap...');

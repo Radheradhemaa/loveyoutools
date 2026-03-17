@@ -51,9 +51,9 @@ export default function Layout() {
       />
       
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white dark:bg-surface/80 backdrop-blur-md border-b border-border shadow-sm">
-        <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 h-32 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2 group" onClick={() => setSearchQuery('')}>
+      <header className="sticky top-0 z-[70] bg-white/90 dark:bg-surface/80 backdrop-blur-md border-b border-border shadow-sm">
+        <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between gap-4 md:gap-8">
+          <Link to="/" className="flex items-center gap-2 group shrink-0" onClick={() => setSearchQuery('')}>
             <div className="relative flex items-center">
               <img 
                 src="/logo.png" 
@@ -77,7 +77,7 @@ export default function Layout() {
             </div>
           </Link>
 
-          <div className="flex-1 max-w-xl mx-4 relative hidden md:block">
+          <div className="flex-1 max-w-xl relative hidden md:block">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted w-5 h-5" />
               <input
@@ -85,7 +85,7 @@ export default function Layout() {
                 placeholder="Search 80+ tools..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-bg-secondary border border-border rounded-full py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-accent/50 transition-all"
+                className="w-full bg-bg-secondary/50 hover:bg-bg-secondary border border-border rounded-full py-2.5 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:bg-surface transition-all shadow-sm"
               />
             </div>
             {searchQuery && (
@@ -112,7 +112,7 @@ export default function Layout() {
             )}
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4 sm:gap-6 shrink-0">
             <Link to="/blog" className="text-sm font-medium text-text-secondary hover:text-accent transition-colors hidden sm:block">
               Blog
             </Link>
@@ -137,7 +137,7 @@ export default function Layout() {
 
       {/* Mobile Menu */}
       {isMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-[60] bg-surface pt-20 px-4">
+        <div className="md:hidden fixed inset-0 z-[60] bg-surface pt-24 px-4 pb-6 overflow-y-auto">
           <div className="flex flex-col gap-6">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted w-5 h-5" />
@@ -146,7 +146,7 @@ export default function Layout() {
                 placeholder="Search 80+ tools..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-bg-secondary border border-border rounded-xl py-3 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-accent/50"
+                className="w-full bg-bg-secondary/50 border border-border rounded-xl py-3 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:bg-surface transition-all shadow-sm"
               />
             </div>
             <nav className="flex flex-col gap-4">
@@ -184,8 +184,8 @@ export default function Layout() {
 
       {/* Category Nav - Only show on home page */}
       {location.pathname === '/' && (
-        <nav className="bg-surface border-b border-border overflow-x-auto hide-scrollbar mt-2 shadow-sm">
-          <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-3 py-4">
+        <nav className="bg-surface border-b border-border overflow-x-auto hide-scrollbar">
+          <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-2 sm:gap-3 py-2.5">
             {categories.map(cat => (
               <Link
                 key={cat.id}
