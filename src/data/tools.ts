@@ -25,6 +25,7 @@ export const tools = [
   { id: 'image-metadata-viewer', c: 'image', n: 'Image Metadata Viewer', d: 'View EXIF data of images.', i: '🔍', b: '#fff0eb' },
   { id: 'image-color-picker', c: 'image', n: 'Image Color Picker', d: 'Pick colors from an image.', i: '🎯', b: '#fff0eb' },
   { id: 'gif-maker', c: 'image', n: 'GIF Maker', d: 'Create GIFs from images.', i: '🎬', b: '#fff0eb' },
+  { id: 'svg-to-png', c: 'image', n: 'SVG to PNG Converter', d: 'Convert SVG files to PNG with custom resolution and background.', i: '🔄', b: '#fff0eb' },
 
   // PDF CONVERSION TOOLS (bg: #fef3c7)
   { id: 'pdf-to-jpg', c: 'pdf', n: 'PDF to JPG', d: 'Convert PDF pages to JPG images.', i: '🖼️', b: '#fef3c7' },

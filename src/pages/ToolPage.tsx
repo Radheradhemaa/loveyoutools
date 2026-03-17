@@ -31,6 +31,7 @@ import KdpFixer from '../tools/KdpFixer';
 import ImageCropper from '../tools/ImageCropper';
 import ImageColorPicker from '../tools/ImageColorPicker';
 import GifMaker from '../tools/GifMaker';
+import SvgToPngConverter from '../tools/SvgToPngConverter';
 
 export default function ToolPage() {
   const { id } = useParams<{ id: string }>();
@@ -88,6 +89,7 @@ export default function ToolPage() {
     if (tool.id === 'image-cropper') return <ImageCropper />;
     if (tool.id === 'image-color-picker') return <ImageColorPicker />;
     if (tool.id === 'gif-maker') return <GifMaker />;
+    if (tool.id === 'svg-to-png') return <SvgToPngConverter />;
 
     // Category handlers
     if (tool.c === 'text') return <TextTools toolId={tool.id} />;
