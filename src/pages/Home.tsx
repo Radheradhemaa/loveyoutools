@@ -61,7 +61,7 @@ export default function Home() {
   return (
     <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-12">
       <SEO 
-        title="LoveYouTools - Free Online Tools Hub" 
+        title="LoveTools - Free Online Tools Hub" 
         description="Free Online Tools to Simplify Your Digital Tasks – Fast, Smart & Reliable."
         url={window.location.href}
       />

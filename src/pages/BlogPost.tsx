@@ -27,7 +27,7 @@ export default function BlogPost() {
     "datePublished": post.date,
     "publisher": {
       "@type": "Organization",
-      "name": "LoveYouTools",
+      "name": "LoveTools",
       "logo": {
         "@type": "ImageObject",
         "url": `${window.location.origin}/logo.png`
@@ -42,7 +42,7 @@ export default function BlogPost() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-16">
       <SEO 
-        title={`${post.title} - LoveYouTools Blog`} 
+        title={`${post.title} - LoveTools Blog`} 
         description={post.excerpt}
         url={window.location.href}
         type="article"

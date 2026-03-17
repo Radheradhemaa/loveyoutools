@@ -1,6 +1,6 @@
 {
-  "name": "LoveYouTools",
-  "short_name": "LoveYouTools",
+  "name": "LoveTools",
+  "short_name": "LoveTools",
   "description": "Free Online Tools Hub",
   "start_url": "/",
   "display": "standalone",

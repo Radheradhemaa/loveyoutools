@@ -34,18 +34,18 @@ export default function Layout() {
   return (
     <div className="min-h-screen flex flex-col">
       <SEO 
-        title="LoveYouTools - Free Online Tools Hub" 
+        title="LoveTools - Free Online Tools Hub" 
         description="Free Online Tools to Simplify Your Digital Tasks – Fast, Smart & Reliable."
         url={typeof window !== 'undefined' ? window.location.href : ''}
         schema={{
           "@context": "https://schema.org",
           "@type": "Organization",
-          "name": "LoveYouTools",
-          "url": "https://loveyou.tools/",
-          "logo": "https://loveyou.tools/logo.png",
+          "name": "LoveTools",
+          "url": "https://lovetools.io/",
+          "logo": "https://lovetools.io/logo.png",
           "sameAs": [
-            "https://twitter.com/loveyoutools",
-            "https://github.com/loveyoutools"
+            "https://twitter.com/lovetools",
+            "https://github.com/lovetools"
           ]
         }}
       />
@@ -57,10 +57,10 @@ export default function Layout() {
             <div className="relative flex items-center">
               <img 
                 src="/logo.png" 
-                alt="LoveyouTools - Free Online Tools Platform" 
-                title="LoveyouTools - Free Online Tools Platform"
-                width="160"
-                height="40"
+                alt="LoveTools - Free Online Tools Platform" 
+                title="LoveTools - Free Online Tools Platform"
+                width="240"
+                height="60"
                 loading="eager"
                 decoding="async"
                 className="logo"
@@ -72,7 +72,7 @@ export default function Layout() {
                 }}
               />
               <span className="logo-fallback hidden font-black text-2xl sm:text-3xl tracking-tighter text-accent">
-                LoveYou<span className="text-text-primary">Tools</span>
+                Love<span className="text-text-primary">Tools</span>
               </span>
             </div>
           </Link>
@@ -225,10 +225,10 @@ export default function Layout() {
                 <div className="relative flex items-center">
                   <img 
                     src="/logo.png" 
-                    alt="LoveyouTools - Free Online Tools Platform" 
-                    title="LoveyouTools - Free Online Tools Platform"
-                    width="160"
-                    height="40"
+                    alt="LoveTools - Free Online Tools Platform" 
+                    title="LoveTools - Free Online Tools Platform"
+                    width="240"
+                    height="60"
                     loading="lazy"
                     decoding="async"
                     className="logo mb-4"
@@ -240,7 +240,7 @@ export default function Layout() {
                     }}
                   />
                   <span className="logo-fallback-footer hidden font-black text-3xl tracking-tighter text-accent">
-                    LoveYou<span className="text-text-primary">Tools</span>
+                    Love<span className="text-text-primary">Tools</span>
                   </span>
                 </div>
               </Link>
@@ -292,7 +292,7 @@ export default function Layout() {
             </div>
           </div>
           <div className="border-t border-border mt-12 pt-8 flex flex-col md:flex-row items-center justify-between text-sm text-text-muted">
-            <p>&copy; {new Date().getFullYear()} LoveYouTools. All rights reserved.</p>
+            <p>&copy; {new Date().getFullYear()} LoveTools. All rights reserved.</p>
             <div className="flex gap-4 mt-4 md:mt-0">
               <span>Made with love for the web</span>
             </div>

@@ -113,7 +113,7 @@
   }
 
   .logo {
-    height: 40px;
+    height: 60px;
     width: auto;
     object-fit: contain;
     transition: transform 0.2s ease-in-out;
@@ -125,13 +125,13 @@
 
   @media (max-width: 768px) {
     .logo {
-      height: 36px;
+      height: 50px;
     }
   }
 
   @media (max-width: 480px) {
     .logo {
-      height: 32px;
+      height: 40px;
     }
   }
 }

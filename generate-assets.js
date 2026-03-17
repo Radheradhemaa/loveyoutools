@@ -3,17 +3,15 @@ import fs from 'fs';
 import path from 'path';
 import pngToIco from 'png-to-ico';
 
-const INPUT_FILE = 'public/assets/images/loveyoutools_transparent.png';
+const INPUT_FILE = 'public/assets/images/lovetools_transparent.png';
 const OUTPUT_DIRS = ['public/logo', 'public/favicon', 'public/pwa-icons', 'public/social-preview'];
 
 async function generateAssets() {
   if (!fs.existsSync(INPUT_FILE)) {
     console.log(`${INPUT_FILE} not found. Attempting to generate it...`);
     try {
-      // Import and run generate-new-logo logic if possible, or just warn
-      // Since we are in a script, we can't easily import ES modules dynamically without more setup
-      // but we can at least provide a better error message or try to wait.
-      console.warn(`Warning: ${INPUT_FILE} is missing. Please run 'node generate-new-logo.js' first.`);
+      // Import and run generate-final-logo logic if possible, or just warn
+      console.warn(`Warning: ${INPUT_FILE} is missing. Please run 'node generate-final-logo.js' first.`);
     } catch (e) {
       console.error('Failed to trigger logo generation:', e);
     }

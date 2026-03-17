@@ -4,7 +4,7 @@ import { Download, Link as LinkIcon, Type, Phone, Mail, Wifi, MessageSquare, Use
 
 export default function QrGenerator() {
   const [type, setType] = useState('url');
-  const [value, setValue] = useState('https://loveyoutools.in');
+  const [value, setValue] = useState('https://lovetools.io');
   const [size, setSize] = useState(256);
   const [fgColor, setFgColor] = useState('#000000');
   const [bgColor, setBgColor] = useState('#ffffff');
@@ -59,7 +59,7 @@ export default function QrGenerator() {
         return (
           <div className="fg">
             <label className="fl">Website URL</label>
-            <input type="url" className="fi" value={value} onChange={(e) => setValue(e.target.value)} placeholder="loveyoutools.in" />
+            <input type="url" className="fi" value={value} onChange={(e) => setValue(e.target.value)} placeholder="lovetools.io" />
           </div>
         );
       case 'text':

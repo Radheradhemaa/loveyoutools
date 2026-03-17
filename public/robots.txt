@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /admin
 
-Sitemap: https://loveyoutools.com/sitemap.xml
+Sitemap: https://lovetools.io/sitemap.xml
