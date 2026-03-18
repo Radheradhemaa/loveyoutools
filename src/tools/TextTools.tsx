@@ -81,7 +81,12 @@ export default function TextTools({ toolId }: { toolId: string }) {
         if (action === 'b64d') { try { res = decodeURIComponent(escape(atob(input))); } catch(e) { res = 'Invalid Base64'; } }
         if (action === 'urie') res = encodeURIComponent(input);
         if (action === 'urid') { try { res = decodeURIComponent(input); } catch(e) { res = 'Invalid URI'; } }
-        if (action === 'rot13') res = input.replace(/[a-zA-Z]/g, c => String.fromCharCode((c <= 'Z' ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26));
+        if (action === 'rot13') res = input.replace(/[a-zA-Z]/g, char => {
+          const c = char.charCodeAt(0);
+          const limit = char <= 'Z' ? 90 : 122;
+          const rotated = c + 13;
+          return String.fromCharCode(limit >= rotated ? rotated : rotated - 26);
+        });
         break;
     }
     setOutput(res);

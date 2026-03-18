@@ -111,9 +111,12 @@ export default function KdpFixer() {
       }
       setActiveTab('configure');
     } catch (error: any) {
-      console.error('Error loading file:', error);
-      const isPasswordError = error.name === 'PasswordException' || 
-                              error.message?.toLowerCase().includes('password');
+      const errorStr = typeof error === 'string' ? error : (error?.message || '');
+      const isPasswordError = error?.name === 'PasswordException' || 
+                              errorStr.toLowerCase().includes('password');
+      if (!isPasswordError) {
+        console.error('Error loading file:', error);
+      }
       if (isPasswordError) {
         setIssues([{ type: 'error', message: 'This PDF is password protected. Please remove the password before using KDP Fixer.' }]);
       } else {
@@ -221,9 +224,12 @@ export default function KdpFixer() {
       link.download = `kdp_interior_${trimSize.width || customWidth}x${trimSize.height || customHeight}_fixed.pdf`;
       link.click();
     } catch (error: any) {
-      console.error('Error fixing PDF:', error);
-      const isPasswordError = error.name === 'PasswordException' || 
-                              error.message?.toLowerCase().includes('password');
+      const errorStr = typeof error === 'string' ? error : (error?.message || '');
+      const isPasswordError = error?.name === 'PasswordException' || 
+                              errorStr.toLowerCase().includes('password');
+      if (!isPasswordError) {
+        console.error('Error fixing PDF:', error);
+      }
       if (isPasswordError) {
         alert('Cannot process this PDF because it is password protected. Please remove the password first.');
       } else {

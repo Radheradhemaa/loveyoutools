@@ -51,8 +51,9 @@ export default function PdfTools({ toolId }: { toolId: string }) {
           setIsEncrypted(false);
           setWarning(null);
         } catch (err: any) {
-          const isPasswordError = err.name === 'PasswordException' || 
-                                  err.message?.toLowerCase().includes('password');
+          const errStr = typeof err === 'string' ? err : (err?.message || '');
+          const isPasswordError = err?.name === 'PasswordException' || 
+                                  errStr.toLowerCase().includes('password');
           if (isPasswordError) {
             setIsEncrypted(true);
             setWarning("This PDF is password protected. Please enter the password in the Settings panel to process it.");
@@ -366,15 +367,18 @@ export default function PdfTools({ toolId }: { toolId: string }) {
       const url = URL.createObjectURL(blob);
       setOutput(url);
     } catch (err: any) {
-      console.error(err);
-      const isPasswordError = err.name === 'PasswordException' || 
-                              err.message?.toLowerCase().includes('password');
+      const errStr = typeof err === 'string' ? err : (err?.message || '');
+      const isPasswordError = err?.name === 'PasswordException' || 
+                              errStr.toLowerCase().includes('password');
+      if (!isPasswordError) {
+        console.error(err);
+      }
       if (isPasswordError) {
         setError("Incorrect password. Please enter the correct password for this PDF.");
-      } else if (err.message?.toLowerCase().includes('encrypted')) {
+      } else if (errStr.toLowerCase().includes('encrypted')) {
         setError("This specific tool does not support editing encrypted PDFs. Please remove the password first.");
       } else {
-        setError("Failed to process PDF. " + (err.message || "Please ensure the file is valid."));
+        setError("Failed to process PDF. " + (errStr || "Please ensure the file is valid."));
       }
     } finally {
       setLoading(false);

@@ -1,0 +1,172 @@
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useFocusMode } from '../../contexts/FocusModeContext';
+import Toolbar from './Toolbar';
+import UploadBox from './UploadBox';
+import Suggestions from './Suggestions';
+import PreviewPanel from './PreviewPanel';
+
+export type ToolState = 'BEFORE' | 'DURING' | 'AFTER';
+
+interface ToolLayoutProps {
+  title: string;
+  description: string;
+  toolId: string;
+  acceptedFileTypes?: string[];
+  multiple?: boolean;
+  children?: (props: { 
+    file: File | File[] | null; 
+    state: ToolState; 
+    onComplete: () => void;
+    onReset: () => void;
+  }) => React.ReactNode;
+  renderPreview?: (file: File | File[] | null) => React.ReactNode;
+  renderToolbar?: (props: { fileName: string; onBack: () => void; onComplete: () => void }) => React.ReactNode;
+  onDownload?: () => void;
+  faq?: { q: string; a: string }[];
+}
+
+export default function ToolLayout({ 
+  title, 
+  description, 
+  toolId,
+  acceptedFileTypes,
+  multiple = false,
+  children,
+  renderPreview,
+  renderToolbar,
+  onDownload,
+  faq
+}: ToolLayoutProps) {
+  const [state, setState] = useState<ToolState>('BEFORE');
+  const [file, setFile] = useState<File | File[] | null>(null);
+  const { setIsFocusMode } = useFocusMode();
+
+  useEffect(() => {
+    if (state === 'DURING') {
+      setIsFocusMode(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      setIsFocusMode(false);
+    }
+  }, [state, setIsFocusMode]);
+
+  const handleUpload = (uploadedFile: File | File[]) => {
+    setFile(uploadedFile);
+    setState('DURING');
+  };
+
+  const handleComplete = () => {
+    setState('AFTER');
+  };
+
+  const handleReset = () => {
+    setFile(null);
+    setState('BEFORE');
+  };
+
+  const fileName = Array.isArray(file) ? `${file.length} files` : file?.name || '';
+
+  return (
+    <div className={`min-h-screen flex flex-col ${state === 'DURING' ? 'fixed inset-0 z-[100] bg-bg-primary overflow-hidden' : ''}`}>
+      <AnimatePresence mode="wait">
+        {state === 'BEFORE' && (
+          <motion.div
+            key="before"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="max-w-4xl mx-auto px-4 py-12 w-full"
+          >
+            <div className="text-center mb-12">
+              <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-text-primary mb-4">
+                {title}
+              </h1>
+              <p className="text-xl text-text-muted max-w-2xl mx-auto">
+                {description}
+              </p>
+            </div>
+
+            {/* Ad Placeholder Before Upload */}
+            <div className="w-full h-32 bg-bg-secondary/50 border border-dashed border-border rounded-2xl mb-12 flex items-center justify-center text-text-muted text-sm font-medium">
+              Advertisement Space
+            </div>
+
+            <UploadBox 
+              onUpload={handleUpload} 
+              acceptedTypes={acceptedFileTypes} 
+              multiple={multiple} 
+            />
+
+            <Suggestions toolId={toolId} faq={faq} />
+          </motion.div>
+        )}
+
+        {state === 'DURING' && (
+          <motion.div
+            key="during"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="flex-1 flex flex-col h-screen"
+          >
+            {renderToolbar ? renderToolbar({ fileName, onBack: handleReset, onComplete: handleComplete }) : (
+              <Toolbar 
+                fileName={fileName} 
+                onBack={handleReset}
+                onComplete={handleComplete}
+              />
+            )}
+            <div className="flex-1 relative overflow-hidden bg-bg-secondary/30">
+              {children ? children({ file, state, onComplete: handleComplete, onReset: handleReset }) : (
+                renderPreview ? renderPreview(file) : <PreviewPanel file={file} />
+              )}
+            </div>
+          </motion.div>
+        )}
+
+        {state === 'AFTER' && (
+          <motion.div
+            key="after"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="max-w-4xl mx-auto px-4 py-12 w-full text-center"
+          >
+            <div className="bg-surface border border-border rounded-3xl p-12 shadow-2xl mb-12">
+              <div className="w-20 h-20 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-6">
+                <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <h2 className="text-3xl font-black text-text-primary mb-4">Processing Complete!</h2>
+              <p className="text-text-muted mb-8">Your file is ready for download.</p>
+              
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+                <button 
+                  onClick={onDownload}
+                  className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto"
+                >
+                  Download File
+                </button>
+                <button 
+                  onClick={handleReset}
+                  className="btn bs px-12 py-4 rounded-2xl text-lg font-bold w-full sm:w-auto"
+                >
+                  Edit Another
+                </button>
+              </div>
+            </div>
+
+            {/* Ad Placeholder After Download */}
+            <div className="w-full h-32 bg-bg-secondary/50 border border-dashed border-border rounded-2xl mb-12 flex items-center justify-center text-text-muted text-sm font-medium">
+              Advertisement Space
+            </div>
+
+            <Suggestions toolId={toolId} showFullGrid={true} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

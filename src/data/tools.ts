@@ -36,7 +36,7 @@ export const tools = [
 
   // PDF EDITING TOOLS (bg: #fef3c7)
   { id: 'crop-pdf', c: 'pdf', n: 'Crop PDF', d: 'Advanced PDF cropper with smart detection and batch processing.', i: '✂️', b: '#fef3c7' },
-  { id: 'edit-pdf', c: 'pdf', n: 'Edit PDF', d: 'Advanced PDF editor with text editing and layout preservation.', i: '📝', b: '#fef3c7' },
+  { id: 'pdf-editor', c: 'pdf', n: 'Edit PDF', d: 'Advanced PDF editor with text editing and layout preservation.', i: '📝', b: '#fef3c7' },
   { id: 'add-text-to-pdf', c: 'pdf', n: 'Add Text to PDF', d: 'Add custom text to PDF pages.', i: '✍️', b: '#fef3c7' },
   { id: 'add-image-to-pdf', c: 'pdf', n: 'Add Image to PDF', d: 'Insert images into PDF pages.', i: '🖼️', b: '#fef3c7' },
   { id: 'add-page-numbers', c: 'pdf', n: 'Add Page Numbers', d: 'Add page numbers to PDF.', i: '🔢', b: '#fef3c7' },

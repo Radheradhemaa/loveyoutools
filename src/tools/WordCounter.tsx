@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Copy, Trash2 } from 'lucide-react';
+import { Copy, Trash2, Maximize2, Minimize2, Type } from 'lucide-react';
+import { useFocusMode } from '../contexts/FocusModeContext';
 
 export default function WordCounter() {
   const [text, setText] = useState('');
+  const { isFocusMode, setIsFocusMode } = useFocusMode();
   const [stats, setStats] = useState({
     words: 0,
     chars: 0,
@@ -39,7 +41,28 @@ export default function WordCounter() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${isFocusMode ? 'fixed inset-0 z-[100] bg-bg-primary p-4 sm:p-8 overflow-y-auto' : ''}`}>
+      {isFocusMode && (
+        <div className="flex items-center justify-between mb-6 bg-surface border border-border p-4 rounded-2xl shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-accent/10 text-accent flex items-center justify-center">
+              <Type className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="font-bold text-lg">Word Counter</h2>
+              <p className="text-xs text-text-muted">Distraction-free mode</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => setIsFocusMode(false)}
+            className="p-2 hover:bg-bg-secondary rounded-lg text-text-secondary transition-colors"
+            title="Exit Focus Mode"
+          >
+            <Minimize2 className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
         <div className="bg-bg-secondary rounded-[14px] p-4 text-center border border-border">
           <div className="text-3xl font-bold text-accent mb-1">{stats.words}</div>
@@ -63,6 +86,13 @@ export default function WordCounter() {
         <div className="flex items-center justify-between mb-2">
           <label className="fl">Type or paste your text below:</label>
           <div className="flex gap-2">
+            <button 
+              onClick={() => setIsFocusMode(true)}
+              className="p-1.5 text-text-muted hover:text-accent hover:bg-accent/10 rounded-md transition-colors"
+              title="Enter Focus Mode"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
             <button onClick={handleCopy} className="p-1.5 text-text-muted hover:text-text-primary hover:bg-bg-secondary rounded-md transition-colors" title="Copy text">
               <Copy className="w-4 h-4" />
             </button>

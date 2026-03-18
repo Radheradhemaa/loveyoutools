@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Upload, Download, ZoomIn, ZoomOut, Maximize, FileUp, Settings, ChevronLeft, ChevronRight, RotateCw, Crop, Trash2, CheckSquare, Square, SplitSquareHorizontal, ArrowRight, Layers, Lock, Unlock, Zap, FileText } from 'lucide-react';
+import { Download, ZoomIn, ZoomOut, Maximize, FileUp, Settings, ChevronLeft, ChevronRight, RotateCw, Crop, Trash2, CheckSquare, Square, SplitSquareHorizontal, ArrowRight, Layers, Lock, Unlock, Zap, FileText, ShieldAlert } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument, degrees } from 'pdf-lib';
 import JSZip from 'jszip';
+import ToolLayout from '../components/tool-system/ToolLayout';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -27,6 +28,8 @@ export default function AdvancedPdfCropper() {
   const [pageNum, setPageNum] = useState(1);
   const [zoom, setZoom] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [resultBlob, setResultBlob] = useState<Blob | null>(null);
+  const [resultName, setResultName] = useState('');
   
   const [needsPasswordForFile, setNeedsPasswordForFile] = useState<number | null>(null);
   const [passwordInput, setPasswordInput] = useState('');
@@ -39,27 +42,19 @@ export default function AdvancedPdfCropper() {
   
   const [applyToAll, setApplyToAll] = useState(true);
   const [aspectRatioLock, setAspectRatioLock] = useState(false);
-  const [customWidth, setCustomWidth] = useState<number | ''>('');
-  const [customHeight, setCustomHeight] = useState<number | ''>('');
-  const [unit, setUnit] = useState<'px' | 'mm' | 'inch'>('px');
-  
   const [isDragging, setIsDragging] = useState(false);
   const [resizeHandle, setResizeHandle] = useState<string | null>(null);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [initialCropBox, setInitialCropBox] = useState<CropBox | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const renderTaskRef = useRef<any>(null);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(e.target.files || []) as File[];
-    const pdfFiles = selectedFiles.filter(f => f.type === 'application/pdf');
+  const handleFilesSelected = async (selectedFiles: File | File[]) => {
+    const pdfFiles = (Array.isArray(selectedFiles) ? selectedFiles : [selectedFiles]).filter(f => f.type === 'application/pdf');
     if (pdfFiles.length > 0) {
-      setFiles(prev => [...prev, ...pdfFiles]);
-      if (!pdfDoc) {
-        await loadPdf(pdfFiles[0], 0);
-      }
+      setFiles(pdfFiles);
+      await loadPdf(pdfFiles[0], 0);
     }
   };
 
@@ -103,9 +98,12 @@ export default function AdvancedPdfCropper() {
       }
       setPagesData(newPagesData);
     } catch (error: any) {
-      console.error('Error loading PDF:', error);
-      const isPasswordError = error.name === 'PasswordException' || 
-                              error.message?.toLowerCase().includes('password');
+      const errorStr = typeof error === 'string' ? error : (error?.message || '');
+      const isPasswordError = error?.name === 'PasswordException' || 
+                              errorStr.toLowerCase().includes('password');
+      if (!isPasswordError) {
+        console.error('Error loading PDF:', error);
+      }
       if (isPasswordError) {
         setNeedsPasswordForFile(fileIdx);
         if (pwd) setPasswordError('Incorrect password');
@@ -183,7 +181,7 @@ export default function AdvancedPdfCropper() {
       renderTaskRef.current = page.render({
         canvasContext: context,
         viewport: viewport,
-      });
+      } as any);
       await renderTaskRef.current.promise;
     } catch (error: any) {
       if (error.name !== 'RenderingCancelledException') {
@@ -370,7 +368,7 @@ export default function AdvancedPdfCropper() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentFileIdx, pageNum, pagesData]);
 
-  const exportPdfs = async () => {
+  const exportPdfs = async (onComplete: () => void) => {
     if (files.length === 0) return;
     setLoading(true);
 
@@ -410,14 +408,8 @@ export default function AdvancedPdfCropper() {
         
         if (files.length === 1) {
           const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `cropped_${file.name}`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
+          setResultBlob(blob);
+          setResultName(`cropped_${file.name}`);
         } else {
           zip.file(`cropped_${file.name}`, pdfBytes);
         }
@@ -425,15 +417,11 @@ export default function AdvancedPdfCropper() {
 
       if (files.length > 1) {
         const zipBlob = await zip.generateAsync({ type: 'blob' });
-        const url = URL.createObjectURL(zipBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `cropped_pdfs.zip`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        setResultBlob(zipBlob);
+        setResultName(`cropped_pdfs.zip`);
       }
+      
+      onComplete();
     } catch (error: any) {
       console.error('Error exporting PDFs:', error);
       if (error.message?.includes('encrypted')) {
@@ -444,6 +432,27 @@ export default function AdvancedPdfCropper() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleDownload = () => {
+    if (!resultBlob) return;
+    const url = URL.createObjectURL(resultBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = resultName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleReset = () => {
+    setFiles([]);
+    setPdfDoc(null);
+    setPagesData({});
+    setResultBlob(null);
+    setNeedsPasswordForFile(null);
+    setPasswordInput('');
   };
 
   const applyPreset = (preset: string) => {
@@ -474,340 +483,363 @@ export default function AdvancedPdfCropper() {
     updateCurrentPageData({ cropBox: newBox });
   };
 
+  const faqs = [
+    { q: "How does the PDF cropper work?", a: "It allows you to visually select a crop area for each page of your PDF. You can apply the same crop to all pages or customize them individually." },
+    { q: "Can I crop multiple PDFs at once?", a: "Yes, you can upload multiple PDF files and batch process them. The tool will provide a ZIP file containing all your cropped documents." },
+    { q: "Is my data secure?", a: "Absolutely. All processing happens locally in your browser. Your files are never uploaded to any server." },
+    { q: "What if my PDF is password protected?", a: "The tool will prompt you for the password so it can unlock and process the file locally." }
+  ];
+
   const pageData = getCurrentPageData();
 
-  if (needsPasswordForFile !== null) {
-    return (
-      <div className="max-w-md mx-auto mt-20 bg-surface border border-border rounded-2xl p-8 shadow-sm">
-        <h2 className="text-2xl font-bold mb-4">Password Protected</h2>
-        <p className="text-text-secondary mb-6">
-          The file "{files[needsPasswordForFile]?.name}" requires a password to open.
-        </p>
-        <form 
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (passwordInput) {
-              loadPdf(files[needsPasswordForFile], needsPasswordForFile, passwordInput);
-            }
-          }} 
-          className="space-y-4"
-        >
-          <div>
-            <input
-              type="password"
-              value={passwordInput}
-              onChange={(e) => setPasswordInput(e.target.value)}
-              placeholder="Enter PDF password"
-              className="fi w-full"
-              autoFocus
-            />
-            {passwordError && <p className="text-error text-sm mt-1">{passwordError}</p>}
-          </div>
-          <div className="flex gap-2">
-            <button 
-              type="button" 
-              onClick={() => {
-                // Remove the file that needs password
-                const newFiles = [...files];
-                newFiles.splice(needsPasswordForFile, 1);
-                setFiles(newFiles);
-                setNeedsPasswordForFile(null);
-                setPasswordInput('');
-                setPasswordError('');
-                
-                // Load previous file if exists
-                if (newFiles.length > 0) {
-                  const newIdx = Math.max(0, needsPasswordForFile - 1);
-                  loadPdf(newFiles[newIdx], newIdx);
-                }
-              }} 
-              className="btn bs flex-1"
-            >
-              Cancel
-            </button>
-            <button type="submit" className="btn bp flex-1" disabled={loading}>
-              {loading ? 'Opening...' : 'Unlock PDF'}
-            </button>
-          </div>
-        </form>
-      </div>
-    );
-  }
-
-  if (files.length === 0) {
-    return (
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-bold text-text-primary mb-4">Advanced PDF Cropper</h2>
-          <p className="text-text-secondary">Crop PDF margins, change page size, and batch process multiple files with pixel precision.</p>
-        </div>
-
-        <div className="bg-surface border-2 border-dashed border-border rounded-2xl p-12 text-center hover:border-accent transition-colors">
-          <Crop className="w-12 h-12 text-accent mx-auto mb-4" />
-          <h3 className="text-xl font-semibold mb-2">Upload PDF Documents</h3>
-          <p className="text-text-secondary mb-6">Drag and drop your PDFs here, or click to browse</p>
-          <label className="btn bp cursor-pointer inline-flex items-center gap-2">
-            <Upload className="w-4 h-4" />
-            Select PDF Files
-            <input 
-              type="file" 
-              className="hidden" 
-              accept=".pdf"
-              multiple
-              onChange={handleFileUpload}
-            />
-          </label>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col h-[85vh] min-h-[800px] bg-bg-secondary rounded-[14px] border border-border overflow-hidden">
-      {/* Top Toolbar */}
-      <div className="bg-surface border-b border-border p-3 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <label className="btn bs text-sm py-1.5 cursor-pointer flex items-center gap-2">
-              <FileUp size={16} /> Add More
-              <input type="file" className="hidden" accept=".pdf" multiple onChange={handleFileUpload} />
-            </label>
-            {files.length > 1 && (
-              <select 
-                className="fi text-sm py-1.5"
-                value={currentFileIdx}
-                onChange={(e) => {
-                  setCurrentFileIdx(Number(e.target.value));
-                  setPageNum(1);
-                  loadPdf(files[Number(e.target.value)], Number(e.target.value));
-                }}
-              >
-                {files.map((f, i) => (
-                  <option key={i} value={i}>{f.name}</option>
-                ))}
-              </select>
-            )}
-          </div>
-          
-          <div className="h-6 w-px bg-border"></div>
-          
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={() => setPageNum(Math.max(1, pageNum - 1))}
-              disabled={pageNum <= 1}
-              className="p-1.5 hover:bg-bg-secondary rounded disabled:opacity-50"
-            >
-              <ChevronLeft size={18} />
-            </button>
-            <span className="text-sm font-medium w-24 text-center">Page {pageNum} of {numPages}</span>
-            <button 
-              onClick={() => setPageNum(Math.min(numPages, pageNum + 1))}
-              disabled={pageNum >= numPages}
-              className="p-1.5 hover:bg-bg-secondary rounded disabled:opacity-50"
-            >
-              <ChevronRight size={18} />
-            </button>
-          </div>
+    <ToolLayout
+      title="Advanced PDF Cropper"
+      description="Crop PDF margins, change page size, and batch process multiple files with pixel precision."
+      toolId="pdf-cropper"
+      acceptedFileTypes={['application/pdf']}
+      multiple={true}
+      onDownload={handleDownload}
+      faq={faqs}
+    >
+      {({ file, state, onComplete, onReset }) => {
+        useEffect(() => {
+          if (file && files.length === 0) {
+            handleFilesSelected(file);
+          }
+        }, [file]);
 
-          <div className="h-6 w-px bg-border"></div>
+        useEffect(() => {
+          if (state === 'BEFORE') {
+            handleReset();
+          }
+        }, [state]);
 
-          <div className="flex items-center gap-2">
-            <button onClick={() => setZoom(Math.max(0.25, zoom - 0.25))} className="p-1.5 hover:bg-bg-secondary rounded">
-              <ZoomOut size={18} />
-            </button>
-            <span className="text-sm w-12 text-center">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom(Math.min(3, zoom + 0.25))} className="p-1.5 hover:bg-bg-secondary rounded">
-              <ZoomIn size={18} />
-            </button>
-          </div>
-        </div>
+        if (state === 'BEFORE') return null;
 
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input 
-              type="checkbox" 
-              checked={applyToAll} 
-              onChange={(e) => setApplyToAll(e.target.checked)}
-              className="rounded border-border text-accent focus:ring-accent"
-            />
-            Apply to all pages
-          </label>
-          <button onClick={exportPdfs} className="btn bp text-sm py-1.5 flex items-center gap-2" disabled={loading}>
-            {loading ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div> : <Download size={16} />}
-            {files.length > 1 ? 'Export All PDFs' : 'Export PDF'}
-          </button>
-        </div>
-      </div>
-
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar - Tools */}
-        <div className="w-64 bg-surface border-r border-border p-4 overflow-y-auto space-y-6">
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-text-muted mb-3 flex items-center gap-2">
-              <Zap size={14} /> Smart Actions
-            </h3>
-            <div className="space-y-2">
-              <button onClick={autoDetectMargins} className="w-full btn bs text-sm py-2 flex items-center justify-center gap-2">
-                <Maximize size={16} /> Auto Detect Margins
-              </button>
-              <button onClick={() => applyPreset('reset')} className="w-full btn bs text-sm py-2 flex items-center justify-center gap-2">
-                <Square size={16} /> Reset Crop
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-text-muted mb-3 flex items-center gap-2">
-              <Layers size={14} /> Presets
-            </h3>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => applyPreset('center')} className="btn bs text-xs py-2">Center</button>
-              <button onClick={() => applyPreset('safe-area')} className="btn bs text-xs py-2">Safe Area</button>
-              <button onClick={() => applyPreset('split-left')} className="btn bs text-xs py-2 flex items-center justify-center gap-1"><SplitSquareHorizontal size={14} /> Left</button>
-              <button onClick={() => applyPreset('split-right')} className="btn bs text-xs py-2 flex items-center justify-center gap-1">Right <SplitSquareHorizontal size={14} /></button>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-text-muted mb-3 flex items-center gap-2">
-              <Settings size={14} /> Dimensions
-            </h3>
-            
-            <div className="flex items-center justify-between mb-3">
-              <label className="text-sm text-text-secondary">Lock Aspect Ratio</label>
-              <button 
-                onClick={() => setAspectRatioLock(!aspectRatioLock)}
-                className={`p-1.5 rounded ${aspectRatioLock ? 'bg-accent/10 text-accent' : 'text-text-muted hover:bg-bg-secondary'}`}
-              >
-                {aspectRatioLock ? <Lock size={16} /> : <Unlock size={16} />}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <div>
-                <label className="text-[10px] text-text-muted uppercase">Width</label>
-                <input 
-                  type="number" 
-                  className="fi text-sm w-full" 
-                  value={pageData ? Math.round(pageData.cropBox.width) : ''}
-                  onChange={(e) => {
-                    const w = Number(e.target.value);
-                    if (w > 0 && pageData) {
-                      updateCurrentPageData({ cropBox: { ...pageData.cropBox, width: w } });
+        if (needsPasswordForFile !== null) {
+          return (
+            <div className="absolute inset-0 flex items-center justify-center bg-bg-primary/50 backdrop-blur-sm z-50">
+              <div className="max-w-md w-full mx-4 bg-surface border border-border rounded-3xl p-8 shadow-2xl animate-in zoom-in-95">
+                <div className="w-16 h-16 bg-error/10 text-error rounded-full flex items-center justify-center mx-auto mb-6">
+                  <ShieldAlert size={32} />
+                </div>
+                <h2 className="text-2xl font-black text-center mb-2">Password Protected</h2>
+                <p className="text-text-muted text-center mb-8">
+                  The file "{files[needsPasswordForFile]?.name}" requires a password to open.
+                </p>
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (passwordInput) {
+                      loadPdf(files[needsPasswordForFile], needsPasswordForFile, passwordInput);
                     }
-                  }}
-                />
-              </div>
-              <div>
-                <label className="text-[10px] text-text-muted uppercase">Height</label>
-                <input 
-                  type="number" 
-                  className="fi text-sm w-full" 
-                  value={pageData ? Math.round(pageData.cropBox.height) : ''}
-                  onChange={(e) => {
-                    const h = Number(e.target.value);
-                    if (h > 0 && pageData) {
-                      updateCurrentPageData({ cropBox: { ...pageData.cropBox, height: h } });
-                    }
-                  }}
-                />
-              </div>
-            </div>
-            <p className="text-[10px] text-text-muted">Tip: Use arrow keys to nudge the crop box. Hold Shift for larger steps.</p>
-          </div>
-
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-text-muted mb-3 flex items-center gap-2">
-              <RotateCw size={14} /> Page Rotation
-            </h3>
-            <div className="flex gap-2">
-              <button 
-                onClick={() => updateCurrentPageData({ rotation: ((pageData?.rotation || 0) - 90) % 360 })}
-                className="flex-1 btn bs text-sm py-2"
-              >
-                -90°
-              </button>
-              <button 
-                onClick={() => updateCurrentPageData({ rotation: ((pageData?.rotation || 0) + 90) % 360 })}
-                className="flex-1 btn bs text-sm py-2"
-              >
-                +90°
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Canvas Area */}
-        <div 
-          className="flex-1 overflow-auto p-8 flex justify-center items-start bg-stone-100 dark:bg-stone-900 pattern-grid relative"
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-        >
-          {pageData && (
-            <div 
-              className="relative shadow-2xl bg-white" 
-              style={{ 
-                width: pageData.viewport.width, 
-                height: pageData.viewport.height,
-                transform: `rotate(${pageData.rotation}deg)`,
-                transition: isDragging ? 'none' : 'transform 0.3s ease'
-              }}
-            >
-              <canvas ref={canvasRef} className="block" />
-              
-              {/* Crop Overlay */}
-              <div className="absolute inset-0 pointer-events-none z-10">
-                {/* Darkened areas */}
-                <div className="absolute top-0 left-0 right-0 bg-black/40" style={{ height: pageData.cropBox.y * zoom }} />
-                <div className="absolute bottom-0 left-0 right-0 bg-black/40" style={{ top: (pageData.cropBox.y + pageData.cropBox.height) * zoom }} />
-                <div className="absolute bg-black/40" style={{ top: pageData.cropBox.y * zoom, bottom: pageData.viewport.height - (pageData.cropBox.y + pageData.cropBox.height) * zoom, left: 0, width: pageData.cropBox.x * zoom }} />
-                <div className="absolute bg-black/40" style={{ top: pageData.cropBox.y * zoom, bottom: pageData.viewport.height - (pageData.cropBox.y + pageData.cropBox.height) * zoom, right: 0, left: (pageData.cropBox.x + pageData.cropBox.width) * zoom }} />
-
-                {/* Crop Box */}
-                <div 
-                  className="absolute border-2 border-accent pointer-events-auto cursor-move group"
-                  style={{
-                    left: pageData.cropBox.x * zoom,
-                    top: pageData.cropBox.y * zoom,
-                    width: pageData.cropBox.width * zoom,
-                    height: pageData.cropBox.height * zoom,
-                  }}
-                  onMouseDown={(e) => handleMouseDown(e, 'move')}
+                  }} 
+                  className="space-y-4"
                 >
-                  {/* Grid lines */}
-                  <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-0 group-hover:opacity-50 transition-opacity">
-                    <div className="border-r border-b border-white/50"></div>
-                    <div className="border-r border-b border-white/50"></div>
-                    <div className="border-b border-white/50"></div>
-                    <div className="border-r border-b border-white/50"></div>
-                    <div className="border-r border-b border-white/50"></div>
-                    <div className="border-b border-white/50"></div>
-                    <div className="border-r border-white/50"></div>
-                    <div className="border-r border-white/50"></div>
-                    <div></div>
+                  <div className="relative">
+                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted w-5 h-5" />
+                    <input
+                      type="password"
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      placeholder="Enter PDF password"
+                      className="fi w-full pl-12 py-4 rounded-2xl"
+                      autoFocus
+                    />
+                    {passwordError && <p className="text-error text-xs font-bold mt-2 ml-2 uppercase tracking-tight">{passwordError}</p>}
                   </div>
+                  <div className="flex gap-3">
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        const newFiles = [...files];
+                        newFiles.splice(needsPasswordForFile, 1);
+                        setFiles(newFiles);
+                        setNeedsPasswordForFile(null);
+                        setPasswordInput('');
+                        setPasswordError('');
+                        if (newFiles.length === 0) {
+                          handleReset();
+                          onReset();
+                        }
+                        else if (newFiles.length > 0) {
+                          const newIdx = Math.max(0, needsPasswordForFile - 1);
+                          loadPdf(newFiles[newIdx], newIdx);
+                        }
+                      }} 
+                      className="btn bs flex-1 py-4 rounded-2xl font-bold"
+                    >
+                      Cancel
+                    </button>
+                    <button type="submit" className="btn bp flex-1 py-4 rounded-2xl font-bold" disabled={loading}>
+                      {loading ? 'Unlocking...' : 'Unlock PDF'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          );
+        }
 
-                  {/* Resize Handles */}
-                  <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-accent cursor-nwse-resize rounded-full" onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, 'nw'); }} />
-                  <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-2 border-accent cursor-ns-resize rounded-full" onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, 'n'); }} />
-                  <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-accent cursor-nesw-resize rounded-full" onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, 'ne'); }} />
-                  <div className="absolute top-1/2 -right-1.5 -translate-y-1/2 w-3 h-3 bg-white border-2 border-accent cursor-ew-resize rounded-full" onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, 'e'); }} />
-                  <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-accent cursor-nwse-resize rounded-full" onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, 'se'); }} />
-                  <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-white border-2 border-accent cursor-ns-resize rounded-full" onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, 's'); }} />
-                  <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-accent cursor-nesw-resize rounded-full" onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, 'sw'); }} />
-                  <div className="absolute top-1/2 -left-1.5 -translate-y-1/2 w-3 h-3 bg-white border-2 border-accent cursor-ew-resize rounded-full" onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, 'w'); }} />
-                  
-                  {/* Dimensions tooltip */}
-                  <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-black/80 text-white text-[10px] px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                    {Math.round(pageData.cropBox.width)} × {Math.round(pageData.cropBox.height)} px
-                  </div>
+        return (
+          <div className="flex flex-col h-full bg-bg-secondary/30">
+            {/* Custom Toolbar inside DURING state */}
+            <div className="bg-surface border-b border-border p-3 flex flex-wrap items-center justify-between gap-4 z-20">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  {files.length > 1 && (
+                    <select 
+                      className="fi text-xs font-bold py-1.5 px-3 rounded-xl border-border bg-bg-secondary"
+                      value={currentFileIdx}
+                      onChange={(e) => {
+                        const idx = Number(e.target.value);
+                        setCurrentFileIdx(idx);
+                        setPageNum(1);
+                        loadPdf(files[idx], idx);
+                      }}
+                    >
+                      {files.map((f, i) => (
+                        <option key={i} value={i}>{f.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                
+                <div className="h-6 w-px bg-border"></div>
+                
+                <div className="flex items-center gap-2 bg-bg-secondary p-1 rounded-xl border border-border">
+                  <button 
+                    onClick={() => setPageNum(Math.max(1, pageNum - 1))}
+                    disabled={pageNum <= 1}
+                    className="p-1.5 hover:bg-surface rounded-lg disabled:opacity-30 transition-colors"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span className="text-[10px] font-black uppercase tracking-widest w-20 text-center">Page {pageNum} / {numPages}</span>
+                  <button 
+                    onClick={() => setPageNum(Math.min(numPages, pageNum + 1))}
+                    disabled={pageNum >= numPages}
+                    className="p-1.5 hover:bg-surface rounded-lg disabled:opacity-30 transition-colors"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+
+                <div className="h-6 w-px bg-border"></div>
+
+                <div className="flex items-center gap-2 bg-bg-secondary p-1 rounded-xl border border-border">
+                  <button onClick={() => setZoom(Math.max(0.25, zoom - 0.25))} className="p-1.5 hover:bg-surface rounded-lg transition-colors">
+                    <ZoomOut size={16} />
+                  </button>
+                  <span className="text-[10px] font-black w-12 text-center">{Math.round(zoom * 100)}%</span>
+                  <button onClick={() => setZoom(Math.min(3, zoom + 0.25))} className="p-1.5 hover:bg-surface rounded-lg transition-colors">
+                    <ZoomIn size={16} />
+                  </button>
                 </div>
               </div>
+
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-text-muted cursor-pointer hover:text-text-primary transition-colors">
+                  <input 
+                    type="checkbox" 
+                    checked={applyToAll} 
+                    onChange={(e) => setApplyToAll(e.target.checked)}
+                    className="rounded border-border text-accent focus:ring-accent"
+                  />
+                  Apply to all
+                </label>
+                <button 
+                  onClick={() => exportPdfs(onComplete)} 
+                  className="btn bp text-xs font-black py-2 px-6 rounded-xl flex items-center gap-2 shadow-lg shadow-accent/20" 
+                  disabled={loading}
+                >
+                  {loading ? <div className="animate-spin rounded-full h-3 w-3 border-2 border-white border-t-transparent"></div> : <Download size={14} />}
+                  {files.length > 1 ? 'EXPORT ALL' : 'EXPORT PDF'}
+                </button>
+              </div>
             </div>
-          )}
-        </div>
-      </div>
-    </div>
+
+            <div className="flex flex-1 overflow-hidden">
+              {/* Left Sidebar - Tools */}
+              <aside className="w-72 bg-surface border-r border-border p-6 overflow-y-auto space-y-8 custom-scrollbar">
+                <div className="space-y-4">
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-text-muted flex items-center gap-2">
+                    <Zap size={14} className="text-accent" /> Smart Actions
+                  </h3>
+                  <div className="grid grid-cols-1 gap-2">
+                    <button onClick={autoDetectMargins} className="w-full btn bs text-[11px] font-bold py-3 flex items-center justify-center gap-2 rounded-xl">
+                      <Maximize size={14} /> Auto Detect
+                    </button>
+                    <button onClick={() => applyPreset('reset')} className="w-full btn bs text-[11px] font-bold py-3 flex items-center justify-center gap-2 rounded-xl">
+                      <Square size={14} /> Reset Crop
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-text-muted flex items-center gap-2">
+                    <Layers size={14} className="text-accent" /> Presets
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => applyPreset('center')} className="btn bs text-[10px] font-bold py-2.5 rounded-xl">Center</button>
+                    <button onClick={() => applyPreset('safe-area')} className="btn bs text-[10px] font-bold py-2.5 rounded-xl">Safe Area</button>
+                    <button onClick={() => applyPreset('split-left')} className="btn bs text-[10px] font-bold py-2.5 rounded-xl flex items-center justify-center gap-1"><SplitSquareHorizontal size={12} /> Left</button>
+                    <button onClick={() => applyPreset('split-right')} className="btn bs text-[10px] font-bold py-2.5 rounded-xl flex items-center justify-center gap-1">Right <SplitSquareHorizontal size={12} /></button>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-text-muted flex items-center gap-2">
+                    <Settings size={14} className="text-accent" /> Dimensions
+                  </h3>
+                  
+                  <div className="flex items-center justify-between p-3 bg-bg-secondary rounded-xl border border-border">
+                    <span className="text-[11px] font-bold">Lock Aspect Ratio</span>
+                    <button 
+                      onClick={() => setAspectRatioLock(!aspectRatioLock)}
+                      className={`p-2 rounded-lg transition-all ${aspectRatioLock ? 'bg-accent text-white shadow-md shadow-accent/20' : 'bg-surface text-text-muted hover:text-text-primary border border-border'}`}
+                    >
+                      {aspectRatioLock ? <Lock size={14} /> : <Unlock size={14} />}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-text-muted ml-1">Width</label>
+                      <input 
+                        type="number" 
+                        className="fi text-xs font-bold w-full py-2.5 rounded-xl bg-bg-secondary border-border" 
+                        value={pageData ? Math.round(pageData.cropBox.width) : ''}
+                        onChange={(e) => {
+                          const w = Number(e.target.value);
+                          if (w > 0 && pageData) {
+                            updateCurrentPageData({ cropBox: { ...pageData.cropBox, width: w } });
+                          }
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black uppercase tracking-widest text-text-muted ml-1">Height</label>
+                      <input 
+                        type="number" 
+                        className="fi text-xs font-bold w-full py-2.5 rounded-xl bg-bg-secondary border-border" 
+                        value={pageData ? Math.round(pageData.cropBox.height) : ''}
+                        onChange={(e) => {
+                          const h = Number(e.target.value);
+                          if (h > 0 && pageData) {
+                            updateCurrentPageData({ cropBox: { ...pageData.cropBox, height: h } });
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[9px] font-medium text-text-muted leading-relaxed italic">Tip: Use arrow keys to nudge. Hold Shift for larger steps.</p>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-text-muted flex items-center gap-2">
+                    <RotateCw size={14} className="text-accent" /> Page Rotation
+                  </h3>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => updateCurrentPageData({ rotation: ((pageData?.rotation || 0) - 90) % 360 })}
+                      className="flex-1 btn bs text-[11px] font-bold py-3 rounded-xl"
+                    >
+                      -90°
+                    </button>
+                    <button 
+                      onClick={() => updateCurrentPageData({ rotation: ((pageData?.rotation || 0) + 90) % 360 })}
+                      className="flex-1 btn bs text-[11px] font-bold py-3 rounded-xl"
+                    >
+                      +90°
+                    </button>
+                  </div>
+                </div>
+              </aside>
+
+              {/* Canvas Area */}
+              <main 
+                className="flex-1 overflow-auto p-12 flex justify-center items-start bg-bg-secondary/50 pattern-grid relative"
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+              >
+                {pageData && (
+                  <div 
+                    className="relative shadow-2xl bg-white ring-1 ring-black/5" 
+                    style={{ 
+                      width: pageData.viewport.width * zoom, 
+                      height: pageData.viewport.height * zoom,
+                      transform: `rotate(${pageData.rotation}deg)`,
+                      transition: isDragging ? 'none' : 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+                    }}
+                  >
+                    <canvas ref={canvasRef} className="block w-full h-full" />
+                    
+                    {/* Crop Overlay */}
+                    <div className="absolute inset-0 pointer-events-none z-10">
+                      {/* Darkened areas */}
+                      <div className="absolute top-0 left-0 right-0 bg-black/60 backdrop-blur-[1px]" style={{ height: pageData.cropBox.y * zoom }} />
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 backdrop-blur-[1px]" style={{ top: (pageData.cropBox.y + pageData.cropBox.height) * zoom }} />
+                      <div className="absolute bg-black/60 backdrop-blur-[1px]" style={{ top: pageData.cropBox.y * zoom, bottom: (pageData.viewport.height - (pageData.cropBox.y + pageData.cropBox.height)) * zoom, left: 0, width: pageData.cropBox.x * zoom }} />
+                      <div className="absolute bg-black/60 backdrop-blur-[1px]" style={{ top: pageData.cropBox.y * zoom, bottom: (pageData.viewport.height - (pageData.cropBox.y + pageData.cropBox.height)) * zoom, right: 0, left: (pageData.cropBox.x + pageData.cropBox.width) * zoom }} />
+
+                      {/* Crop Box */}
+                      <div 
+                        className="absolute border-2 border-accent pointer-events-auto cursor-move group shadow-[0_0_0_1px_rgba(255,255,255,0.5)]"
+                        style={{
+                          left: pageData.cropBox.x * zoom,
+                          top: pageData.cropBox.y * zoom,
+                          width: pageData.cropBox.width * zoom,
+                          height: pageData.cropBox.height * zoom,
+                        }}
+                        onMouseDown={(e) => handleMouseDown(e, 'move')}
+                      >
+                        {/* Grid lines */}
+                        <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-0 group-hover:opacity-40 transition-opacity">
+                          <div className="border-r border-b border-white/50"></div>
+                          <div className="border-r border-b border-white/50"></div>
+                          <div className="border-b border-white/50"></div>
+                          <div className="border-r border-b border-white/50"></div>
+                          <div className="border-r border-b border-white/50"></div>
+                          <div className="border-b border-white/50"></div>
+                          <div className="border-r border-white/50"></div>
+                          <div className="border-r border-white/50"></div>
+                          <div></div>
+                        </div>
+
+                        {/* Resize Handles */}
+                        {[
+                          { h: 'nw', c: '-top-1.5 -left-1.5 cursor-nwse-resize' },
+                          { h: 'n', c: '-top-1.5 left-1/2 -translate-x-1/2 cursor-ns-resize' },
+                          { h: 'ne', c: '-top-1.5 -right-1.5 cursor-nesw-resize' },
+                          { h: 'e', c: 'top-1/2 -right-1.5 -translate-y-1/2 cursor-ew-resize' },
+                          { h: 'se', c: '-bottom-1.5 -right-1.5 cursor-nwse-resize' },
+                          { h: 's', c: '-bottom-1.5 left-1/2 -translate-x-1/2 cursor-ns-resize' },
+                          { h: 'sw', c: '-bottom-1.5 -left-1.5 cursor-nesw-resize' },
+                          { h: 'w', c: 'top-1/2 -left-1.5 -translate-y-1/2 cursor-ew-resize' }
+                        ].map(handle => (
+                          <div 
+                            key={handle.h}
+                            className={`absolute w-3 h-3 bg-white border-2 border-accent rounded-full shadow-sm z-20 ${handle.c}`} 
+                            onMouseDown={(e) => { e.stopPropagation(); handleMouseDown(e, handle.h); }} 
+                          />
+                        ))}
+                        
+                        {/* Dimensions tooltip */}
+                        <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-black/90 text-white text-[10px] font-black px-3 py-1.5 rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-all pointer-events-none shadow-xl border border-white/10">
+                          {Math.round(pageData.cropBox.width)} × {Math.round(pageData.cropBox.height)} px
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </main>
+            </div>
+          </div>
+        );
+      }}
+    </ToolLayout>
   );
 }
