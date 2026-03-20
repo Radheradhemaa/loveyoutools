@@ -17,6 +17,9 @@ export default function ImageTools({ toolId }: { toolId: string }) {
   // Tool specific states
   const [width, setWidth] = useState(800);
   const [height, setHeight] = useState(600);
+  const [unit, setUnit] = useState<'px' | 'in' | 'cm'>('px');
+  const [dpi, setDpi] = useState(300);
+  const [targetKB, setTargetKB] = useState(0);
   const [format, setFormat] = useState('image/jpeg');
   const [rotation, setRotation] = useState(0);
   const [flipH, setFlipH] = useState(false);
@@ -88,7 +91,7 @@ export default function ImageTools({ toolId }: { toolId: string }) {
 
       await new Promise<void>((resolve) => {
         const img = new Image();
-        img.onload = () => {
+        img.onload = async () => {
           try {
             const canvas = canvasRef.current!;
             const ctx = canvas.getContext('2d');
@@ -101,8 +104,14 @@ export default function ImageTools({ toolId }: { toolId: string }) {
             let targetH = img.height;
 
             if (toolId === 'image-resizer') {
-              targetW = width || img.width;
-              targetH = height || img.height;
+              const convertToPx = (val: number, from: 'px' | 'in' | 'cm') => {
+                if (from === 'px') return val;
+                if (from === 'in') return val * dpi;
+                if (from === 'cm') return (val / 2.54) * dpi;
+                return val;
+              };
+              targetW = convertToPx(width, unit) || img.width;
+              targetH = convertToPx(height, unit) || img.height;
             }
 
             // Handle rotation swapping dimensions
@@ -149,7 +158,63 @@ export default function ImageTools({ toolId }: { toolId: string }) {
 
             // Generate output
             const outFormat = toolId === 'image-converter' ? format : imgData.file.type || 'image/jpeg';
-            const dataUrl = canvas.toDataURL(outFormat, 0.9);
+            
+            let dataUrl = canvas.toDataURL(outFormat, 0.9);
+            
+            // Iterative compression for resizer if targetKB is set
+            if (toolId === 'image-resizer' && targetKB > 0 && outFormat === 'image/jpeg') {
+              let quality = 0.92;
+              dataUrl = canvas.toDataURL('image/jpeg', quality);
+              let size = getDataUrlSize(dataUrl) / 1024;
+              
+              let min = 0.01;
+              let max = 1.0;
+              for (let j = 0; j < 12; j++) {
+                quality = (min + max) / 2;
+                dataUrl = canvas.toDataURL('image/jpeg', quality);
+                size = getDataUrlSize(dataUrl) / 1024;
+                if (size > targetKB) max = quality;
+                else min = quality;
+              }
+              dataUrl = canvas.toDataURL('image/jpeg', min);
+
+              // Pad to exact size if requested
+              const targetBytes = Math.floor(targetKB * 1024);
+              const currentBytes = getDataUrlSize(dataUrl);
+              
+              if (currentBytes < targetBytes) {
+                const diff = targetBytes - currentBytes;
+                if (diff >= 4) {
+                  const base64Data = dataUrl.split(',')[1];
+                  const binaryString = atob(base64Data);
+                  const bytes = new Uint8Array(binaryString.length);
+                  for (let k = 0; k < binaryString.length; k++) {
+                    bytes[k] = binaryString.charCodeAt(k);
+                  }
+
+                  const newBytes = new Uint8Array(bytes.length + diff);
+                  newBytes.set(bytes.slice(0, bytes.length - 2));
+                  
+                  const comHeader = [0xFF, 0xFE];
+                  const payloadLen = diff - 2;
+                  const lenField = [(payloadLen >> 8) & 0xFF, payloadLen & 0xFF];
+                  
+                  newBytes.set(comHeader, bytes.length - 2);
+                  newBytes.set(lenField, bytes.length);
+                  newBytes.set([0xFF, 0xD9], bytes.length + diff - 2);
+                  
+                  const blob = new Blob([newBytes], { type: 'image/jpeg' });
+                  dataUrl = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result as string);
+                    reader.readAsDataURL(blob);
+                  });
+                }
+              }
+            } else {
+              dataUrl = canvas.toDataURL(outFormat, 0.9);
+            }
+            
             updatedImages[i].output = dataUrl;
           } catch (err) {
             console.error("Error processing image:", err);
@@ -206,6 +271,13 @@ export default function ImageTools({ toolId }: { toolId: string }) {
 
   const allProcessed = images.length > 0 && images.every(img => img.output);
 
+  const getDataUrlSize = (dataUrl: string) => {
+    const base64String = dataUrl.split(',')[1];
+    if (!base64String) return 0;
+    const padding = (base64String.match(/=/g) || []).length;
+    return (base64String.length * 0.75) - padding;
+  };
+
   return (
     <div className="space-y-6">
       <canvas ref={canvasRef} className="hidden" />
@@ -231,7 +303,7 @@ export default function ImageTools({ toolId }: { toolId: string }) {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            <div className="bg-bg-secondary rounded-[14px] p-4 relative overflow-hidden">
+            <div className="bg-bg-secondary rounded-[14px] p-4 relative lg:overflow-hidden min-h-[50vh] lg:min-h-0">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-bold flex items-center gap-2"><ImageIcon className="w-5 h-5 text-accent" /> Images ({images.length})</h3>
                 <label className="text-sm text-accent hover:underline cursor-pointer">
@@ -247,7 +319,7 @@ export default function ImageTools({ toolId }: { toolId: string }) {
               </div>
 
               {toolId === 'image-metadata-viewer' ? (
-                <div className="space-y-4 max-h-[85vh] overflow-y-auto pr-2">
+                <div className="space-y-4 max-h-[60vh] lg:max-h-[85vh] overflow-y-auto pr-2">
                   {images.map((img, idx) => (
                     <div key={idx} className="bg-surface border border-border rounded-lg p-4 relative group">
                       <button 
@@ -271,7 +343,7 @@ export default function ImageTools({ toolId }: { toolId: string }) {
                   ))}
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-h-[85vh] overflow-y-auto pr-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-h-[60vh] lg:max-h-[85vh] overflow-y-auto pr-2">
                   {images.map((img, idx) => (
                     <div key={idx} className="relative group rounded-lg overflow-hidden border border-border bg-surface aspect-square flex flex-col">
                       <div className="flex-1 relative flex items-center justify-center p-2">
@@ -307,13 +379,52 @@ export default function ImageTools({ toolId }: { toolId: string }) {
 
               {toolId === 'image-resizer' && (
                 <div className="space-y-4">
-                  <div className="fg">
-                    <label className="fl">Width (px)</label>
-                    <input type="number" className="fi" value={width || ''} onChange={e => setWidth(Number(e.target.value))} />
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-bold text-text-primary">Units</label>
+                    <div className="flex bg-bg-secondary rounded-lg p-1">
+                      {['px', 'in', 'cm'].map(u => (
+                        <button
+                          key={u}
+                          onClick={() => setUnit(u as any)}
+                          className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${unit === u ? 'bg-accent text-white shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
+                        >
+                          {u.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+
+                  {unit !== 'px' && (
+                    <div className="fg">
+                      <label className="fl">DPI (Resolution)</label>
+                      <input type="number" className="fi" value={dpi} onChange={e => setDpi(Number(e.target.value))} />
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="fg">
+                      <label className="fl">Width ({unit})</label>
+                      <input type="number" className="fi" value={width || ''} onChange={e => setWidth(Number(e.target.value))} />
+                    </div>
+                    <div className="fg">
+                      <label className="fl">Height ({unit})</label>
+                      <input type="number" className="fi" value={height || ''} onChange={e => setHeight(Number(e.target.value))} />
+                    </div>
+                  </div>
+
                   <div className="fg">
-                    <label className="fl">Height (px)</label>
-                    <input type="number" className="fi" value={height || ''} onChange={e => setHeight(Number(e.target.value))} />
+                    <label className="fl">Target File Size (KB)</label>
+                    <div className="relative">
+                      <input 
+                        type="number" 
+                        className="fi pr-12" 
+                        placeholder="Optional"
+                        value={targetKB || ''} 
+                        onChange={e => setTargetKB(Number(e.target.value))} 
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted">KB</span>
+                    </div>
+                    <p className="text-[10px] text-text-muted mt-1">Leave 0 for no limit. Only works for JPG output.</p>
                   </div>
                 </div>
               )}

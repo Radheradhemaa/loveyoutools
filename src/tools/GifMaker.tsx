@@ -83,7 +83,7 @@ export default function GifMaker() {
       {previews.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-4">
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-4 max-h-[40vh] lg:max-h-none overflow-y-auto pr-2">
               {previews.map((src, idx) => (
                 <div key={idx} className="relative group rounded-lg overflow-hidden border border-border aspect-square">
                   <img src={src} alt={`Frame ${idx + 1}`} className="w-full h-full object-cover" />
@@ -101,7 +101,7 @@ export default function GifMaker() {
             </div>
 
             {output && (
-              <div className="bg-bg-secondary rounded-[14px] p-4 flex flex-col items-center justify-center min-h-[300px]">
+              <div className="bg-bg-secondary rounded-[14px] p-4 flex flex-col items-center justify-center min-h-[300px] lg:min-h-0">
                 <h3 className="font-bold mb-4">Generated GIF</h3>
                 <img src={output} alt="Generated GIF" className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-md" />
               </div>

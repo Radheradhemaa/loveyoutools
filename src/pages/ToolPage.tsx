@@ -219,7 +219,7 @@ export default function ToolPage() {
   };
 
   return (
-    <div className={`${isFocusMode ? 'w-full h-screen p-0 m-0' : 'max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6'}`} ref={toolRef}>
+    <div className={`${isFocusMode ? 'w-full h-[100dvh] p-0 m-0' : 'max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6'}`} ref={toolRef}>
       <SEO 
         title={`${tool.n} - Free Online Tool`}
         description={`${tool.d} Fast, secure, and 100% free online ${tool.n.toLowerCase()}. No signup required.`}

@@ -8,7 +8,7 @@ interface PreviewPanelProps {
 }
 
 export default function PreviewPanel({ file, type }: PreviewPanelProps) {
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(0.5);
   const [isFitToScreen, setIsFitToScreen] = useState(true);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);

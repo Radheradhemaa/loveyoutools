@@ -36,18 +36,18 @@ export default function Layout() {
   return (
     <div className={`min-h-screen flex flex-col transition-all duration-500 ${isFocusMode ? 'bg-bg-primary' : ''}`}>
       <SEO 
-        title="LoveTools - Free Online Tools Hub" 
-        description="Free Online Tools to Simplify Your Digital Tasks – Fast, Smart & Reliable."
+        title="LoveyouTools - Professional Multi-Tools Hub" 
+        description="A fully functional, professional, and production-ready multi-tools website. Free online tools for images, PDFs, SEO, and more."
         url={typeof window !== 'undefined' ? window.location.href : ''}
         schema={{
           "@context": "https://schema.org",
           "@type": "Organization",
-          "name": "LoveTools",
-          "url": "https://lovetools.io/",
-          "logo": "https://lovetools.io/logo.png",
+          "name": "LoveyouTools",
+          "url": "https://loveyoutools.com/",
+          "logo": "https://loveyoutools.com/logo.png",
           "sameAs": [
-            "https://twitter.com/lovetools",
-            "https://github.com/lovetools"
+            "https://twitter.com/loveyoutools",
+            "https://github.com/loveyoutools"
           ]
         }}
       />
@@ -60,8 +60,8 @@ export default function Layout() {
               <div className="relative flex items-center">
                 <img 
                   src="/logo.png" 
-                  alt="LoveTools - Free Online Tools Platform" 
-                  title="LoveTools - Free Online Tools Platform"
+                  alt="LoveyouTools - Professional Multi-Tools Platform" 
+                  title="LoveyouTools - Professional Multi-Tools Platform"
                   width="240"
                   height="60"
                   loading="eager"
@@ -75,7 +75,7 @@ export default function Layout() {
                   }}
                 />
                 <span className="logo-fallback hidden font-black text-2xl sm:text-3xl tracking-tighter text-accent">
-                  Love<span className="text-text-primary">Tools</span>
+                  Loveyou<span className="text-text-primary">Tools</span>
                 </span>
               </div>
             </Link>
@@ -230,8 +230,8 @@ export default function Layout() {
                   <div className="relative flex items-center">
                     <img 
                       src="/logo.png" 
-                      alt="LoveTools - Free Online Tools Platform" 
-                      title="LoveTools - Free Online Tools Platform"
+                      alt="LoveyouTools - Professional Multi-Tools Platform" 
+                      title="LoveyouTools - Professional Multi-Tools Platform"
                       width="240"
                       height="60"
                       loading="lazy"
@@ -245,12 +245,12 @@ export default function Layout() {
                       }}
                     />
                     <span className="logo-fallback-footer hidden font-black text-3xl tracking-tighter text-accent">
-                      Love<span className="text-text-primary">Tools</span>
+                      Loveyou<span className="text-text-primary">Tools</span>
                     </span>
                   </div>
                 </Link>
                 <p className="text-text-muted text-sm mb-4">
-                  Free Online Tools to Simplify Your Digital Tasks – Fast, Smart & Reliable. No signup required.
+                  Professional Multi-Tools Hub to Simplify Your Digital Tasks – Fast, Smart & Reliable. No signup required.
                 </p>
               </div>
               <div>
@@ -297,7 +297,7 @@ export default function Layout() {
               </div>
             </div>
             <div className="border-t border-border mt-12 pt-8 flex flex-col md:flex-row items-center justify-between text-sm text-text-muted">
-              <p>&copy; {new Date().getFullYear()} LoveTools. All rights reserved.</p>
+              <p>&copy; {new Date().getFullYear()} LoveyouTools. All rights reserved.</p>
               <div className="flex gap-4 mt-4 md:mt-0">
                 <span>Made with love for the web</span>
               </div>

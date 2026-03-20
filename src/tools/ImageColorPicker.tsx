@@ -44,7 +44,7 @@ export default function ImageColorPicker() {
     }
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLImageElement>) => {
+  const handlePickColor = (clientX: number, clientY: number) => {
     if (!canvasRef.current || !imgRef.current) return;
     
     const canvas = canvasRef.current;
@@ -57,8 +57,8 @@ export default function ImageColorPicker() {
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
 
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
 
     try {
       const pixel = ctx.getImageData(x, y, 1, 1).data;
@@ -68,6 +68,16 @@ export default function ImageColorPicker() {
       setRgb(rgbStr);
     } catch (err) {
       // Ignore cross-origin canvas errors if any
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLImageElement>) => {
+    handlePickColor(e.clientX, e.clientY);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLImageElement>) => {
+    if (e.touches.length > 0) {
+      handlePickColor(e.touches[0].clientX, e.touches[0].clientY);
     }
   };
 
@@ -152,13 +162,15 @@ export default function ImageColorPicker() {
 
               {/* Main Image Area */}
               {currentImage && (
-                <div className="flex flex-col items-center justify-center min-h-[300px] bg-surface rounded-lg p-2 cursor-crosshair">
+                <div className="flex flex-col items-center justify-center min-h-[300px] bg-surface rounded-lg p-2 cursor-crosshair touch-none">
                   <img 
                     ref={imgRef}
                     src={currentImage.preview} 
                     alt="Preview" 
                     onLoad={handleImageLoad}
                     onMouseMove={handleMouseMove}
+                    onTouchMove={handleTouchMove}
+                    onTouchStart={handleTouchMove}
                     onClick={() => color && copyToClipboard(color)}
                     className="max-w-full max-h-[85vh] object-contain shadow-md rounded-lg" 
                   />

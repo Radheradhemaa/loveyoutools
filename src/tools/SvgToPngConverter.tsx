@@ -241,12 +241,58 @@ export default function SvgToPngConverter() {
     setIsPanning(false);
   };
 
+  const handlePreviewTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      setIsPanning(true);
+      setPanStart({ x: touch.clientX - pan.x, y: touch.clientY - pan.y });
+    }
+  };
+
+  const handlePreviewTouchMove = (e: React.TouchEvent) => {
+    if (isPanning && e.touches.length === 1) {
+      const touch = e.touches[0];
+      setPan({ x: touch.clientX - panStart.x, y: touch.clientY - panStart.y });
+    }
+  };
+
+  const handlePreviewTouchEnd = () => {
+    setIsPanning(false);
+  };
+
   // Text Dragging
   const handleTextMouseDown = (e: React.MouseEvent) => {
     e.stopPropagation();
     setIsDraggingText(true);
     setDragStart({ x: e.clientX, y: e.clientY });
     setLocalWatermarkPos({ x: currentState.watermark.x, y: currentState.watermark.y });
+  };
+
+  const handleTextTouchStart = (e: React.TouchEvent) => {
+    e.stopPropagation();
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      setIsDraggingText(true);
+      setDragStart({ x: touch.clientX, y: touch.clientY });
+      setLocalWatermarkPos({ x: currentState.watermark.x, y: currentState.watermark.y });
+    }
+  };
+
+  const handleTextTouchMove = (e: React.TouchEvent) => {
+    if (isDraggingText && localWatermarkPos && e.touches.length === 1) {
+      const touch = e.touches[0];
+      const dx = (touch.clientX - dragStart.x) / zoom;
+      const dy = (touch.clientY - dragStart.y) / zoom;
+      setLocalWatermarkPos({
+        x: localWatermarkPos.x + dx,
+        y: localWatermarkPos.y + dy
+      });
+      setDragStart({ x: touch.clientX, y: touch.clientY });
+    }
+  };
+
+  const handleTextTouchEnd = () => {
+    handleTextMouseUp();
   };
 
   const handleTextMouseMove = (e: React.MouseEvent) => {
@@ -474,10 +520,10 @@ export default function SvgToPngConverter() {
   }
 
   return (
-    <div className="w-full max-w-[1920px] mx-auto p-4 h-[85vh] min-h-[800px] flex flex-col">
+    <div className="w-full max-w-[1920px] mx-auto p-4 lg:h-[85vh] lg:min-h-[800px] flex flex-col">
       {/* Top Bar */}
-      <div className="bg-bg-surface border border-border rounded-xl p-4 mb-4 flex items-center justify-between shadow-sm shrink-0">
-        <div className="flex items-center gap-4">
+      <div className="bg-bg-surface border border-border rounded-xl p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm shrink-0">
+        <div className="flex flex-wrap items-center justify-center gap-4">
           <h2 className="font-bold text-lg hidden sm:block">SVG Editor</h2>
           <div className="flex items-center gap-2 bg-bg-secondary rounded-lg p-1">
             <button 
@@ -504,14 +550,14 @@ export default function SvgToPngConverter() {
           </div>
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-center">
           <button onClick={clearAll} className="text-sm font-medium text-text-muted hover:text-red-500 transition-colors">
             Clear All
           </button>
           <button 
             onClick={handleConvertAll}
             disabled={isConverting}
-            className="btn bp py-2 px-6 flex items-center gap-2"
+            className="btn bp py-2 px-6 flex items-center gap-2 flex-1 sm:flex-none justify-center"
           >
             {isConverting ? (
               <span className="flex items-center gap-2">
@@ -527,9 +573,9 @@ export default function SvgToPngConverter() {
         </div>
       </div>
 
-      <div className="flex gap-4 flex-1 min-h-0">
+      <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
         {/* Left Sidebar - File List */}
-        <div className="w-48 lg:w-56 bg-bg-surface border border-border rounded-xl flex flex-col shadow-sm shrink-0 overflow-hidden">
+        <div className="w-full lg:w-56 bg-bg-surface border border-border rounded-xl flex flex-col shadow-sm shrink-0 overflow-hidden max-h-[30vh] lg:max-h-none">
           <div className="p-3 border-b border-border flex items-center justify-between bg-bg-secondary/50">
             <h3 className="font-bold text-xs">Files ({files.length})</h3>
             <button 
@@ -578,13 +624,16 @@ export default function SvgToPngConverter() {
         </div>
 
         {/* Center - Live Preview */}
-        <div className="flex-1 bg-bg-secondary border border-border rounded-xl overflow-hidden relative shadow-inner flex items-center justify-center"
+        <div className="flex-1 bg-bg-secondary border border-border rounded-xl overflow-hidden relative shadow-inner flex items-center justify-center min-h-[400px] lg:min-h-0 touch-none"
              ref={previewContainerRef}
              onWheel={handleWheel}
              onMouseDown={handlePreviewMouseDown}
              onMouseMove={handlePreviewMouseMove}
              onMouseUp={handlePreviewMouseUp}
-             onMouseLeave={handlePreviewMouseUp}>
+             onMouseLeave={handlePreviewMouseUp}
+             onTouchStart={handlePreviewTouchStart}
+             onTouchMove={handlePreviewTouchMove}
+             onTouchEnd={handlePreviewTouchEnd}>
           
           {selectedFile ? (
             <div 
@@ -638,6 +687,9 @@ export default function SvgToPngConverter() {
                     userSelect: 'none'
                   }}
                   onMouseDown={handleTextMouseDown}
+                  onTouchStart={handleTextTouchStart}
+                  onTouchMove={handleTextTouchMove}
+                  onTouchEnd={handleTextTouchEnd}
                 >
                   {currentState.watermark.text}
                 </div>
@@ -659,7 +711,7 @@ export default function SvgToPngConverter() {
         </div>
 
         {/* Right Sidebar - Controls */}
-        <div className="w-80 bg-bg-surface border border-border rounded-xl shadow-sm shrink-0 overflow-y-auto">
+        <div className="w-full lg:w-80 bg-bg-surface border border-border rounded-xl shadow-sm shrink-0 overflow-y-auto max-h-[50vh] lg:max-h-none">
           <div className="p-4 border-b border-border bg-bg-secondary/50 sticky top-0 z-10">
             <h3 className="font-bold text-sm flex items-center gap-2"><Settings className="w-4 h-4" /> Customization</h3>
           </div>

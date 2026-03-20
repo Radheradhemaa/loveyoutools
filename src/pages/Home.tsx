@@ -61,8 +61,8 @@ export default function Home() {
   return (
     <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-12">
       <SEO 
-        title="LoveTools - Free Online Tools Hub" 
-        description="Free Online Tools to Simplify Your Digital Tasks – Fast, Smart & Reliable."
+        title="LoveyouTools - Professional Multi-Tools Hub" 
+        description="A fully functional, professional, and production-ready multi-tools hub. Free online tools for images, PDFs, SEO, and more with real-time previews."
         url={window.location.href}
       />
       {/* Hero Section */}
@@ -78,7 +78,7 @@ export default function Home() {
         </div>
 
         <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-text-primary mb-4 max-w-4xl mx-auto leading-tight">
-          Free Online Tools to Simplify Your Digital Tasks – Fast, Smart & Reliable.
+          LoveyouTools: Professional Tools to Simplify Your Digital Tasks.
         </h1>
 
         <div className="flex flex-wrap justify-center gap-6 text-sm font-medium text-text-muted mb-4">

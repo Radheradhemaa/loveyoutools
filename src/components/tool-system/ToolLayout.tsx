@@ -22,8 +22,13 @@ interface ToolLayoutProps {
   }) => React.ReactNode;
   renderPreview?: (file: File | File[] | null) => React.ReactNode;
   renderToolbar?: (props: { fileName: string; onBack: () => void; onComplete: () => void }) => React.ReactNode;
+  renderAfter?: (props: { onDownload: () => void; onReset: () => void }) => React.ReactNode;
   onDownload?: () => void;
   faq?: { q: string; a: string }[];
+}
+
+function RenderPropWrapper({ render, ...props }: any) {
+  return <>{render(props)}</>;
 }
 
 export default function ToolLayout({ 
@@ -35,6 +40,7 @@ export default function ToolLayout({
   children,
   renderPreview,
   renderToolbar,
+  renderAfter,
   onDownload,
   faq
 }: ToolLayoutProps) {
@@ -108,18 +114,18 @@ export default function ToolLayout({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="flex-1 flex flex-col h-screen"
+            className="fixed inset-0 z-[100] bg-bg-primary flex flex-col h-[100dvh] lg:h-screen overflow-hidden overscroll-none"
           >
-            {renderToolbar ? renderToolbar({ fileName, onBack: handleReset, onComplete: handleComplete }) : (
+            {renderToolbar ? <RenderPropWrapper render={renderToolbar} fileName={fileName} onBack={handleReset} onComplete={handleComplete} /> : (
               <Toolbar 
                 fileName={fileName} 
                 onBack={handleReset}
                 onComplete={handleComplete}
               />
             )}
-            <div className="flex-1 relative overflow-hidden bg-bg-secondary/30">
-              {children ? children({ file, state, onComplete: handleComplete, onReset: handleReset }) : (
-                renderPreview ? renderPreview(file) : <PreviewPanel file={file} />
+            <div className="flex-1 relative overflow-y-auto lg:overflow-hidden bg-bg-secondary/30">
+              {children ? <RenderPropWrapper render={children} file={file} state={state} onComplete={handleComplete} onReset={handleReset} /> : (
+                renderPreview ? <RenderPropWrapper render={renderPreview} file={file} /> : <PreviewPanel file={file} />
               )}
             </div>
           </motion.div>
@@ -133,30 +139,32 @@ export default function ToolLayout({
             exit={{ opacity: 0, scale: 0.95 }}
             className="max-w-4xl mx-auto px-4 py-12 w-full text-center"
           >
-            <div className="bg-surface border border-border rounded-3xl p-12 shadow-2xl mb-12">
-              <div className="w-20 h-20 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-6">
-                <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                </svg>
+            {renderAfter ? <RenderPropWrapper render={renderAfter} onDownload={onDownload} onReset={handleReset} /> : (
+              <div className="bg-surface border border-border rounded-3xl p-12 shadow-2xl mb-12">
+                <div className="w-20 h-20 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-6">
+                  <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h2 className="text-3xl font-black text-text-primary mb-4">Processing Complete!</h2>
+                <p className="text-text-muted mb-8">Your file is ready for download.</p>
+                
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+                  <button 
+                    onClick={onDownload}
+                    className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto"
+                  >
+                    Download File
+                  </button>
+                  <button 
+                    onClick={handleReset}
+                    className="btn bs px-12 py-4 rounded-2xl text-lg font-bold w-full sm:w-auto"
+                  >
+                    Edit Another
+                  </button>
+                </div>
               </div>
-              <h2 className="text-3xl font-black text-text-primary mb-4">Processing Complete!</h2>
-              <p className="text-text-muted mb-8">Your file is ready for download.</p>
-              
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                <button 
-                  onClick={onDownload}
-                  className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto"
-                >
-                  Download File
-                </button>
-                <button 
-                  onClick={handleReset}
-                  className="btn bs px-12 py-4 rounded-2xl text-lg font-bold w-full sm:w-auto"
-                >
-                  Edit Another
-                </button>
-              </div>
-            </div>
+            )}
 
             {/* Ad Placeholder After Download */}
             <div className="w-full h-32 bg-bg-secondary/50 border border-dashed border-border rounded-2xl mb-12 flex items-center justify-center text-text-muted text-sm font-medium">

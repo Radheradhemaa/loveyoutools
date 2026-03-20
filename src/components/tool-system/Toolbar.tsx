@@ -10,7 +10,7 @@ interface ToolbarProps {
 
 export default function Toolbar({ fileName, onBack, onComplete }: ToolbarProps) {
   return (
-    <header className="sticky top-0 z-[120] bg-surface/80 backdrop-blur-md border-b border-border h-16 sm:h-20 flex items-center justify-between px-4 sm:px-8 shadow-sm">
+    <header className="sticky top-0 z-[120] bg-surface/80 backdrop-blur-md border-b border-border h-14 sm:h-16 flex items-center justify-between px-4 sm:px-8 shadow-sm">
       <div className="flex items-center gap-4 sm:gap-6">
         <button 
           onClick={onBack}

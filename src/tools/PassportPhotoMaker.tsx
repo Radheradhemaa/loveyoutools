@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, Eraser, Undo, Redo, ScanFace, ZoomIn, ZoomOut, Sparkles, ArrowRight, Image as ImageIcon } from 'lucide-react';
+import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, Eraser, Undo, Redo, ScanFace, ZoomIn, ZoomOut, Sparkles, ArrowRight, Image as ImageIcon, Maximize2 } from 'lucide-react';
 import ReactCrop, { type Crop, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { FaceDetector, ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision';
@@ -375,10 +375,13 @@ export default function PassportPhotoMaker() {
         const maskImageData = maskCtx.createImageData(maskWidth, maskHeight);
         for (let i = 0; i < personMask.length; i++) {
           let alpha = personMask[i];
-          if (alpha < 0.3) alpha = 0;
-          else if (alpha > 0.8) alpha = 1;
-          else alpha = (alpha - 0.3) / 0.5;
-          alpha = Math.pow(alpha, 1.5);
+          // Very smooth transition to preserve as much detail as possible
+          if (alpha < 0.05) alpha = 0;
+          else if (alpha > 0.95) alpha = 1;
+          else alpha = (alpha - 0.05) / 0.9;
+          
+          // Use a very gentle curve for the transition to avoid harsh edges
+          alpha = Math.pow(alpha, 1.1);
           const val = Math.round(alpha * 255);
           maskImageData.data[i * 4] = val;
           maskImageData.data[i * 4 + 1] = val;
@@ -590,8 +593,11 @@ export default function PassportPhotoMaker() {
       return;
     }
 
+    let isMounted = true;
     const img = new Image();
+    img.crossOrigin = "anonymous";
     img.onload = () => {
+      if (!isMounted) return;
       const canvas = document.createElement('canvas');
       canvas.width = img.width;
       canvas.height = img.height;
@@ -611,18 +617,22 @@ export default function PassportPhotoMaker() {
       const isBgRemoved = bgRemovedImageSrc !== croppedImageSrc;
       
       if (isBgRemoved) {
-        const baseCutoff = Math.floor((edgeCleanup / 255) * 130);
-        const cutoff = isWhiteBg ? Math.max(baseCutoff, 80) : baseCutoff; 
+        // Very conservative cutoff to prevent damaging the subject
+        // Only remove pixels with very low confidence
+        const baseCutoff = Math.floor((edgeCleanup / 255) * 40);
+        const cutoff = isWhiteBg ? Math.max(baseCutoff, 20) : baseCutoff; 
         
         for (let i = 0; i < width * height; i++) {
           const idx = i * 4;
           const a = data[idx + 3];
           if (a > 0) {
             if (a <= cutoff) {
-              data[idx + 3] = 0;
+              // Very gentle fade out for low alpha pixels
+              data[idx + 3] = Math.max(0, a * (a / (cutoff + 1)) * 0.8);
             } else {
               let newAlpha = ((a - cutoff) / (255 - cutoff)) * 255;
-              const power = isWhiteBg ? 1.8 : 1.5;
+              // Very gentle power curve to preserve details
+              const power = isWhiteBg ? 1.2 : 1.1; 
               newAlpha = Math.pow(newAlpha / 255, power) * 255;
               data[idx + 3] = Math.max(0, Math.min(255, newAlpha));
             }
@@ -630,7 +640,7 @@ export default function PassportPhotoMaker() {
         }
 
         const processedData = new Uint8ClampedArray(data);
-        const searchRadius = Math.max(4, Math.floor(edgeCleanup / 25));
+        const searchRadius = Math.max(2, Math.floor(edgeCleanup / 60));
         
         for (let y = 0; y < height; y++) {
           for (let x = 0; x < width; x++) {
@@ -640,7 +650,7 @@ export default function PassportPhotoMaker() {
             const g_orig = data[idx + 1];
             const b_orig = data[idx + 2];
 
-            if (a > 0 && a < 250) {
+            if (a > 0 && a < 252) {
               let sumR = 0, sumG = 0, sumB = 0, weightSum = 0;
               for (let dy = -searchRadius; dy <= searchRadius; dy++) {
                 for (let dx = -searchRadius; dx <= searchRadius; dx++) {
@@ -649,7 +659,7 @@ export default function PassportPhotoMaker() {
                   if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                     const nIdx = (ny * width + nx) * 4;
                     const nAlpha = data[nIdx + 3];
-                    if (nAlpha > a + 20 || nAlpha > 240) { 
+                    if (nAlpha > a + 10 || nAlpha > 250) { 
                       const distSq = dx * dx + dy * dy;
                       const weight = 1 / (1 + distSq);
                       sumR += data[nIdx] * weight;
@@ -665,15 +675,16 @@ export default function PassportPhotoMaker() {
                 let r = sumR / weightSum;
                 let g = sumG / weightSum;
                 let b = sumB / weightSum;
-                let darkenFactor = 0.95 - (edgeCleanup / 250) * 0.2; 
+                // Extremely subtle darkening
+                let darkenFactor = 0.99 - (edgeCleanup / 1000) * 0.1; 
                 if (isWhiteBg) {
                   const br = (r_orig + g_orig + b_orig) / 3;
-                  if (br > 180) darkenFactor *= 0.8;
+                  if (br > 220) darkenFactor *= 0.95;
                 }
                 r *= darkenFactor;
                 g *= darkenFactor;
                 b *= darkenFactor;
-                const blend = Math.pow(1 - (a / 255), 0.25); 
+                const blend = Math.pow(1 - (a / 255), 0.5); 
                 processedData[idx] = data[idx] * (1 - blend) + r * blend;
                 processedData[idx + 1] = data[idx + 1] * (1 - blend) + g * blend;
                 processedData[idx + 2] = data[idx + 2] * (1 - blend) + b * blend;
@@ -684,13 +695,13 @@ export default function PassportPhotoMaker() {
         data.set(processedData);
 
         const sharpenedData = new Uint8ClampedArray(data);
-        const amount = isWhiteBg ? 1.4 : 0.9;
-        const sharpenContrast = isWhiteBg ? 1.35 : 1.2;
+        const amount = isWhiteBg ? 0.4 : 0.2; // Minimal sharpening to avoid artifacts
+        const sharpenContrast = isWhiteBg ? 1.05 : 1.02;
         
         for (let y = 1; y < height - 1; y++) {
           for (let x = 1; x < width - 1; x++) {
             const idx = (y * width + x) * 4;
-            if (data[idx + 3] < 5) continue;
+            if (data[idx + 3] < 20) continue;
             for (let c = 0; c < 3; c++) {
               const current = data[idx + c];
               const neighbors = (
@@ -701,27 +712,11 @@ export default function PassportPhotoMaker() {
               ) / 4;
               let val = current + (current - neighbors) * amount;
               val = ((val / 255 - 0.5) * sharpenContrast + 0.5) * 255;
-              if (isWhiteBg) val += 8;
               sharpenedData[idx + c] = Math.min(255, Math.max(0, val));
             }
           }
         }
         data.set(sharpenedData);
-
-        if (isWhiteBg) {
-          for (let i = 0; i < width * height; i++) {
-            const idx = i * 4;
-            const a = data[idx + 3];
-            if (a < 255 && a > 0) {
-              const r = data[idx];
-              const g = data[idx + 1];
-              const b = data[idx + 2];
-              if (r > 180 && g > 180 && b > 180) {
-                data[idx + 3] = Math.max(0, a - 180);
-              }
-            }
-          }
-        }
       }
       
       const tempCanvas = document.createElement('canvas');
@@ -748,7 +743,16 @@ export default function PassportPhotoMaker() {
 
       setFinalImageSrc(canvas.toDataURL('image/png', 1.0));
     };
+    img.onerror = () => {
+      console.error("Failed to load image for final processing");
+    };
     img.src = bgRemovedImageSrc;
+
+    return () => {
+      isMounted = false;
+      img.onload = null;
+      img.onerror = null;
+    };
   }, [bgRemovedImageSrc, croppedImageSrc, bgColor, customColor, edgeCleanup, hasBorder, brightness, contrast, saturation]);
 
   const handleDownload = () => {
@@ -872,6 +876,16 @@ export default function PassportPhotoMaker() {
               setStep('crop');
             };
             reader.readAsDataURL(file as File);
+          } else if (!file) {
+            // Clear all local states when file is removed
+            setImageSrc(null);
+            setCroppedImageSrc(null);
+            setBgRemovedImageSrc(null);
+            setAutoRemovedImageSrc(null);
+            setFinalImageSrc(null);
+            setHistory([]);
+            setHistoryIndex(-1);
+            setStep('upload');
           }
         }, [file]);
 
@@ -900,39 +914,42 @@ export default function PassportPhotoMaker() {
               ))}
             </div>
 
-            <div className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden">
+            <div className="flex flex-col lg:flex-row flex-1 min-h-0 lg:overflow-hidden">
               {/* Main Preview Area */}
-              <div className="flex-1 relative flex flex-col min-h-0 bg-bg-primary">
-                <div className="flex-1 relative flex items-center justify-center p-4 sm:p-8 overflow-hidden">
+              <div className="flex-1 relative flex flex-col min-h-[60vh] lg:min-h-0 bg-bg-primary overflow-hidden">
+                <div className="flex-1 relative flex items-center justify-center p-2 sm:p-4 overflow-auto touch-none">
                   {step === 'crop' && imageSrc && (
-                    <div className="w-full h-full flex items-center justify-center overflow-hidden">
-                      <ReactCrop
-                        crop={crop}
-                        onChange={(_, percentCrop) => setCrop(percentCrop)}
-                        onComplete={(c) => setCompletedCrop(c)}
-                        aspect={selectedPreset.id !== 'free' ? selectedPreset.width / selectedPreset.height : undefined}
-                        className="shadow-2xl rounded-sm overflow-hidden"
-                      >
-                        <img 
-                          ref={imgRef}
-                          src={imageSrc} 
-                          alt="Upload" 
-                          onLoad={onImageLoad}
-                          style={{ maxHeight: '75vh', maxWidth: '100%' }}
-                          className="block w-auto h-auto"
-                        />
-                      </ReactCrop>
+                    <div className="w-full h-full flex items-center justify-center overflow-auto p-4">
+                      <div className="relative max-w-full max-h-full">
+                        <ReactCrop
+                          crop={crop}
+                          onChange={(_, percentCrop) => setCrop(percentCrop)}
+                          onComplete={(c) => setCompletedCrop(c)}
+                          aspect={selectedPreset.id !== 'free' ? selectedPreset.width / selectedPreset.height : undefined}
+                          className="shadow-2xl rounded-sm overflow-hidden bg-bg-secondary"
+                        >
+                          <img 
+                            ref={imgRef}
+                            src={imageSrc} 
+                            alt="Upload" 
+                            onLoad={onImageLoad}
+                            style={{ maxHeight: '80vh', maxWidth: '100%' }}
+                            className="block w-auto h-auto"
+                          />
+                        </ReactCrop>
+                      </div>
                     </div>
                   )}
 
                   {step === 'process' && (
-                    <div className="relative w-full h-full flex flex-col items-center justify-center p-4 overflow-auto">
+                    <div className="relative w-full h-full flex flex-col items-center justify-center p-4">
                       <div 
                         className="relative shadow-2xl rounded-sm overflow-hidden flex items-center justify-center bg-white transition-all duration-300 origin-center" 
                         style={{
                           aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : (completedCrop ? `${completedCrop.width} / ${completedCrop.height}` : 'auto'),
-                          height: `${80 * zoom}vh`,
-                          maxHeight: '80vh',
+                          height: '75vh',
+                          maxHeight: '75vh',
+                          transform: `scale(${zoom})`,
                           backgroundColor: bgColor === 'custom' ? customColor : (bgColor !== 'transparent' ? bgColor : 'transparent'),
                           backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 20px 20px' : 'none'
                         }}
@@ -1034,10 +1051,15 @@ export default function PassportPhotoMaker() {
               </div>
 
               {/* Sidebar Controls */}
-              <aside className="w-full lg:w-80 bg-surface border-l border-border flex flex-col shrink-0 shadow-2xl overflow-y-auto">
+              <aside className="w-full lg:w-80 bg-surface border-t lg:border-t-0 lg:border-l border-border flex flex-col shrink-0 shadow-2xl max-h-[40vh] lg:max-h-none overflow-y-auto">
                 <div className="p-6 space-y-8">
                   {step === 'crop' && (
                     <div className="space-y-6">
+                      <div className="p-4 bg-accent/5 rounded-2xl border border-accent/20">
+                        <p className="text-[10px] font-bold text-accent uppercase tracking-wider mb-2">Pro Tip</p>
+                        <p className="text-xs text-text-muted leading-relaxed">Adjust the crop to include your head and shoulders. Use the AI Auto-Center for a perfect passport layout.</p>
+                      </div>
+
                       <h3 className="text-xs font-black uppercase tracking-widest text-text-muted">Select Document Size</h3>
                       <div className="grid grid-cols-1 gap-2">
                         {PRESETS.map(preset => (
@@ -1077,6 +1099,35 @@ export default function PassportPhotoMaker() {
                             <button onClick={handleRedo} disabled={historyIndex >= history.length - 1 || isProcessing} className="p-2 rounded-lg hover:bg-accent/10 disabled:opacity-30 transition-colors"><Redo className="w-4 h-4" /></button>
                           </div>
                         </div>
+
+                        <div className="flex items-center gap-2 bg-bg-secondary p-2 rounded-xl border border-border">
+                          <button 
+                            onClick={() => setZoom(Math.max(0.5, zoom - 0.1))}
+                            className="p-2 hover:bg-surface rounded-lg transition-colors"
+                            title="Zoom Out"
+                          >
+                            <ZoomOut className="w-4 h-4" />
+                          </button>
+                          <div className="flex-1 px-2">
+                            <input 
+                              type="range" 
+                              min="0.5" 
+                              max="3" 
+                              step="0.1" 
+                              value={zoom} 
+                              onChange={(e) => setZoom(Number(e.target.value))}
+                              className="w-full accent-accent h-1.5"
+                            />
+                          </div>
+                          <span className="text-[10px] font-black w-10 text-center">{Math.round(zoom * 100)}%</span>
+                          <button 
+                            onClick={() => setZoom(Math.min(3, zoom + 0.1))}
+                            className="p-2 hover:bg-surface rounded-lg transition-colors"
+                            title="Zoom In"
+                          >
+                            <ZoomIn className="w-4 h-4" />
+                          </button>
+                        </div>
                         <div className="grid grid-cols-1 gap-3">
                           <button
                             onClick={() => { setIsEraserMode(false); processFastBackgroundRemoval(croppedImageSrc!); }}
@@ -1102,11 +1153,6 @@ export default function PassportPhotoMaker() {
 
                         {isEraserMode && (
                           <div className="p-4 bg-bg-secondary rounded-2xl border border-border space-y-6 animate-in slide-in-from-top-4">
-                            <div className="flex items-center gap-2 bg-surface p-1 rounded-xl border border-border">
-                              <button onClick={() => setZoom(z => Math.max(1, z - 0.5))} className="p-2 hover:bg-bg-secondary rounded-lg transition-colors"><ZoomOut className="w-4 h-4"/></button>
-                              <span className="flex-1 text-center text-[10px] font-black">{Math.round(zoom * 100)}%</span>
-                              <button onClick={() => setZoom(z => Math.min(4, z + 0.5))} className="p-2 hover:bg-bg-secondary rounded-lg transition-colors"><ZoomIn className="w-4 h-4"/></button>
-                            </div>
                             <div className="space-y-3">
                               <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-text-muted">
                                 <span>Size</span>

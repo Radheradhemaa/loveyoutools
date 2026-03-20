@@ -19,10 +19,27 @@ export default function UploadBox({ onUpload, acceptedTypes, multiple = false }:
     const selectedFiles = Array.from(files);
     
     // Basic validation
-    if (acceptedTypes) {
+    if (acceptedTypes && acceptedTypes.length > 0) {
       const invalidFiles = selectedFiles.filter(file => {
         const extension = `.${file.name.split('.').pop()?.toLowerCase()}`;
-        return !acceptedTypes.includes(extension) && !acceptedTypes.includes(file.type);
+        return !acceptedTypes.some(type => {
+          if (type === extension) return true;
+          if (type === file.type) return true;
+          
+          // Fallback for empty file.type
+          if (type === 'application/pdf' && extension === '.pdf') return true;
+          
+          if (type.endsWith('/*')) {
+            const baseType = type.split('/')[0];
+            if (file.type.startsWith(`${baseType}/`)) return true;
+            
+            // Fallback for empty file.type
+            if (baseType === 'image' && /^\.(jpg|jpeg|png|webp|gif|bmp|svg)$/i.test(extension)) return true;
+            if (baseType === 'video' && /^\.(mp4|webm|ogg|mov)$/i.test(extension)) return true;
+            if (baseType === 'audio' && /^\.(mp3|wav|ogg|m4a)$/i.test(extension)) return true;
+          }
+          return false;
+        });
       });
       
       if (invalidFiles.length > 0) {
@@ -91,10 +108,18 @@ export default function UploadBox({ onUpload, acceptedTypes, multiple = false }:
           {isDragging ? 'Drop it here!' : 'Select or Drop Files'}
         </h3>
         <p className="text-text-muted text-lg max-w-sm mx-auto leading-relaxed">
-          {multiple 
-            ? 'Upload one or more files to get started' 
-            : 'Click to browse or drag and drop your file here'
-          }
+          <span className="hidden sm:inline">
+            {multiple 
+              ? 'Upload one or more files to get started' 
+              : 'Click to browse or drag and drop your file here'
+            }
+          </span>
+          <span className="sm:hidden">
+            {multiple
+              ? 'Tap to select one or more files'
+              : 'Tap to browse and select your file'
+            }
+          </span>
         </p>
 
         <div className="mt-10 flex items-center gap-3 px-6 py-3 bg-bg-secondary rounded-full border border-border group-hover:border-accent/30 transition-colors">

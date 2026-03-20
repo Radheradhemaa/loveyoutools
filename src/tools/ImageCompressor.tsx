@@ -1,123 +1,247 @@
-import React, { useState, useEffect } from 'react';
-import { Download, Image as ImageIcon, RefreshCw, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Download, RefreshCw, Trash2, ZoomIn, ZoomOut, ImagePlus } from 'lucide-react';
 import JSZip from 'jszip';
 import ToolLayout from '../components/tool-system/ToolLayout';
 
-interface CompressedImage {
-  file: File;
-  previewUrl: string;
-  compressedUrl: string | null;
-  originalSize: number;
-  compressedSize: number;
+interface ImageSettings {
+  quality: number;
+  format: string;
 }
 
+interface ImageItem {
+  id: string;
+  file: File;
+  originalUrl: string;
+  originalWidth: number;
+  originalHeight: number;
+  
+  settings: ImageSettings;
+  
+  finalBlob: Blob | null;
+  finalUrl: string | null;
+  isProcessing: boolean;
+}
+
+const defaultSettings = (fileType: string): ImageSettings => ({
+  quality: 0.8,
+  format: fileType === 'image/png' || fileType === 'image/webp' ? fileType : 'image/jpeg',
+});
+
 export default function ImageCompressor() {
-  const [images, setImages] = useState<CompressedImage[]>([]);
-  const [quality, setQuality] = useState(0.8);
-  const [isCompressing, setIsCompressing] = useState(false);
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isProcessingBatch, setIsProcessingBatch] = useState(false);
+  const processedFilesRef = useRef<Set<File>>(new Set());
+
+  const [zoom, setZoom] = useState(1);
 
   const faq = [
-    { q: "Is this image compressor free?", a: "Yes, our image compressor is 100% free to use with no limits on the number of images." },
-    { q: "Does it support bulk compression?", a: "Absolutely! You can upload multiple images at once and compress them all in one click." },
-    { q: "Will I lose image quality?", a: "You can adjust the compression quality. At 80-90%, the difference is usually invisible to the human eye while significantly reducing file size." },
-    { q: "Is it safe to upload my photos?", a: "Your photos never leave your browser. All compression happens locally on your device for maximum privacy." }
+    { q: "What image formats are supported?", a: "We support all major formats including JPG, PNG, WEBP, GIF, BMP, and SVG." },
+    { q: "Does it support bulk editing?", a: "Absolutely! You can upload multiple images, edit one, and apply the settings to all of them." },
+    { q: "Will I lose image quality?", a: "You have full control over the compression quality to balance file size and visual fidelity." },
+    { q: "Is it safe to upload my photos?", a: "Your photos never leave your browser. All processing happens locally on your device for maximum privacy." }
   ];
 
-  const handleFiles = (files: File | File[]) => {
+  const handleFiles = async (files: File | File[]) => {
     const selectedFiles = Array.isArray(files) ? files : [files];
-    const newImages = selectedFiles
-      .filter((file: File) => file.type.startsWith('image/'))
-      .map((file: File) => ({
+    const newImages: ImageItem[] = [];
+
+    for (const file of selectedFiles) {
+      if (processedFilesRef.current.has(file)) continue;
+      
+      const isImage = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp|svg)$/i.test(file.name);
+      if (!isImage) continue;
+      
+      processedFilesRef.current.add(file);
+      const originalUrl = URL.createObjectURL(file);
+      
+      // Get dimensions
+      const dimensions = await new Promise<{width: number, height: number}>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve({ width: img.width, height: img.height });
+        img.onerror = () => resolve({ width: 0, height: 0 });
+        img.src = originalUrl;
+      });
+
+      newImages.push({
+        id: Math.random().toString(36).substr(2, 9),
         file,
-        previewUrl: URL.createObjectURL(file),
-        compressedUrl: null,
-        originalSize: file.size,
-        compressedSize: 0,
-      }));
+        originalUrl,
+        originalWidth: dimensions.width,
+        originalHeight: dimensions.height,
+        settings: defaultSettings(file.type),
+        finalBlob: null,
+        finalUrl: null,
+        isProcessing: false,
+      });
+    }
     
     setImages(prev => [...prev, ...newImages]);
   };
 
   const removeImage = (index: number) => {
-    setImages(prev => prev.filter((_, i) => i !== index));
+    setImages(prev => {
+      const newImages = prev.filter((_, i) => i !== index);
+      if (currentIndex >= newImages.length) {
+        setCurrentIndex(Math.max(0, newImages.length - 1));
+      }
+      return newImages;
+    });
   };
 
-  const compressImages = async () => {
+  const currentImage = images[currentIndex];
+
+  const updateSettings = (updates: Partial<ImageSettings>) => {
+    if (!currentImage) return;
+    setImages(prev => prev.map((img, i) => 
+      i === currentIndex ? { ...img, settings: { ...img.settings, ...updates } } : img
+    ));
+  };
+
+  const applyToAll = () => {
+    if (!currentImage) return;
+    setImages(prev => prev.map((img, i) => {
+      if (i === currentIndex) return img; // Already has the settings and is being processed
+      
+      if (img.finalUrl) URL.revokeObjectURL(img.finalUrl);
+      
+      return {
+        ...img,
+        settings: { ...currentImage.settings },
+        finalBlob: null,
+        finalUrl: null,
+      };
+    }));
+  };
+
+  // Process pipeline
+  useEffect(() => {
+    if (!currentImage) return;
+
+    let isCancelled = false;
+    const processImage = async () => {
+      setImages(prev => prev.map((img, i) => i === currentIndex ? { ...img, isProcessing: true } : img));
+
+      const img = new Image();
+      img.src = currentImage.originalUrl;
+      
+      await new Promise((resolve) => {
+        img.onload = resolve;
+        img.onerror = resolve;
+      });
+
+      if (isCancelled) return;
+
+      if (img.width === 0 || img.height === 0) {
+        setImages(prev => prev.map((image, i) => i === currentIndex ? { ...image, isProcessing: false } : image));
+        return;
+      }
+
+      const { settings } = currentImage;
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      
+      if (ctx) {
+        ctx.drawImage(img, 0, 0);
+      }
+
+      // Export
+      canvas.toBlob((blob) => {
+        if (isCancelled) return;
+        
+        setImages(prev => prev.map((image, i) => {
+          if (i === currentIndex) {
+            if (image.finalUrl) URL.revokeObjectURL(image.finalUrl);
+            
+            return {
+              ...image,
+              finalBlob: blob,
+              finalUrl: blob ? URL.createObjectURL(blob) : null,
+              isProcessing: false
+            };
+          }
+          return image;
+        }));
+      }, settings.format, settings.quality);
+    };
+
+    const timeoutId = setTimeout(processImage, 300); // Debounce
+    return () => {
+      isCancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [currentImage?.settings, currentImage?.originalUrl, currentIndex]);
+
+  const downloadAll = async () => {
     if (images.length === 0) return;
-    setIsCompressing(true);
+    setIsProcessingBatch(true);
 
-    const updatedImages = [...images];
-
-    for (let i = 0; i < updatedImages.length; i++) {
-      const imgData = updatedImages[i];
-      if (imgData.compressedUrl) continue;
-
-      await new Promise<void>((resolve) => {
-        const img = new Image();
-        img.src = imgData.previewUrl;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve();
+    // Process all images that haven't been processed yet
+    const processedImages = await Promise.all(images.map(async (img) => {
+      if (img.finalBlob && !img.isProcessing) return img;
+      
+      // Process synchronously for export
+      return new Promise<ImageItem>((resolve) => {
+        const image = new Image();
+        image.src = img.originalUrl;
+        image.onload = () => {
+          if (image.width === 0 || image.height === 0) {
+            resolve(img);
             return;
           }
 
-          canvas.width = img.width;
-          canvas.height = img.height;
-          ctx.drawImage(img, 0, 0);
+          const { settings } = img;
+          const canvas = document.createElement('canvas');
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(image, 0, 0);
+          }
 
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                updatedImages[i].compressedUrl = URL.createObjectURL(blob);
-                updatedImages[i].compressedSize = blob.size;
-              }
-              resolve();
-            },
-            'image/jpeg',
-            quality
-          );
+          canvas.toBlob((blob) => {
+            resolve({ ...img, finalBlob: blob, finalUrl: blob ? URL.createObjectURL(blob) : null });
+          }, settings.format, settings.quality);
         };
-        img.onerror = () => resolve();
+        image.onerror = () => resolve(img);
       });
-    }
+    }));
 
-    setImages(updatedImages);
-    setIsCompressing(false);
-  };
-
-  const downloadAll = async () => {
-    const compressedImages = images.filter(img => img.compressedUrl);
-    if (compressedImages.length === 0) return;
-
-    if (compressedImages.length === 1) {
+    if (processedImages.length === 1) {
+      const img = processedImages[0];
+      if (img.finalUrl) {
+        const a = document.createElement('a');
+        a.href = img.finalUrl;
+        const ext = img.settings.format.split('/')[1];
+        a.download = `compressed_${img.file.name.split('.')[0]}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    } else {
+      const zip = new JSZip();
+      for (let i = 0; i < processedImages.length; i++) {
+        const img = processedImages[i];
+        if (img.finalBlob) {
+          const ext = img.settings.format.split('/')[1];
+          zip.file(`compressed_${i}_${img.file.name.split('.')[0]}.${ext}`, img.finalBlob);
+        }
+      }
+      const content = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(content);
       const a = document.createElement('a');
-      a.href = compressedImages[0].compressedUrl!;
-      a.download = `compressed_${compressedImages[0].file.name}`;
+      a.href = url;
+      a.download = 'compressed_images.zip';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      return;
+      URL.revokeObjectURL(url);
     }
 
-    const zip = new JSZip();
-    
-    for (const img of compressedImages) {
-      const response = await fetch(img.compressedUrl!);
-      const blob = await response.blob();
-      zip.file(`compressed_${img.file.name}`, blob);
-    }
-
-    const content = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(content);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'compressed_images.zip';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setIsProcessingBatch(false);
   };
 
   const formatBytes = (bytes: number, decimals = 2) => {
@@ -129,17 +253,10 @@ export default function ImageCompressor() {
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
   };
 
-  const totalOriginalSize = images.reduce((acc, img) => acc + img.originalSize, 0);
-  const totalCompressedSize = images.reduce((acc, img) => acc + img.compressedSize, 0);
-  const totalSavings = totalOriginalSize && totalCompressedSize 
-    ? Math.round(((totalOriginalSize - totalCompressedSize) / totalOriginalSize) * 100) 
-    : 0;
-  const allCompressed = images.length > 0 && images.every(img => img.compressedUrl);
-
   return (
     <ToolLayout
-      title="Smart Image Compressor"
-      description="Reduce image file size by up to 90% without losing quality. Batch process multiple JPG, PNG, and WebP images instantly."
+      title="Image Compressor"
+      description="Compress your images instantly. Batch process multiple files with live preview."
       toolId="image-compressor"
       acceptedFileTypes={['image/*']}
       multiple={true}
@@ -147,147 +264,179 @@ export default function ImageCompressor() {
       onDownload={downloadAll}
     >
       {({ file, onComplete, onReset }) => {
-        // Initialize images if not already done
         useEffect(() => {
-          if (file && images.length === 0) {
+          if (file) {
             handleFiles(file);
           }
         }, [file]);
 
+        if (!currentImage) return null;
+
         return (
-          <div className="flex flex-col lg:flex-row h-full overflow-hidden bg-bg-secondary/30">
-            {/* Main Content */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-8">
-              <div className="max-w-5xl mx-auto space-y-6">
-                <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm">
-                  <div className="flex items-center justify-between mb-6">
-                    <h3 className="font-black text-xl flex items-center gap-2">
-                      <ImageIcon className="w-6 h-6 text-accent" /> 
-                      Images ({images.length})
-                    </h3>
-                    <div className="flex items-center gap-4">
-                      {allCompressed && (
-                        <div className="hidden sm:flex items-center gap-2 px-4 py-2 bg-success/10 text-success rounded-xl text-sm font-bold">
-                          Saved {totalSavings}% ({formatBytes(totalOriginalSize - totalCompressedSize)})
-                        </div>
-                      )}
+          <div className="flex flex-col lg:flex-row h-full lg:overflow-hidden bg-bg-secondary/30">
+            {/* Sidebar Controls */}
+            <aside className="w-full lg:w-80 bg-surface border-b lg:border-b-0 lg:border-r border-border flex flex-col shrink-0 shadow-2xl z-10 max-h-[40vh] lg:max-h-none overflow-y-auto scrollbar-hide">
+              <div className="p-4 border-b border-border flex items-center gap-2 overflow-x-auto no-scrollbar">
+                <div className="px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap bg-accent text-white">Compress</div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black uppercase tracking-widest text-text-muted">Zoom Preview</label>
+                    <div className="flex items-center gap-2">
                       <button 
-                        onClick={onReset}
-                        className="text-sm font-bold text-red-500 hover:underline"
+                        onClick={() => setZoom(Math.max(0.1, zoom - 0.25))}
+                        className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
                       >
-                        Clear All
+                        <ZoomOut className="w-4 h-4" />
+                      </button>
+                      <span className="text-[10px] font-black w-10 text-center">{Math.round(zoom * 100)}%</span>
+                      <button 
+                        onClick={() => setZoom(Math.min(5, zoom + 0.25))}
+                        className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
+                      >
+                        <ZoomIn className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
-                  
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                    {images.map((img, idx) => (
-                      <div key={idx} className="relative group rounded-2xl overflow-hidden border border-border bg-bg-primary aspect-square flex flex-col shadow-sm hover:shadow-md transition-shadow">
-                        <div className="flex-1 relative flex items-center justify-center p-2 bg-black/5">
-                          {img.compressedUrl ? (
-                            <div className="relative w-full h-full flex items-center justify-center group/comp">
-                              <img src={img.compressedUrl} alt="Compressed" className="max-w-full max-h-full object-contain" />
-                              <div className="absolute inset-0 opacity-0 group-hover/comp:opacity-100 transition-opacity bg-black/40 flex items-center justify-center">
-                                <div className="text-[10px] text-white font-bold bg-accent px-2 py-1 rounded">AFTER</div>
-                              </div>
-                              <div className="absolute top-2 left-2">
-                                <div className="text-[10px] text-white font-bold bg-black/50 px-2 py-0.5 rounded-full backdrop-blur-sm">
-                                  -{Math.round((1 - img.compressedSize/img.originalSize) * 100)}%
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="relative w-full h-full flex items-center justify-center group/comp">
-                              <img src={img.previewUrl} alt="Original" className="max-w-full max-h-full object-contain" />
-                              <div className="absolute inset-0 opacity-0 group-hover/comp:opacity-100 transition-opacity bg-black/40 flex items-center justify-center">
-                                <div className="text-[10px] text-white font-bold bg-text-muted px-2 py-1 rounded">BEFORE</div>
-                              </div>
-                            </div>
-                          )}
-                          <button 
-                            onClick={() => removeImage(idx)}
-                            className="absolute top-2 right-2 bg-red-500 text-white p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-lg"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                        <div className="bg-surface p-3 text-xs border-t border-border">
-                          <p className="truncate font-bold text-text-primary mb-1" title={img.file.name}>{img.file.name}</p>
-                          <div className="flex justify-between text-text-muted">
-                            <span>{formatBytes(img.originalSize)}</span>
-                            {img.compressedUrl && (
-                              <span className="text-success font-black">{formatBytes(img.compressedSize)}</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <input 
+                    type="range" min="0.1" max="5" step="0.25" 
+                    value={zoom} 
+                    onChange={(e) => setZoom(Number(e.target.value))}
+                    className="w-full accent-accent h-1.5"
+                  />
                 </div>
-              </div>
-            </div>
 
-            {/* Sidebar Controls */}
-            <aside className="w-full lg:w-80 bg-surface border-l border-border p-6 shrink-0 shadow-2xl">
-              <div className="sticky top-6 space-y-8">
-                <div>
-                  <h3 className="text-xs font-black uppercase tracking-widest mb-6 text-text-muted">Compression Settings</h3>
-                  <div className="space-y-6">
-                    <div className="fg">
-                      <div className="flex justify-between items-center mb-3">
-                        <label className="fl text-sm">Quality: {Math.round(quality * 100)}%</label>
-                        <span className="text-[10px] font-bold text-accent bg-accent/10 px-2 py-0.5 rounded uppercase">Recommended</span>
-                      </div>
-                      <input 
-                        type="range" 
-                        min="0.1" max="1" step="0.05" 
-                        value={quality} 
-                        onChange={(e) => setQuality(Number(e.target.value))}
-                        className="w-full accent-accent"
-                      />
-                      <div className="flex justify-between text-[10px] text-text-muted mt-2">
-                        <span>Small Size</span>
-                        <span>Best Quality</span>
-                      </div>
+                <div className="space-y-6 animate-in fade-in pt-6 border-t border-border">
+                  <div>
+                    <label className="text-sm font-bold mb-2 block">Quality: {Math.round(currentImage.settings.quality * 100)}%</label>
+                    <input 
+                      type="range" min="0.1" max="1" step="0.05" 
+                      value={currentImage.settings.quality} 
+                      onChange={(e) => updateSettings({ quality: Number(e.target.value) })}
+                      className="w-full accent-accent"
+                    />
+                    <div className="flex justify-between text-[10px] text-text-muted mt-2">
+                      <span>Small Size</span>
+                      <span>Best Quality</span>
                     </div>
+                  </div>
+                  <div>
+                    <label className="text-sm font-bold mb-2 block">Format</label>
+                    <select 
+                      value={currentImage.settings.format}
+                      onChange={(e) => updateSettings({ format: e.target.value })}
+                      className="w-full bg-bg-secondary border border-border rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-accent"
+                    >
+                      <option value="image/jpeg">JPG</option>
+                      <option value="image/png">PNG</option>
+                      <option value="image/webp">WEBP</option>
+                    </select>
                   </div>
                 </div>
 
                 <div className="pt-6 border-t border-border space-y-4">
-                  <button 
-                    onClick={compressImages} 
-                    disabled={isCompressing || allCompressed || images.length === 0}
-                    className="btn bp w-full py-4 rounded-2xl gap-2 text-lg font-bold shadow-xl shadow-accent/20 disabled:opacity-50"
-                  >
-                    {isCompressing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <RefreshCw className="w-5 h-5" />}
-                    {isCompressing ? 'Compressing...' : allCompressed ? 'Compressed' : 'Compress All'}
-                  </button>
-                  
-                  {allCompressed && (
+                  {images.length > 1 && (
                     <button 
-                      onClick={onComplete}
-                      className="btn bg w-full py-4 rounded-2xl gap-2 text-lg font-bold shadow-xl shadow-success/20 animate-in zoom-in-95"
+                      onClick={applyToAll}
+                      className="w-full py-3 rounded-xl bg-bg-secondary hover:bg-border text-sm font-bold transition-colors"
                     >
-                      <Download className="w-5 h-5" /> Finish & Download
+                      Apply Settings to All
                     </button>
                   )}
+                  <button 
+                    onClick={downloadAll} 
+                    disabled={isProcessingBatch}
+                    className="btn bp w-full py-4 rounded-2xl gap-2 text-lg font-bold shadow-xl shadow-accent/20 disabled:opacity-50"
+                  >
+                    {isProcessingBatch ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                    {images.length > 1 ? 'Download All' : 'Download Image'}
+                  </button>
                 </div>
-
-                {allCompressed && (
-                  <div className="p-4 bg-success/5 border border-success/20 rounded-2xl">
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="w-8 h-8 bg-success/10 text-success rounded-lg flex items-center justify-center">
-                        <ImageIcon className="w-4 h-4" />
-                      </div>
-                      <span className="font-bold text-success">Success!</span>
-                    </div>
-                    <p className="text-xs text-success/70 leading-relaxed">
-                      You saved <strong>{formatBytes(totalOriginalSize - totalCompressedSize)}</strong> of space. That's a <strong>{totalSavings}%</strong> reduction!
-                    </p>
-                  </div>
-                )}
               </div>
             </aside>
+
+            {/* Main Content - Preview */}
+            <div className="flex-1 flex flex-col relative bg-black/5 min-h-[50vh] lg:min-h-0">
+              <div className="absolute top-4 left-4 right-4 flex justify-between items-center z-10 pointer-events-none">
+                <div className="bg-surface/80 backdrop-blur-md px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm pointer-events-auto border border-border flex items-center gap-3">
+                  <span className="truncate max-w-[150px] sm:max-w-[200px]" title={currentImage.file.name}>{currentImage.file.name}</span>
+                  <span className="text-text-muted hidden sm:inline">|</span>
+                  <span className="hidden sm:inline">{currentImage.originalWidth}x{currentImage.originalHeight}</span>
+                  <span className="text-text-muted">|</span>
+                  <span>{formatBytes(currentImage.file.size)} → {currentImage.finalBlob ? formatBytes(currentImage.finalBlob.size) : '...'}</span>
+                  {currentImage.finalBlob && (
+                    <span className="text-success">
+                      (-{Math.round((1 - currentImage.finalBlob.size / currentImage.file.size) * 100)}%)
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2 pointer-events-auto">
+                  <button onClick={() => {
+                    processedFilesRef.current.clear();
+                    onReset();
+                  }} className="bg-surface/80 backdrop-blur-md p-2 rounded-xl hover:bg-surface shadow-sm border border-border text-red-500 transition-colors ml-2">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 flex items-center justify-center p-8 overflow-hidden relative touch-none">
+                {currentImage.isProcessing ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-bg-primary/50 backdrop-blur-sm z-20">
+                    <RefreshCw className="w-8 h-8 animate-spin text-accent" />
+                  </div>
+                ) : null}
+
+                <div className="relative w-full h-full flex items-center justify-center overflow-auto">
+                  {/* Live Preview */}
+                  <div className="flex w-full h-full items-center justify-center min-h-min min-w-min p-4">
+                    <div className="flex-1 flex flex-col items-center justify-center h-full max-h-full relative">
+                      {(currentImage.finalUrl || currentImage.originalUrl) && (
+                        <img 
+                          src={currentImage.finalUrl || currentImage.originalUrl} 
+                          alt="Preview" 
+                          style={{ transform: `scale(${zoom})`, transformOrigin: 'center' }} 
+                          className="max-w-full max-h-[60vh] object-contain rounded-lg shadow-lg transition-transform duration-200" 
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Image Carousel */}
+              {images.length > 1 && (
+                <div className="h-24 bg-surface border-t border-border p-2 flex gap-2 overflow-x-auto shrink-0">
+                  {images.map((img, idx) => (
+                    <button
+                      key={img.id}
+                      onClick={() => setCurrentIndex(idx)}
+                      className={`relative h-full aspect-square rounded-xl overflow-hidden border-2 transition-all ${currentIndex === idx ? 'border-accent scale-95' : 'border-transparent hover:border-border'}`}
+                    >
+                      <img src={img.finalUrl || img.originalUrl} alt={`Thumb ${idx}`} className="w-full h-full object-cover" />
+                      <div className="absolute top-1 right-1 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded backdrop-blur-sm">
+                        {idx + 1}
+                      </div>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); removeImage(idx); }}
+                        className="absolute bottom-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 hover:opacity-100 transition-opacity"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </button>
+                  ))}
+                  <label className="h-full aspect-square rounded-xl border-2 border-dashed border-border flex flex-col items-center justify-center text-text-muted hover:text-accent hover:border-accent hover:bg-accent/5 transition-colors cursor-pointer">
+                    <ImagePlus className="w-6 h-6 mb-1" />
+                    <span className="text-[10px] font-bold">Add More</span>
+                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => {
+                      if (e.target.files) handleFiles(Array.from(e.target.files));
+                    }} />
+                  </label>
+                </div>
+              )}
+            </div>
           </div>
         );
       }}
