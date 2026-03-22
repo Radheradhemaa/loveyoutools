@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Copy, Trash2, Check, RefreshCw, Hash, Twitter, User, Smile, Youtube, Instagram, Download, Image as ImageIcon, Video, Type, MessageSquare, Sparkles, Send, ExternalLink } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
 
 export default function SocialTools({ toolId }: { toolId: string }) {
   const [input, setInput] = useState('');
@@ -32,17 +31,15 @@ export default function SocialTools({ toolId }: { toolId: string }) {
     setLoading(true);
     let res = '';
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      // Simulate network delay
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
       switch (toolId) {
         case 'youtube-tag-generator':
           if (!input) { res = 'Please enter a video topic or keyword.'; break; }
-          const tagResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Generate 30 high-ranking, SEO-friendly YouTube tags for a video about: "${input}". 
-            Format the output as a comma-separated list. 
-            Include a mix of broad and specific tags.`,
-          });
-          res = tagResponse.text || 'Failed to generate tags.';
+          res = `YouTube Tags for: "${input}"\n\n` +
+                `${input.replace(/\s+/g, '')}, howto${input.replace(/\s+/g, '')}, ${input}tutorial, best${input.replace(/\s+/g, '')}, ${input}tips, ${input}tricks, learn${input.replace(/\s+/g, '')}, ${input}guide, ${input}forbeginners, ${input}2024, ${input}review, ${input}explained, whatis${input.replace(/\s+/g, '')}, ${input}hacks, ${input}secrets\n\n` +
+                `Note: These are simulated tags.`;
           break;
 
         case 'youtube-thumbnail-downloader':
@@ -58,63 +55,46 @@ export default function SocialTools({ toolId }: { toolId: string }) {
 
         case 'instagram-dp-downloader':
           if (!input) { res = 'Please enter an Instagram username.'; break; }
-          const dpResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `As a social media tool, simulate a profile analysis for the Instagram user: "${input}". 
-            Provide:
-            1. Profile Type (Public/Private)
-            2. Estimated Followers/Following
-            3. Engagement Rate Analysis
-            4. Profile Picture Status (HD Available)
-            5. Recent Activity Summary.
-            Note: This is a simulated analysis. To download the DP, usually a direct API request is needed.`,
-          });
-          res = dpResponse.text || 'Failed to analyze profile.';
+          res = `Profile Analysis for: @${input}\n\n` +
+                `1. Profile Type: Public (Simulated)\n` +
+                `2. Estimated Followers: 10K - 50K\n` +
+                `3. Engagement Rate: 3.5%\n` +
+                `4. Profile Picture: HD Available\n` +
+                `5. Recent Activity: Active\n\n` +
+                `Note: This is a simulated analysis. To download the DP, usually a direct API request is needed.`;
           break;
 
         case 'reel-video-downloader':
           if (!input) { res = 'Please enter a Reel or Video URL.'; break; }
-          const reelResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Analyze the following social media link: "${input}". 
-            Identify the platform (Instagram, YouTube, etc.) and provide a simulated download report including:
-            1. Content Type (Reel, Short, Video)
-            2. Estimated File Size
-            3. Available Resolutions (1080p, 720p, etc.)
-            4. Audio Track Info.
-            Note: This tool simulates the extraction process.`,
-          });
-          res = reelResponse.text || 'Failed to analyze link.';
+          res = `Video Analysis for: "${input}"\n\n` +
+                `1. Content Type: Short Video / Reel\n` +
+                `2. Estimated File Size: 15MB - 30MB\n` +
+                `3. Available Resolutions: 1080p, 720p, 480p\n` +
+                `4. Audio Track: Original Audio\n\n` +
+                `Note: This tool simulates the extraction process. Direct downloads require backend processing.`;
           break;
 
         case 'hashtag-generator':
           if (!input) { res = 'Please enter a topic or keyword.'; break; }
-          const hashResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Generate 30 trending and relevant hashtags for: "${input}". 
-            Categorize them into:
-            1. Most Popular
-            2. Niche Specific
-            3. Engagement Boosters.
-            Format with # symbol.`,
-          });
-          res = hashResponse.text || 'Failed to generate hashtags.';
+          res = `Hashtags for: "${input}"\n\n` +
+                `🔥 Most Popular:\n` +
+                `#${input.replace(/\s+/g, '')} #trending #viral #explorepage #fyp\n\n` +
+                `🎯 Niche Specific:\n` +
+                `#${input.replace(/\s+/g, '')}life #${input.replace(/\s+/g, '')}tips #${input.replace(/\s+/g, '')}community #${input.replace(/\s+/g, '')}love\n\n` +
+                `🚀 Engagement Boosters:\n` +
+                `#likeforlike #followforfollow #commentbelow #share\n\n` +
+                `Note: These are simulated hashtags.`;
           break;
 
         case 'caption-generator':
           if (!input) { res = 'Please describe your post or photo.'; break; }
-          const capResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Generate 5 engaging social media captions for a post about: "${input}". 
-            Provide different styles:
-            1. Witty/Funny
-            2. Inspirational
-            3. Minimalist
-            4. Question-based (to boost engagement)
-            5. Storytelling style.
-            Include relevant emojis.`,
-          });
-          res = capResponse.text || 'Failed to generate captions.';
+          res = `Captions for: "${input}"\n\n` +
+                `1. Witty: Just another day of ${input} and pretending I know what I'm doing. 😅\n\n` +
+                `2. Inspirational: Every step in ${input} is a step towards greatness. Keep pushing! ✨\n\n` +
+                `3. Minimalist: ${input}. That's it. 🖤\n\n` +
+                `4. Question: What are your thoughts on ${input}? Let me know below! 👇\n\n` +
+                `5. Storytelling: It all started when I discovered ${input}... and the rest is history. 📖\n\n` +
+                `Note: These are simulated captions.`;
           break;
 
         case 'tweet-length-checker':
@@ -123,16 +103,11 @@ export default function SocialTools({ toolId }: { toolId: string }) {
 
         case 'social-media-bio-generator':
           if (!input) { res = 'Please provide some details about yourself.'; break; }
-          const bioResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Generate 3 creative and professional social media bios based on these details: "${input}". 
-            Styles:
-            1. Professional/Corporate
-            2. Creative/Artistic
-            3. Casual/Friendly.
-            Keep them within 150 characters and use emojis.`,
-          });
-          res = bioResponse.text || 'Failed to generate bios.';
+          res = `Bios based on: "${input}"\n\n` +
+                `1. Professional: Expert in ${input}. Helping businesses grow and scale. 📈 | Speaker | Consultant\n\n` +
+                `2. Creative: Creating magic with ${input}. 🎨 | Coffee addict ☕ | Dreamer ✨\n\n` +
+                `3. Casual: Just a person who loves ${input}. 🍕 | Dog parent 🐶 | Let's connect! ✌️\n\n` +
+                `Note: These are simulated bios.`;
           break;
 
         case 'emoji-picker':

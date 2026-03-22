@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Copy, Trash2, Check, RefreshCw, Hash, Link as LinkIcon, Image as ImageIcon, FileText, Search, Globe, Shield, Zap, BarChart3 } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
 
 export default function SeoTools({ toolId }: { toolId: string }) {
   const [inputs, setInputs] = useState<any>({});
@@ -24,89 +23,66 @@ export default function SeoTools({ toolId }: { toolId: string }) {
     setLoading(true);
     let res = '';
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      // Simulate network delay
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
       switch (toolId) {
         case 'keyword-research-tool':
           if (!inputs.keyword) { res = 'Please enter a keyword.'; break; }
-          const kwResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `As an SEO expert, provide a detailed keyword research report for: "${inputs.keyword}". 
-            Include:
-            1. Related Keywords (Long-tail)
-            2. Search Intent (Informational, Transactional, etc.)
-            3. Estimated Monthly Search Volume (Global)
-            4. Keyword Difficulty (0-100)
-            5. CPC (Estimated)
-            6. Content Ideas for this keyword.
-            Format the output in a clean, professional way.`,
-          });
-          res = kwResponse.text || 'Failed to generate report.';
+          res = `Keyword Research Report for: "${inputs.keyword}"\n\n` +
+                `1. Related Keywords (Long-tail):\n` +
+                `   - best ${inputs.keyword}\n` +
+                `   - how to use ${inputs.keyword}\n` +
+                `   - ${inputs.keyword} tutorial\n\n` +
+                `2. Search Intent: Informational / Transactional\n` +
+                `3. Estimated Monthly Search Volume: 10,000 - 100,000\n` +
+                `4. Keyword Difficulty: 45/100 (Medium)\n` +
+                `5. CPC (Estimated): $1.50\n\n` +
+                `Note: This is a simulated report.`;
           break;
 
         case 'backlink-checker':
           if (!inputs.url) { res = 'Please enter a URL.'; break; }
-          const blResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `As an SEO tool, simulate a backlink analysis for the website: "${inputs.url}". 
-            Provide a realistic report including:
-            1. Total Backlinks (Estimated)
-            2. Referring Domains
-            3. Domain Rating (DR)
-            4. Top Anchor Texts
-            5. Top Linking Domains
-            6. Do-follow vs No-follow ratio.
-            Note: This is a simulated analysis based on general web knowledge.`,
-          });
-          res = blResponse.text || 'Failed to generate report.';
+          res = `Backlink Analysis for: "${inputs.url}"\n\n` +
+                `1. Total Backlinks (Estimated): 5,432\n` +
+                `2. Referring Domains: 342\n` +
+                `3. Domain Rating (DR): 56/100\n` +
+                `4. Top Anchor Texts: "website", "click here", "read more"\n` +
+                `5. Do-follow vs No-follow ratio: 70% / 30%\n\n` +
+                `Note: This is a simulated analysis.`;
           break;
 
         case 'domain-authority-checker':
           if (!inputs.url) { res = 'Please enter a URL.'; break; }
-          const daResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `As an SEO tool, simulate a Domain Authority (DA) and Page Authority (PA) check for: "${inputs.url}". 
-            Include:
-            1. Domain Authority (0-100)
-            2. Page Authority (0-100)
-            3. Spam Score (%)
-            4. Total External Links
-            5. Root Domains
-            6. Ranking Keywords count.
-            Note: This is a simulated analysis.`,
-          });
-          res = daResponse.text || 'Failed to generate report.';
+          res = `Domain Authority Check for: "${inputs.url}"\n\n` +
+                `1. Domain Authority (DA): 48/100\n` +
+                `2. Page Authority (PA): 35/100\n` +
+                `3. Spam Score: 2%\n` +
+                `4. Total External Links: 12,500\n` +
+                `5. Root Domains: 850\n\n` +
+                `Note: This is a simulated analysis.`;
           break;
 
         case 'plagiarism-checker':
           if (!inputs.text) { res = 'Please enter text to check.'; break; }
-          const plResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `Analyze the following text for plagiarism and uniqueness. 
-            Text: "${inputs.text}"
-            Provide:
-            1. Uniqueness Percentage
-            2. Plagiarism Percentage
-            3. Potential sources if plagiarized (simulated)
-            4. Suggestions to improve uniqueness.`,
-          });
-          res = plResponse.text || 'Failed to generate report.';
+          res = `Plagiarism Analysis Report\n\n` +
+                `1. Uniqueness Percentage: 95%\n` +
+                `2. Plagiarism Percentage: 5%\n` +
+                `3. Potential sources: None detected.\n\n` +
+                `Note: This is a simulated analysis.`;
           break;
 
         case 'website-speed-test':
           if (!inputs.url) { res = 'Please enter a URL.'; break; }
-          const speedResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: `As a website performance tool, simulate a speed test for: "${inputs.url}". 
-            Provide a report similar to Google PageSpeed Insights:
-            1. Performance Score (0-100)
-            2. Core Web Vitals (LCP, FID, CLS)
-            3. Time to Interactive
-            4. Total Blocking Time
-            5. Speed Index
-            6. Opportunities for improvement (e.g., compress images, minify JS).
-            Note: This is a simulated performance report.`,
-          });
-          res = speedResponse.text || 'Failed to generate report.';
+          res = `Website Speed Test for: "${inputs.url}"\n\n` +
+                `1. Performance Score: 85/100\n` +
+                `2. Core Web Vitals:\n` +
+                `   - LCP: 2.1s\n` +
+                `   - FID: 45ms\n` +
+                `   - CLS: 0.05\n` +
+                `3. Time to Interactive: 3.2s\n` +
+                `4. Total Blocking Time: 150ms\n\n` +
+                `Note: This is a simulated performance report.`;
           break;
 
         case 'meta-tag-generator':
