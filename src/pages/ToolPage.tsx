@@ -22,7 +22,6 @@ import CalculatorTools from '../tools/CalculatorTools';
 import GeneratorTools from '../tools/GeneratorTools';
 import SeoTools from '../tools/SeoTools';
 import SocialTools from '../tools/SocialTools';
-import AiTools from '../tools/AiTools';
 import ImageTools from '../tools/ImageTools';
 import PdfTools from '../tools/PdfTools';
 import PhotoSignResizer from '../tools/PhotoSignResizer';
@@ -102,7 +101,6 @@ export default function ToolPage() {
     if (tool.c === 'generator') return <GeneratorTools toolId={tool.id} />;
     if (tool.c === 'seo') return <SeoTools toolId={tool.id} />;
     if (tool.c === 'social') return <SocialTools toolId={tool.id} />;
-    if (tool.c === 'ai') return <AiTools toolId={tool.id} />;
     if (tool.c === 'image') return <ImageTools toolId={tool.id} />;
     if (tool.c === 'pdf') return <PdfTools toolId={tool.id} />;
 

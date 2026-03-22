@@ -5,7 +5,6 @@ export const categories = [
   { id: 'seo', name: 'SEO' },
   { id: 'text', name: 'Text' },
   { id: 'developer', name: 'Developer' },
-  { id: 'ai', name: 'AI' },
   { id: 'generator', name: 'Generator' },
   { id: 'social', name: 'Social' },
   { id: 'calculator', name: 'Calculator' }
@@ -99,15 +98,6 @@ export const tools = [
   { id: 'html-css-js-minifier', c: 'developer', n: 'HTML/CSS/JS Minifier', d: 'Minify web code.', i: '⚡', b: '#dbeafe' },
   { id: 'html-live-preview', c: 'developer', n: 'HTML Live Preview', d: 'Preview HTML code live.', i: '🖥️', b: '#dbeafe' },
   { id: 'hash-generator', c: 'developer', n: 'Hash Generator', d: 'Generate MD5, SHA hashes.', i: '#', b: '#dbeafe' },
-
-  // AI TOOLS (bg: #fce7f3)
-  { id: 'ai-content-generator', c: 'ai', n: 'AI Content Generator', d: 'Generate content with AI.', i: '🤖', b: '#fce7f3' },
-  { id: 'ai-title-generator', c: 'ai', n: 'AI Title Generator', d: 'Generate titles with AI.', i: '✨', b: '#fce7f3' },
-  { id: 'ai-email-writer', c: 'ai', n: 'AI Email Writer', d: 'Write emails with AI.', i: '📧', b: '#fce7f3' },
-  { id: 'ai-instagram-caption', c: 'ai', n: 'AI Instagram Caption', d: 'Generate captions with AI.', i: '📸', b: '#fce7f3' },
-  { id: 'ai-story-generator', c: 'ai', n: 'AI Story Generator', d: 'Write stories with AI.', i: '📖', b: '#fce7f3' },
-  { id: 'ai-product-description', c: 'ai', n: 'AI Product Description', d: 'Generate product descriptions.', i: '🏷️', b: '#fce7f3' },
-  { id: 'ai-text-humanizer', c: 'ai', n: 'AI Text Humanizer', d: 'Make AI text sound human.', i: '🧑', b: '#fce7f3' },
 
   // GENERATOR TOOLS (bg: #ecfdf5)
   { id: 'qr-code-generator', c: 'generator', n: 'QR Code Generator', d: 'Generate QR codes easily.', i: '⬛', b: '#ecfdf5' },
