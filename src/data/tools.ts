@@ -12,6 +12,7 @@ export const categories = [
 
 export const tools = [
   // IMAGE TOOLS (bg: #fff0eb)
+  { id: 'background-remover', c: 'image', n: 'AI Background Remover', d: 'Remove image backgrounds instantly with professional precision using MediaPipe AI.', i: '🪄', b: '#fff0eb', popular: true },
   { id: 'passport-photo-maker', c: 'image', n: 'Passport Photo Maker', d: 'Create professional passport photos with background removal and auto-print layouts.', i: '👤', b: '#fff0eb', popular: true },
   { id: 'image-compressor', c: 'image', n: 'Image Compressor', d: 'Compress images without losing quality.', i: '🗜️', b: '#fff0eb', popular: true },
   { id: 'photo-sign-resizer', c: 'image', n: 'Photo & Sign Resizer', d: 'Resize photo and signature to exact KB and pixels.', i: '🖼️', b: '#fff0eb', popular: true },

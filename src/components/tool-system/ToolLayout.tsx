@@ -28,7 +28,10 @@ interface ToolLayoutProps {
 }
 
 function RenderPropWrapper({ render, ...props }: any) {
-  return <>{render(props)}</>;
+  if (typeof render === 'function') {
+    return <>{render(props)}</>;
+  }
+  return <>{render}</>;
 }
 
 export default function ToolLayout({ 

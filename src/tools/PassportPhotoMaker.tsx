@@ -3,104 +3,65 @@ import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Ima
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { SelfieSegmentation } from '@mediapipe/selfie_segmentation';
-import { ImageSegmenter, FilesetResolver } from "@mediapipe/tasks-vision";
 
 // --- Global Engine Cache for Instant Background Removal ---
-let imageSegmenter: ImageSegmenter | null = null;
-let selfieSegmentation: SelfieSegmentation | null = null;
-let engineInitPromise: Promise<any> | null = null;
+let isEngineWarmed = false;
+let engineWarmPromise: Promise<void> | null = null;
+let selfieSegmentationInstance: any = null;
 
-const initEngine = async (onProgress?: (text: string) => void) => {
-  if (imageSegmenter) return { type: 'modern', model: imageSegmenter };
-  if (selfieSegmentation) return { type: 'legacy', model: selfieSegmentation };
+const getSelfieSegmentation = async () => {
+  if (selfieSegmentationInstance) return selfieSegmentationInstance;
   
-  // If already initializing, wait for it
-  if (engineInitPromise) {
-    const result = await engineInitPromise;
-    if (result) return result;
-    // If it resolved to null, we try again
+  try {
+    const mpSelfie = await import('@mediapipe/selfie_segmentation');
+    // Handle both default and named exports
+    const SelfieSegmentationClass = mpSelfie.SelfieSegmentation || (mpSelfie as any).default;
+    
+    if (!SelfieSegmentationClass) {
+      throw new Error("SelfieSegmentation class not found in @mediapipe/selfie_segmentation");
+    }
+
+    selfieSegmentationInstance = new SelfieSegmentationClass({
+      locateFile: (file: string) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
+      }
+    });
+
+    selfieSegmentationInstance.setOptions({
+      modelSelection: 1,
+      selfieMode: false,
+    });
+
+    return selfieSegmentationInstance;
+  } catch (err) {
+    console.error("Failed to load MediaPipe Selfie Segmentation:", err);
+    throw err;
   }
-  
-  engineInitPromise = (async () => {
-    // Try Modern ImageSegmenter first
+};
+
+const prewarmEngine = async () => {
+  if (isEngineWarmed) return;
+  if (engineWarmPromise) return engineWarmPromise;
+
+  engineWarmPromise = (async () => {
     try {
-      if (onProgress) onProgress('Loading Engine (Modern)...');
+      const segmenter = await getSelfieSegmentation();
       
-      const vision = await Promise.race([
-        FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm"
-        ),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("WASM timeout")), 10000))
-      ]);
-      
-      // Try GPU first, then CPU
-      const delegates: ("GPU" | "CPU")[] = ["GPU", "CPU"];
-      for (const delegate of delegates) {
-        try {
-          if (onProgress) onProgress(`Initializing Engine (${delegate})...`);
-          imageSegmenter = await Promise.race([
-            ImageSegmenter.createFromOptions(vision, {
-              baseOptions: {
-                modelAssetPath: `https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite`,
-                delegate: delegate
-              },
-              runningMode: "IMAGE",
-              outputCategoryMask: false,
-              outputConfidenceMasks: true,
-            }),
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Init ${delegate} timeout`)), 15000))
-          ]);
-          
-          if (imageSegmenter) {
-            console.log(`Modern ImageSegmenter Initialized with ${delegate}`);
-            const res = { type: 'modern', model: imageSegmenter };
-            return res;
-          }
-        } catch (e) {
-          console.warn(`Modern ImageSegmenter ${delegate} failed:`, e);
-        }
-      }
-    } catch (error) {
-      console.warn("Modern ImageSegmenter setup failed:", error);
+      const tinyPixel = new Image();
+      tinyPixel.src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+      await new Promise((resolve) => {
+        tinyPixel.onload = async () => {
+          await segmenter.send({ image: tinyPixel });
+          resolve(null);
+        };
+      });
+
+      isEngineWarmed = true;
+    } catch (e) {
+      console.warn("Prewarm failed", e);
     }
-
-    // Fallback to Legacy SelfieSegmentation
-    const cdns = [
-      `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1.1675465747`,
-      `https://www.gstatic.com/mediapipe/solutions/selfie_segmentation`
-    ];
-
-    for (const base of cdns) {
-      try {
-        if (onProgress) onProgress(`Loading Engine (Legacy)...`);
-        const instance = new SelfieSegmentation({
-          locateFile: (file) => `${base}/${file}`
-        });
-        
-        instance.setOptions({ modelSelection: 0 });
-
-        await Promise.race([
-          instance.initialize(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Legacy Init timeout")), 15000))
-        ]);
-
-        selfieSegmentation = instance;
-        console.log(`Legacy Engine Initialized from ${base}`);
-        const res = { type: 'legacy', model: selfieSegmentation };
-        return res;
-      } catch (error) {
-        console.warn(`Legacy Engine failed from ${base}:`, error);
-      }
-    }
-
-    engineInitPromise = null; // Clear promise on total failure so we can retry
-    return null;
   })();
-  
-  const finalResult = await engineInitPromise;
-  if (!finalResult) engineInitPromise = null; // Ensure we don't cache a null result
-  return finalResult;
+  return engineWarmPromise;
 };
 
 // --- Configuration ---
@@ -139,7 +100,7 @@ export default function PassportPhotoMaker() {
   
   // Preload engine model on mount for instant results later
   useEffect(() => {
-    initEngine();
+    prewarmEngine();
   }, []);
   
   // Image States
@@ -203,14 +164,29 @@ export default function PassportPhotoMaker() {
     setHistoryIndex(newHistory.length - 1);
   };
 
+  const updateCanvasFromSrc = (src: string | null) => {
+    const canvas = touchupCanvasRef.current;
+    if (!canvas || !croppedImageSrc) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+    };
+    img.src = src || croppedImageSrc;
+  };
+
   const undo = () => {
     if (historyIndex > 0) {
       const prevIndex = historyIndex - 1;
       setHistoryIndex(prevIndex);
       setBgRemovedImageSrc(history[prevIndex]);
+      updateCanvasFromSrc(history[prevIndex]);
     } else if (historyIndex === 0) {
       setHistoryIndex(-1);
       setBgRemovedImageSrc(null);
+      updateCanvasFromSrc(null);
     }
   };
 
@@ -219,6 +195,7 @@ export default function PassportPhotoMaker() {
       const nextIndex = historyIndex + 1;
       setHistoryIndex(nextIndex);
       setBgRemovedImageSrc(history[nextIndex]);
+      updateCanvasFromSrc(history[nextIndex]);
     }
   };
   
@@ -423,143 +400,131 @@ export default function PassportPhotoMaker() {
   };
 
   // --- 3. Background Removal ---
+  const resizeImage = (src: string, maxDim: number): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxDim) {
+            height *= maxDim / width;
+            width = maxDim;
+          }
+        } else {
+          if (height > maxDim) {
+            width *= maxDim / height;
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(src);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => resolve(src);
+      img.src = src;
+    });
+  };
+
   const removeBackground = async () => {
     if (!croppedImageSrc) return;
     setIsProcessing(true);
     setIsManualMode(false);
-    setStatusText('Preparing Engine...');
+    setStatusText('AI is working...');
     
     try {
-      const engineResult = await initEngine((text) => setStatusText(text));
-      if (!engineResult) {
-        throw new Error("Engine failed to initialize. Please check your internet connection and try again.");
-      }
-      
-      const { type, model } = engineResult;
-      setStatusText('Analyzing Image...');
-      await new Promise(r => setTimeout(r, 100));
-      
+      const segmenter = await getSelfieSegmentation();
+
       const img = new Image();
       img.crossOrigin = "anonymous";
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = () => reject(new Error("Failed to load image for processing."));
-        img.src = croppedImageSrc;
+      img.src = croppedImageSrc;
+      await new Promise((resolve, reject) => { 
+        img.onload = resolve; 
+        img.onerror = reject;
       });
 
-      // Original dimensions
-      const origWidth = img.width;
-      const origHeight = img.height;
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d')!;
 
-      // Downscale for processing
-      let procWidth = origWidth;
-      let procHeight = origHeight;
-      const MAX_PROC_DIM = 768; // Balanced resolution for speed and accuracy
-      if (procWidth > MAX_PROC_DIM || procHeight > MAX_PROC_DIM) {
-        const ratio = Math.min(MAX_PROC_DIM / procWidth, MAX_PROC_DIM / procHeight);
-        procWidth = Math.round(procWidth * ratio);
-        procHeight = Math.round(procHeight * ratio);
-      }
-
-      const procCanvas = document.createElement('canvas');
-      procCanvas.width = procWidth;
-      procCanvas.height = procHeight;
-      const procCtx = procCanvas.getContext('2d');
-      if (!procCtx) throw new Error("Canvas context failed");
-      procCtx.drawImage(img, 0, 0, procWidth, procHeight);
-      
-      const maskCanvas = document.createElement('canvas');
-      maskCanvas.width = procWidth;
-      maskCanvas.height = procHeight;
-      const maskCtx = maskCanvas.getContext('2d');
-      if (!maskCtx) throw new Error("Mask context failed");
-
-      if (type === 'modern') {
-        const segmenter = model as ImageSegmenter;
-        const result = segmenter.segment(procCanvas);
-        const confidenceMasks = result.confidenceMasks;
-        if (!confidenceMasks || confidenceMasks.length === 0) throw new Error("Segmentation failed");
+      const resultBlob = await new Promise<Blob | null>((resolve) => {
+        let resolved = false;
         
-        const mask = confidenceMasks[0];
-        const maskData = mask.getAsFloat32Array();
-        const maskImageData = maskCtx.createImageData(procWidth, procHeight);
-        for (let i = 0; i < maskData.length; i++) {
-          const val = Math.round(maskData[i] * 255);
-          maskImageData.data[i * 4] = 255;
-          maskImageData.data[i * 4 + 1] = 255;
-          maskImageData.data[i * 4 + 2] = 255;
-          maskImageData.data[i * 4 + 3] = val;
-        }
-        maskCtx.putImageData(maskImageData, 0, 0);
-      } else {
-        const legacyModel = model as SelfieSegmentation;
-        await new Promise<void>((resolve, reject) => {
-          let isResolved = false;
-          const timeout = setTimeout(() => {
-            if (isResolved) return;
-            isResolved = true;
-            reject(new Error("Processing timed out."));
-          }, 30000);
+        segmenter.onResults((results: any) => {
+          if (resolved) return;
+          resolved = true;
+          
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          
+          // 1. Create a refined mask
+          const maskCanvas = document.createElement('canvas');
+          maskCanvas.width = canvas.width;
+          maskCanvas.height = canvas.height;
+          const maskCtx = maskCanvas.getContext('2d')!;
+          
+          // Draw the raw mask
+          maskCtx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
+          
+          // 2. Refine the mask for better hair/shoulder edges
+          // We use a temporary canvas to apply filters to the mask
+          const refinedMaskCanvas = document.createElement('canvas');
+          refinedMaskCanvas.width = canvas.width;
+          refinedMaskCanvas.height = canvas.height;
+          const refinedMaskCtx = refinedMaskCanvas.getContext('2d')!;
+          
+          // Apply a slight blur and then high contrast to the mask to sharpen edges while keeping them smooth
+          refinedMaskCtx.filter = 'blur(1.5px) contrast(250%) brightness(110%)';
+          refinedMaskCtx.drawImage(maskCanvas, 0, 0);
+          
+          // 3. Use the refined mask to clip the original image
+          ctx.save();
+          ctx.drawImage(refinedMaskCanvas, 0, 0, canvas.width, canvas.height);
+          ctx.globalCompositeOperation = 'source-in';
+          ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+          ctx.restore();
 
-          legacyModel.onResults((results) => {
-            if (isResolved) return;
-            isResolved = true;
-            if (timeout) clearTimeout(timeout);
-            if (!results || !results.segmentationMask) return reject(new Error("No mask"));
-            maskCtx.drawImage(results.segmentationMask, 0, 0, procWidth, procHeight);
-            resolve();
-          });
-          legacyModel.send({ image: procCanvas }).catch(reject);
+          // 4. Optional: Edge cleanup (remove slight background bleed)
+          // We can do this by drawing the image again with a slightly smaller mask if needed,
+          // but usually the contrast trick above is enough for "neat and clean".
+
+          canvas.toBlob((blob) => {
+            resolve(blob);
+          }, 'image/png');
         });
+
+        segmenter.send({ image: img }).catch((err: any) => {
+          console.error("MediaPipe send error:", err);
+          resolve(null);
+        });
+
+        // Timeout fallback - 5 seconds as requested
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            resolve(null);
+          }
+        }, 5000);
+      });
+
+      if (resultBlob) {
+        const url = URL.createObjectURL(resultBlob);
+        setBgRemovedImageSrc(url);
+        addToHistory(url);
+      } else {
+        throw new Error("Background removal failed or timed out");
       }
 
-      // Refine the mask (Neat and Clean)
-      const imageData = maskCtx.getImageData(0, 0, procWidth, procHeight);
-      const data = imageData.data;
-      for (let i = 0; i < data.length; i += 4) {
-        const alpha = data[i + 3];
-        // Smoother thresholding for cleaner edges
-        if (alpha > 200) data[i + 3] = 255;
-        else if (alpha < 50) data[i + 3] = 0;
-        else {
-          // Linear interpolation for soft edges
-          data[i + 3] = Math.round((alpha - 50) * (255 / 150));
-        }
-      }
-      maskCtx.putImageData(imageData, 0, 0);
-
-      // Apply a slight blur to the mask for "neat" edges
-      const blurCanvas = document.createElement('canvas');
-      blurCanvas.width = procWidth;
-      blurCanvas.height = procHeight;
-      const blurCtx = blurCanvas.getContext('2d');
-      if (blurCtx) {
-        blurCtx.filter = 'blur(1.5px)'; // Slightly more blur for smoother transition
-        blurCtx.drawImage(maskCanvas, 0, 0);
-        maskCtx.clearRect(0, 0, procWidth, procHeight);
-        maskCtx.drawImage(blurCanvas, 0, 0);
-      }
-
-      // Create Final High-Res Result
-      const finalCanvas = document.createElement('canvas');
-      finalCanvas.width = origWidth;
-      finalCanvas.height = origHeight;
-      const finalCtx = finalCanvas.getContext('2d');
-      if (!finalCtx) throw new Error("Final context failed");
-      
-      finalCtx.drawImage(img, 0, 0, origWidth, origHeight);
-      finalCtx.globalCompositeOperation = 'destination-in';
-      finalCtx.imageSmoothingEnabled = true;
-      finalCtx.imageSmoothingQuality = 'high';
-      finalCtx.drawImage(maskCanvas, 0, 0, origWidth, origHeight);
-      finalCtx.globalCompositeOperation = 'source-over';
-      
-      const result = finalCanvas.toDataURL('image/png', 1.0);
-      setBgRemovedImageSrc(result);
-      addToHistory(result);
     } catch (error) {
       console.error("BG Removal Error:", error);
-      alert(error instanceof Error ? error.message : "Failed to remove background.");
+      alert("Background removal failed. Please try a different image.");
     } finally {
       setIsProcessing(false);
     }
@@ -610,9 +575,9 @@ export default function PassportPhotoMaker() {
       ctx.filter = 'none'; // Reset
 
       // Apply Sharpness (Highly Optimized Convolution)
-      const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 40) : appliedAdjustments.sharpness;
+      const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
       if (finalSharpness > 0) {
-        const amount = finalSharpness / 60; // More aggressive sharpening
+        const amount = finalSharpness / 30; // Even more aggressive sharpening
         const a = amount;
         const b_val = 1 + 4 * a;
         
@@ -624,27 +589,29 @@ export default function PassportPhotoMaker() {
         const dst = output.data;
 
         // Highly optimized convolution loop (unrolled 3x3)
-        for (let y = 0; y < sh; y++) {
-          const yOff = y * sw;
-          const yUpOff = Math.max(0, y - 1) * sw;
-          const yDownOff = Math.min(sh - 1, y + 1) * sw;
+        for (let i = 0; i < pixels.length; i += 4) {
+          const x = (i / 4) % sw;
+          const y = Math.floor((i / 4) / sw);
           
-          for (let x = 0; x < sw; x++) {
-            const i = (yOff + x) * 4;
-            const xLeft = Math.max(0, x - 1);
-            const xRight = Math.min(sw - 1, x + 1);
-            
-            const iUp = (yUpOff + x) * 4;
-            const iDown = (yDownOff + x) * 4;
-            const iLeft = (yOff + xLeft) * 4;
-            const iRight = (yOff + xRight) * 4;
-
-            // Apply kernel: [0, -a, 0], [-a, 1+4a, -a], [0, -a, 0]
-            dst[i]     = pixels[i] * b_val - (pixels[iUp] + pixels[iDown] + pixels[iLeft] + pixels[iRight]) * a;
-            dst[i + 1] = pixels[i + 1] * b_val - (pixels[iUp + 1] + pixels[iDown + 1] + pixels[iLeft + 1] + pixels[iRight + 1]) * a;
-            dst[i + 2] = pixels[i + 2] * b_val - (pixels[iUp + 2] + pixels[iDown + 2] + pixels[iLeft + 2] + pixels[iRight + 2]) * a;
-            dst[i + 3] = pixels[i + 3];
+          // Skip edges for simplicity in the tight loop
+          if (x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
+            dst[i] = pixels[i];
+            dst[i+1] = pixels[i+1];
+            dst[i+2] = pixels[i+2];
+            dst[i+3] = pixels[i+3];
+            continue;
           }
+
+          const iUp = i - sw * 4;
+          const iDown = i + sw * 4;
+          const iLeft = i - 4;
+          const iRight = i + 4;
+
+          // Apply kernel: [0, -a, 0], [-a, 1+4a, -a], [0, -a, 0]
+          dst[i]     = pixels[i] * b_val - (pixels[iUp] + pixels[iDown] + pixels[iLeft] + pixels[iRight]) * a;
+          dst[i + 1] = pixels[i + 1] * b_val - (pixels[iUp + 1] + pixels[iDown + 1] + pixels[iLeft + 1] + pixels[iRight + 1]) * a;
+          dst[i + 2] = pixels[i + 2] * b_val - (pixels[iUp + 2] + pixels[iDown + 2] + pixels[iLeft + 2] + pixels[iRight + 2]) * a;
+          dst[i + 3] = pixels[i + 3];
         }
         ctx.putImageData(output, 0, 0);
       }

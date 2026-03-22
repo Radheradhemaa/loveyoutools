@@ -12,6 +12,7 @@ const JsonFormatter = lazy(() => import('../tools/JsonFormatter'));
 const AgeCalculator = lazy(() => import('../tools/AgeCalculator'));
 const QrGenerator = lazy(() => import('../tools/QrGenerator'));
 const ImageCompressor = lazy(() => import('../tools/ImageCompressor'));
+const BackgroundRemover = lazy(() => import('../tools/BackgroundRemover'));
 const PassportPhotoMaker = lazy(() => import('../tools/PassportPhotoMaker'));
 const GenericTool = lazy(() => import('../tools/GenericTool'));
 const TextTools = lazy(() => import('../tools/TextTools'));
@@ -87,6 +88,7 @@ export default function ToolPage() {
     if (tool.id === 'json-formatter-validator') return <JsonFormatter />;
     if (tool.id === 'age-calculator') return <AgeCalculator />;
     if (tool.id === 'qr-code-generator') return <QrGenerator />;
+    if (tool.id === 'background-remover') return <BackgroundRemover />;
     if (tool.id === 'passport-photo-maker') return <PassportPhotoMaker />;
     if (tool.id === 'image-compressor') return <ImageCompressor />;
     if (tool.id === 'photo-sign-resizer') return <PhotoSignResizer />;
