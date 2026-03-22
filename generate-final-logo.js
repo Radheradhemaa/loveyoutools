@@ -92,8 +92,12 @@ async function generate() {
   await sharp(squareBuffer).resize(180, 180).png().toFile('public/apple-touch-icon.png');
   
   // 4. ICO file
-  const icoBuffer = await pngToIco('public/favicon/favicon-32x32.png');
-  fs.writeFileSync('public/favicon.ico', icoBuffer);
+  try {
+    const icoBuffer = await pngToIco('public/favicon/favicon-32x32.png');
+    fs.writeFileSync('public/favicon.ico', icoBuffer);
+  } catch (e) {
+    console.error('Warning: Failed to generate favicon.ico:', e);
+  }
 
   // 5. Also update the assets folder ones
   await sharp(svgBuffer).png().toFile('public/assets/images/loveyoutools_transparent.png');
