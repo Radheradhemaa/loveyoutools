@@ -6,26 +6,26 @@ import ToolLayout from '../components/tool-system/ToolLayout';
 import { SelfieSegmentation } from '@mediapipe/selfie_segmentation';
 import { ImageSegmenter, FilesetResolver } from "@mediapipe/tasks-vision";
 
-// --- Global AI Cache for Instant Background Removal ---
+// --- Global Engine Cache for Instant Background Removal ---
 let imageSegmenter: ImageSegmenter | null = null;
 let selfieSegmentation: SelfieSegmentation | null = null;
-let aiInitPromise: Promise<any> | null = null;
+let engineInitPromise: Promise<any> | null = null;
 
-const initAI = async (onProgress?: (text: string) => void) => {
+const initEngine = async (onProgress?: (text: string) => void) => {
   if (imageSegmenter) return { type: 'modern', model: imageSegmenter };
   if (selfieSegmentation) return { type: 'legacy', model: selfieSegmentation };
   
   // If already initializing, wait for it
-  if (aiInitPromise) {
-    const result = await aiInitPromise;
+  if (engineInitPromise) {
+    const result = await engineInitPromise;
     if (result) return result;
     // If it resolved to null, we try again
   }
   
-  aiInitPromise = (async () => {
+  engineInitPromise = (async () => {
     // Try Modern ImageSegmenter first
     try {
-      if (onProgress) onProgress('Loading AI Engine (Modern)...');
+      if (onProgress) onProgress('Loading Engine (Modern)...');
       
       const vision = await Promise.race([
         FilesetResolver.forVisionTasks(
@@ -38,7 +38,7 @@ const initAI = async (onProgress?: (text: string) => void) => {
       const delegates: ("GPU" | "CPU")[] = ["GPU", "CPU"];
       for (const delegate of delegates) {
         try {
-          if (onProgress) onProgress(`Initializing AI (${delegate})...`);
+          if (onProgress) onProgress(`Initializing Engine (${delegate})...`);
           imageSegmenter = await Promise.race([
             ImageSegmenter.createFromOptions(vision, {
               baseOptions: {
@@ -73,7 +73,7 @@ const initAI = async (onProgress?: (text: string) => void) => {
 
     for (const base of cdns) {
       try {
-        if (onProgress) onProgress(`Loading AI Engine (Legacy)...`);
+        if (onProgress) onProgress(`Loading Engine (Legacy)...`);
         const instance = new SelfieSegmentation({
           locateFile: (file) => `${base}/${file}`
         });
@@ -86,20 +86,20 @@ const initAI = async (onProgress?: (text: string) => void) => {
         ]);
 
         selfieSegmentation = instance;
-        console.log(`Legacy AI Initialized from ${base}`);
+        console.log(`Legacy Engine Initialized from ${base}`);
         const res = { type: 'legacy', model: selfieSegmentation };
         return res;
       } catch (error) {
-        console.warn(`Legacy AI failed from ${base}:`, error);
+        console.warn(`Legacy Engine failed from ${base}:`, error);
       }
     }
 
-    aiInitPromise = null; // Clear promise on total failure so we can retry
+    engineInitPromise = null; // Clear promise on total failure so we can retry
     return null;
   })();
   
-  const finalResult = await aiInitPromise;
-  if (!finalResult) aiInitPromise = null; // Ensure we don't cache a null result
+  const finalResult = await engineInitPromise;
+  if (!finalResult) engineInitPromise = null; // Ensure we don't cache a null result
   return finalResult;
 };
 
@@ -137,9 +137,9 @@ type Step = 'crop' | 'edit' | 'print';
 export default function PassportPhotoMaker() {
   const [step, setStep] = useState<Step>('crop');
   
-  // Preload AI model on mount for instant results later
+  // Preload engine model on mount for instant results later
   useEffect(() => {
-    initAI();
+    initEngine();
   }, []);
   
   // Image States
@@ -427,15 +427,15 @@ export default function PassportPhotoMaker() {
     if (!croppedImageSrc) return;
     setIsProcessing(true);
     setIsManualMode(false);
-    setStatusText('Preparing AI...');
+    setStatusText('Preparing Engine...');
     
     try {
-      const aiResult = await initAI((text) => setStatusText(text));
-      if (!aiResult) {
-        throw new Error("AI Engine failed to initialize. Please check your internet connection and try again.");
+      const engineResult = await initEngine((text) => setStatusText(text));
+      if (!engineResult) {
+        throw new Error("Engine failed to initialize. Please check your internet connection and try again.");
       }
       
-      const { type, model } = aiResult;
+      const { type, model } = engineResult;
       setStatusText('Analyzing Image...');
       await new Promise(r => setTimeout(r, 100));
       
@@ -451,38 +451,38 @@ export default function PassportPhotoMaker() {
       const origWidth = img.width;
       const origHeight = img.height;
 
-      // Downscale for AI processing
-      let aiWidth = origWidth;
-      let aiHeight = origHeight;
-      const MAX_AI_DIM = 768; // Balanced resolution for speed and accuracy
-      if (aiWidth > MAX_AI_DIM || aiHeight > MAX_AI_DIM) {
-        const ratio = Math.min(MAX_AI_DIM / aiWidth, MAX_AI_DIM / aiHeight);
-        aiWidth = Math.round(aiWidth * ratio);
-        aiHeight = Math.round(aiHeight * ratio);
+      // Downscale for processing
+      let procWidth = origWidth;
+      let procHeight = origHeight;
+      const MAX_PROC_DIM = 768; // Balanced resolution for speed and accuracy
+      if (procWidth > MAX_PROC_DIM || procHeight > MAX_PROC_DIM) {
+        const ratio = Math.min(MAX_PROC_DIM / procWidth, MAX_PROC_DIM / procHeight);
+        procWidth = Math.round(procWidth * ratio);
+        procHeight = Math.round(procHeight * ratio);
       }
 
-      const aiCanvas = document.createElement('canvas');
-      aiCanvas.width = aiWidth;
-      aiCanvas.height = aiHeight;
-      const aiCtx = aiCanvas.getContext('2d');
-      if (!aiCtx) throw new Error("Canvas context failed");
-      aiCtx.drawImage(img, 0, 0, aiWidth, aiHeight);
+      const procCanvas = document.createElement('canvas');
+      procCanvas.width = procWidth;
+      procCanvas.height = procHeight;
+      const procCtx = procCanvas.getContext('2d');
+      if (!procCtx) throw new Error("Canvas context failed");
+      procCtx.drawImage(img, 0, 0, procWidth, procHeight);
       
       const maskCanvas = document.createElement('canvas');
-      maskCanvas.width = aiWidth;
-      maskCanvas.height = aiHeight;
+      maskCanvas.width = procWidth;
+      maskCanvas.height = procHeight;
       const maskCtx = maskCanvas.getContext('2d');
       if (!maskCtx) throw new Error("Mask context failed");
 
       if (type === 'modern') {
         const segmenter = model as ImageSegmenter;
-        const result = segmenter.segment(aiCanvas);
+        const result = segmenter.segment(procCanvas);
         const confidenceMasks = result.confidenceMasks;
         if (!confidenceMasks || confidenceMasks.length === 0) throw new Error("Segmentation failed");
         
         const mask = confidenceMasks[0];
         const maskData = mask.getAsFloat32Array();
-        const maskImageData = maskCtx.createImageData(aiWidth, aiHeight);
+        const maskImageData = maskCtx.createImageData(procWidth, procHeight);
         for (let i = 0; i < maskData.length; i++) {
           const val = Math.round(maskData[i] * 255);
           maskImageData.data[i * 4] = 255;
@@ -498,7 +498,7 @@ export default function PassportPhotoMaker() {
           const timeout = setTimeout(() => {
             if (isResolved) return;
             isResolved = true;
-            reject(new Error("AI processing timed out."));
+            reject(new Error("Processing timed out."));
           }, 30000);
 
           legacyModel.onResults((results) => {
@@ -506,15 +506,15 @@ export default function PassportPhotoMaker() {
             isResolved = true;
             if (timeout) clearTimeout(timeout);
             if (!results || !results.segmentationMask) return reject(new Error("No mask"));
-            maskCtx.drawImage(results.segmentationMask, 0, 0, aiWidth, aiHeight);
+            maskCtx.drawImage(results.segmentationMask, 0, 0, procWidth, procHeight);
             resolve();
           });
-          legacyModel.send({ image: aiCanvas }).catch(reject);
+          legacyModel.send({ image: procCanvas }).catch(reject);
         });
       }
 
       // Refine the mask (Neat and Clean)
-      const imageData = maskCtx.getImageData(0, 0, aiWidth, aiHeight);
+      const imageData = maskCtx.getImageData(0, 0, procWidth, procHeight);
       const data = imageData.data;
       for (let i = 0; i < data.length; i += 4) {
         const alpha = data[i + 3];
@@ -530,13 +530,13 @@ export default function PassportPhotoMaker() {
 
       // Apply a slight blur to the mask for "neat" edges
       const blurCanvas = document.createElement('canvas');
-      blurCanvas.width = aiWidth;
-      blurCanvas.height = aiHeight;
+      blurCanvas.width = procWidth;
+      blurCanvas.height = procHeight;
       const blurCtx = blurCanvas.getContext('2d');
       if (blurCtx) {
         blurCtx.filter = 'blur(1.5px)'; // Slightly more blur for smoother transition
         blurCtx.drawImage(maskCanvas, 0, 0);
-        maskCtx.clearRect(0, 0, aiWidth, aiHeight);
+        maskCtx.clearRect(0, 0, procWidth, procHeight);
         maskCtx.drawImage(blurCanvas, 0, 0);
       }
 
@@ -836,7 +836,7 @@ export default function PassportPhotoMaker() {
   return (
     <ToolLayout
       title="Passport Size Photo Maker"
-      description="Create professional passport, visa, and ID photos instantly. Step-by-step process with AI background removal, custom sizes, and A4 print layouts."
+      description="Create professional passport, visa, and ID photos instantly. Step-by-step process with background removal, custom sizes, and A4 print layouts."
       toolId="passport-photo-maker"
       acceptedFileTypes={['image/jpeg', 'image/png', 'image/webp']}
       onDownload={handleDownload}

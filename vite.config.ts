@@ -21,8 +21,17 @@ export default defineConfig(({mode}) => {
               if (id.includes('lucide-react') || id.includes('framer-motion') || id.includes('motion') || id.includes('canvas-confetti')) {
                 return 'vendor-utils';
               }
-              if (id.includes('fabric') || id.includes('pdf-lib') || id.includes('pdfjs-dist') || id.includes('jszip') || id.includes('tesseract.js')) {
-                return 'vendor-heavy';
+              if (id.includes('pdfjs-dist') || id.includes('pdf-lib')) {
+                return 'vendor-pdf';
+              }
+              if (id.includes('fabric')) {
+                return 'vendor-canvas';
+              }
+              if (id.includes('tesseract.js') || id.includes('onnxruntime-web') || id.includes('opencv-js')) {
+                return 'vendor-ml';
+              }
+              if (id.includes('jszip')) {
+                return 'vendor-zip';
               }
             }
           }

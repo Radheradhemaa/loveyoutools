@@ -74,7 +74,7 @@ export default function Home() {
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
           </span>
-          New AI Tools Added
+          New Tools Added
         </div>
 
         <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-text-primary mb-4 max-w-4xl mx-auto leading-tight">

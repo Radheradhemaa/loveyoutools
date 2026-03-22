@@ -290,13 +290,13 @@ Sitemap: ${inputs.sitemap || 'https://example.com/sitemap.xml'}`;
                 className="fta h-full min-h-[400px] bg-bg-secondary font-mono text-sm leading-relaxed p-4 rounded-xl border-none focus:ring-0 resize-none" 
                 value={output} 
                 readOnly 
-                placeholder={loading ? "AI is analyzing your request..." : "Result will appear here..."} 
+                placeholder={loading ? "Analyzing your request..." : "Result will appear here..."} 
               />
               {loading && (
                 <div className="absolute inset-0 bg-bg-secondary/50 backdrop-blur-[2px] flex items-center justify-center rounded-xl">
                   <div className="flex flex-col items-center gap-3">
                     <RefreshCw className="w-8 h-8 text-accent animate-spin" />
-                    <p className="text-sm font-medium text-text-primary">Processing with AI...</p>
+                    <p className="text-sm font-medium text-text-primary">Processing...</p>
                   </div>
                 </div>
               )}

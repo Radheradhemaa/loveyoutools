@@ -174,7 +174,7 @@ export default function AdvancedPdfEditor() {
 
   const faq = [
     { q: "Is this PDF editor really free?", a: "Yes, our advanced PDF editor is 100% free to use with no hidden costs or subscriptions." },
-    { q: "Can I edit text in a scanned PDF?", a: "Yes! Our AI-powered OCR technology automatically detects text in scanned documents, making them editable." },
+    { q: "Can I edit text in a scanned PDF?", a: "Yes! Our OCR technology automatically detects text in scanned documents, making them editable." },
     { q: "Is my data safe?", a: "Absolutely. We use client-side processing, meaning your files never leave your device and are never uploaded to our servers." },
     { q: "What file formats can I export to?", a: "You can export your edited document as a PDF, or as high-quality JPG and PNG images." }
   ];
@@ -192,8 +192,8 @@ export default function AdvancedPdfEditor() {
 
   return (
     <ToolLayout
-      title="Advanced AI PDF Editor"
-      description="Edit text, add images, sign, and annotate PDFs instantly in your browser. Powered by AI for smart text detection."
+      title="Advanced PDF Editor"
+      description="Edit text, add images, sign, and annotate PDFs instantly in your browser. Smart text detection for easier editing."
       toolId="pdf-editor"
       acceptedFileTypes={['.pdf']}
       multiple={true}
@@ -677,7 +677,7 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
             <div className="absolute inset-0 bg-surface/50 backdrop-blur-sm flex items-center justify-center z-50 rounded-2xl">
               <div className="flex flex-col items-center gap-4 bg-surface p-6 rounded-2xl shadow-2xl border border-border">
                 <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
-                <p className="font-bold text-accent">Processing AI Magic...</p>
+                <p className="font-bold text-accent">Processing Magic...</p>
               </div>
             </div>
           )}

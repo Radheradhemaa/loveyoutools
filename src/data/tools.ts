@@ -12,7 +12,7 @@ export const categories = [
 
 export const tools = [
   // IMAGE TOOLS (bg: #fff0eb)
-  { id: 'passport-photo-maker', c: 'image', n: 'Passport Photo Maker', d: 'Create professional passport photos with AI background removal and auto-print layouts.', i: '👤', b: '#fff0eb', popular: true },
+  { id: 'passport-photo-maker', c: 'image', n: 'Passport Photo Maker', d: 'Create professional passport photos with background removal and auto-print layouts.', i: '👤', b: '#fff0eb', popular: true },
   { id: 'image-compressor', c: 'image', n: 'Image Compressor', d: 'Compress images without losing quality.', i: '🗜️', b: '#fff0eb', popular: true },
   { id: 'photo-sign-resizer', c: 'image', n: 'Photo & Sign Resizer', d: 'Resize photo and signature to exact KB and pixels.', i: '🖼️', b: '#fff0eb', popular: true },
   { id: 'image-resizer', c: 'image', n: 'Image Resizer', d: 'Resize images to exact dimensions.', i: '↔️', b: '#fff0eb' },
@@ -113,8 +113,8 @@ export const tools = [
   { id: 'youtube-thumbnail-downloader', c: 'social', n: 'YouTube Thumbnail Downloader', d: 'Download high-quality thumbnails from any YouTube video.', i: '🖼️', b: '#ffedd5', popular: true },
   { id: 'instagram-dp-downloader', c: 'social', n: 'Instagram DP Downloader', d: 'View and download Instagram profile pictures in full size.', i: '📸', b: '#ffedd5' },
   { id: 'reel-video-downloader', c: 'social', n: 'Reel/Video Downloader', d: 'Download Instagram Reels, Videos, and YouTube Shorts.', i: '📥', b: '#ffedd5', popular: true },
-  { id: 'hashtag-generator', c: 'social', n: 'Hashtag Generator', d: 'Generate trending and relevant hashtags with AI.', i: '#️⃣', b: '#ffedd5', popular: true },
-  { id: 'caption-generator', c: 'social', n: 'Caption Generator', d: 'Generate engaging social media captions with AI.', i: '✍️', b: '#ffedd5', popular: true },
+  { id: 'hashtag-generator', c: 'social', n: 'Hashtag Generator', d: 'Generate trending and relevant hashtags.', i: '#️⃣', b: '#ffedd5', popular: true },
+  { id: 'caption-generator', c: 'social', n: 'Caption Generator', d: 'Generate engaging social media captions.', i: '✍️', b: '#ffedd5', popular: true },
   { id: 'tweet-length-checker', c: 'social', n: 'Tweet Length Checker', d: 'Check tweet character limit and optimize for engagement.', i: '🐦', b: '#ffedd5' },
   { id: 'social-media-bio-generator', c: 'social', n: 'Social Media Bio Generator', d: 'Generate professional and creative social media bios.', i: '📜', b: '#ffedd5' },
   { id: 'emoji-picker', c: 'social', n: 'Emoji Picker', d: 'Find and copy emojis for your posts.', i: '😊', b: '#ffedd5' },

@@ -249,13 +249,13 @@ export default function SocialTools({ toolId }: { toolId: string }) {
                 className="fta h-full min-h-[400px] bg-bg-secondary font-sans text-base leading-relaxed p-4 rounded-xl border-none focus:ring-0 resize-none" 
                 value={output} 
                 readOnly 
-                placeholder={loading ? "AI is working on your request..." : "Result will appear here..."} 
+                placeholder={loading ? "Working on your request..." : "Result will appear here..."} 
               />
               {loading && (
                 <div className="absolute inset-0 bg-bg-secondary/50 backdrop-blur-[2px] flex items-center justify-center rounded-xl">
                   <div className="flex flex-col items-center gap-3">
                     <RefreshCw className="w-8 h-8 text-accent animate-spin" />
-                    <p className="text-sm font-medium text-text-primary">AI is generating...</p>
+                    <p className="text-sm font-medium text-text-primary">Generating...</p>
                   </div>
                 </div>
               )}

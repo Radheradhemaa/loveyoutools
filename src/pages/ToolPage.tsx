@@ -2,37 +2,42 @@ import { useParams, Link } from 'react-router-dom';
 import { ChevronRight, Share2, Copy, Twitter, Info, HelpCircle, CheckCircle2, Zap, Shield, Star, ThumbsUp, Users, Facebook, MessageCircle, Instagram, BookOpen } from 'lucide-react';
 import { tools, categories } from '../data/tools';
 import { blogPosts } from '../data/blog';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import SEO from '../components/SEO';
 import { useFocusMode } from '../contexts/FocusModeContext';
 
-// Import specific tools
-import WordCounter from '../tools/WordCounter';
-import JsonFormatter from '../tools/JsonFormatter';
-import AgeCalculator from '../tools/AgeCalculator';
-import QrGenerator from '../tools/QrGenerator';
-import ImageCompressor from '../tools/ImageCompressor';
-import PassportPhotoMaker from '../tools/PassportPhotoMaker';
-import GenericTool from '../tools/GenericTool';
+// Lazy load tool components
+const WordCounter = lazy(() => import('../tools/WordCounter'));
+const JsonFormatter = lazy(() => import('../tools/JsonFormatter'));
+const AgeCalculator = lazy(() => import('../tools/AgeCalculator'));
+const QrGenerator = lazy(() => import('../tools/QrGenerator'));
+const ImageCompressor = lazy(() => import('../tools/ImageCompressor'));
+const PassportPhotoMaker = lazy(() => import('../tools/PassportPhotoMaker'));
+const GenericTool = lazy(() => import('../tools/GenericTool'));
+const TextTools = lazy(() => import('../tools/TextTools'));
+const DeveloperTools = lazy(() => import('../tools/DeveloperTools'));
+const CalculatorTools = lazy(() => import('../tools/CalculatorTools'));
+const GeneratorTools = lazy(() => import('../tools/GeneratorTools'));
+const SeoTools = lazy(() => import('../tools/SeoTools'));
+const SocialTools = lazy(() => import('../tools/SocialTools'));
+const ImageTools = lazy(() => import('../tools/ImageTools'));
+const PdfTools = lazy(() => import('../tools/PdfTools'));
+const PhotoSignResizer = lazy(() => import('../tools/PhotoSignResizer'));
+const AdvancedPdfEditor = lazy(() => import('../tools/AdvancedPdfEditor'));
+const AdvancedPdfCropper = lazy(() => import('../tools/AdvancedPdfCropper'));
+const KdpFixer = lazy(() => import('../tools/KdpFixer'));
+const ImageCropper = lazy(() => import('../tools/ImageCropper'));
+const ImageColorPicker = lazy(() => import('../tools/ImageColorPicker'));
+const GifMaker = lazy(() => import('../tools/GifMaker'));
+const SvgToPngConverter = lazy(() => import('../tools/SvgToPngConverter'));
+const DynamicPreviewer = lazy(() => import('../components/DynamicPreviewer'));
 
-// Import unified tools
-import TextTools from '../tools/TextTools';
-import DeveloperTools from '../tools/DeveloperTools';
-import CalculatorTools from '../tools/CalculatorTools';
-import GeneratorTools from '../tools/GeneratorTools';
-import SeoTools from '../tools/SeoTools';
-import SocialTools from '../tools/SocialTools';
-import ImageTools from '../tools/ImageTools';
-import PdfTools from '../tools/PdfTools';
-import PhotoSignResizer from '../tools/PhotoSignResizer';
-import AdvancedPdfEditor from '../tools/AdvancedPdfEditor';
-import AdvancedPdfCropper from '../tools/AdvancedPdfCropper';
-import KdpFixer from '../tools/KdpFixer';
-import ImageCropper from '../tools/ImageCropper';
-import ImageColorPicker from '../tools/ImageColorPicker';
-import GifMaker from '../tools/GifMaker';
-import SvgToPngConverter from '../tools/SvgToPngConverter';
-import DynamicPreviewer from '../components/DynamicPreviewer';
+const ToolLoader = () => (
+  <div className="flex flex-col items-center justify-center py-20 animate-pulse">
+    <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin mb-4"></div>
+    <p className="text-text-muted font-medium">Loading tool...</p>
+  </div>
+);
 
 export default function ToolPage() {
   const { id } = useParams<{ id: string }>();
@@ -313,7 +318,9 @@ export default function ToolPage() {
 
           {/* Tool Workspace */}
           <div className={isFocusMode ? 'h-full' : 'ws'}>
-            {renderTool()}
+            <Suspense fallback={<ToolLoader />}>
+              {renderTool()}
+            </Suspense>
           </div>
 
           {/* SEO Content Block */}
