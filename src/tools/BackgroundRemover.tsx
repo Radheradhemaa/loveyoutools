@@ -82,6 +82,43 @@ export default function BackgroundRemover() {
   // History for Undo
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  
+  // Adjustments
+  const [brightness, setBrightness] = useState(100);
+  const [contrast, setContrast] = useState(100);
+  const [saturation, setSaturation] = useState(100);
+  const [sharpness, setSharpness] = useState(0);
+  const [smoothness, setSmoothness] = useState(0);
+  const [edgeSoftness, setEdgeSoftness] = useState(0);
+  const [beautyFace, setBeautyFace] = useState(0);
+  const [isUltraHD, setIsUltraHD] = useState(false);
+
+  const [appliedAdjustments, setAppliedAdjustments] = useState({
+    brightness: 100,
+    contrast: 100,
+    saturation: 100,
+    sharpness: 0,
+    smoothness: 0,
+    edgeSoftness: 0,
+    beautyFace: 0,
+    isUltraHD: false
+  });
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAppliedAdjustments({
+        brightness,
+        contrast,
+        saturation,
+        sharpness,
+        smoothness,
+        edgeSoftness,
+        beautyFace,
+        isUltraHD
+      });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [brightness, contrast, saturation, sharpness, smoothness, edgeSoftness, beautyFace, isUltraHD]);
 
   const addToHistory = (src: string) => {
     const newHistory = history.slice(0, historyIndex + 1);
@@ -381,16 +418,78 @@ export default function BackgroundRemover() {
     if (!ctx) return;
 
     const img = new Image();
+    img.crossOrigin = "anonymous";
     img.onload = () => {
       canvas.width = img.width;
       canvas.height = img.height;
       
+      // Draw Background
       if (bgColor !== 'transparent') {
         ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
       
+      // Apply Filters
+      let b = appliedAdjustments.brightness;
+      let c = appliedAdjustments.contrast;
+      let s = appliedAdjustments.saturation;
+      
+      if (appliedAdjustments.isUltraHD) {
+        c += 15;
+        s += 20;
+      }
+      
+      let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
+      if (appliedAdjustments.smoothness > 0) {
+        // Skin smoothing: subtle blur
+        filterString += ` blur(${appliedAdjustments.smoothness / 100}px)`;
+      }
+      if (appliedAdjustments.beautyFace > 0) {
+        // Beauty face: subtle blur + brightness boost + contrast reduction + saturation boost
+        const beautyBlur = appliedAdjustments.beautyFace / 80;
+        const beautyBright = 100 + (appliedAdjustments.beautyFace / 15);
+        const beautyContrast = 100 - (appliedAdjustments.beautyFace / 20);
+        const beautySaturate = 100 + (appliedAdjustments.beautyFace / 20);
+        filterString += ` blur(${beautyBlur}px) brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
+      }
+      if (appliedAdjustments.edgeSoftness > 0) {
+        // Edge adjustment: drop-shadow + very subtle blur for feathering
+        const edgeBlur = appliedAdjustments.edgeSoftness / 50;
+        filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
+      }
+      
+      ctx.filter = filterString;
       ctx.drawImage(img, 0, 0);
+      ctx.filter = 'none';
+
+      // Apply Sharpness
+      const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
+      if (finalSharpness > 0) {
+        const amount = finalSharpness / 100; // More balanced sharpening
+        const a = amount;
+        const b_val = 1 + 4 * a;
+        const sw = canvas.width;
+        const sh = canvas.height;
+        const imageData = ctx.getImageData(0, 0, sw, sh);
+        const pixels = imageData.data;
+        const output = ctx.createImageData(sw, sh);
+        const dst = output.data;
+
+        for (let i = 0; i < pixels.length; i += 4) {
+          const x = (i / 4) % sw;
+          const y = Math.floor((i / 4) / sw);
+          if (x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
+            dst[i] = pixels[i]; dst[i+1] = pixels[i+1]; dst[i+2] = pixels[i+2]; dst[i+3] = pixels[i+3];
+            continue;
+          }
+          const iUp = i - sw * 4; const iDown = i + sw * 4; const iLeft = i - 4; const iRight = i + 4;
+          dst[i]     = pixels[i] * b_val - (pixels[iUp] + pixels[iDown] + pixels[iLeft] + pixels[iRight]) * a;
+          dst[i + 1] = pixels[i + 1] * b_val - (pixels[iUp + 1] + pixels[iDown + 1] + pixels[iLeft + 1] + pixels[iRight + 1]) * a;
+          dst[i + 2] = pixels[i + 2] * b_val - (pixels[iUp + 2] + pixels[iDown + 2] + pixels[iLeft + 2] + pixels[iRight + 2]) * a;
+          dst[i + 3] = pixels[i + 3];
+        }
+        ctx.putImageData(output, 0, 0);
+      }
       
       const link = document.createElement('a');
       link.download = `bg-removed-${Date.now()}.png`;
@@ -591,7 +690,49 @@ export default function BackgroundRemover() {
                         </div>
                       )}
 
-                      <div className="pt-4 border-t border-border">
+                      <div className="pt-4 border-t border-border space-y-6">
+                        <div className="flex items-center justify-between">
+                          <h3 className="font-bold text-lg flex items-center gap-2">
+                            <Sliders className="w-5 h-5 text-accent" /> Adjustments
+                          </h3>
+                          <button onClick={() => { 
+                            setBrightness(100); setContrast(100); setSaturation(100); 
+                            setSharpness(0); setSmoothness(0); setEdgeSoftness(0); setBeautyFace(0); 
+                            setIsUltraHD(false); 
+                          }} className="text-xs text-accent font-bold hover:underline">Reset</button>
+                        </div>
+
+                        <label className="flex items-center gap-2 p-3 bg-accent/5 border border-accent/20 rounded-xl cursor-pointer hover:bg-accent/10 transition-colors">
+                          <input type="checkbox" checked={isUltraHD} onChange={(e) => setIsUltraHD(e.target.checked)} className="accent-accent w-4 h-4" />
+                          <span className="text-sm font-bold text-accent flex items-center gap-1"><Sparkles className="w-4 h-4" /> Ultra HD Enhance</span>
+                        </label>
+
+                        <div className="space-y-4">
+                          {[
+                            { label: 'Brightness', val: brightness, set: setBrightness, min: 50, max: 150, unit: '%' },
+                            { label: 'Contrast', val: contrast, set: setContrast, min: 50, max: 150, unit: '%' },
+                            { label: 'Saturation', val: saturation, set: setSaturation, min: 0, max: 200, unit: '%' },
+                            { label: 'Sharpness', val: sharpness, set: setSharpness, min: 0, max: 100, unit: '' },
+                            { label: 'Skin Smoothing', val: smoothness, set: setSmoothness, min: 0, max: 100, unit: '' },
+                            { label: 'Edge Adjustment', val: edgeSoftness, set: setEdgeSoftness, min: 0, max: 100, unit: '' },
+                            { label: 'Beauty Face', val: beautyFace, set: setBeautyFace, min: 0, max: 100, unit: '' }
+                          ].map(adj => (
+                            <div key={adj.label}>
+                              <div className="flex justify-between text-xs font-bold text-text-primary mb-1">
+                                <span>{adj.label}</span>
+                                <span>{adj.val}{adj.unit}</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min={adj.min} max={adj.max} 
+                                value={adj.val} 
+                                onChange={(e) => adj.set(Number(e.target.value))}
+                                className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                              />
+                            </div>
+                          ))}
+                        </div>
+
                         <button onClick={downloadImage} className="w-full btn bp py-4 rounded-2xl gap-2 text-lg shadow-lg shadow-accent/20">
                           <Download className="w-5 h-5" /> Download Image
                         </button>

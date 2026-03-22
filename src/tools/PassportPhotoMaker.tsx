@@ -126,6 +126,8 @@ export default function PassportPhotoMaker() {
   const [saturation, setSaturation] = useState(100);
   const [sharpness, setSharpness] = useState(0);
   const [smoothness, setSmoothness] = useState(0);
+  const [edgeSoftness, setEdgeSoftness] = useState(0);
+  const [beautyFace, setBeautyFace] = useState(0);
   const [isUltraHD, setIsUltraHD] = useState(false);
   
   // Debounced Adjustments for Performance
@@ -135,6 +137,8 @@ export default function PassportPhotoMaker() {
     saturation: 100,
     sharpness: 0,
     smoothness: 0,
+    edgeSoftness: 0,
+    beautyFace: 0,
     isUltraHD: false
   });
 
@@ -146,11 +150,13 @@ export default function PassportPhotoMaker() {
         saturation,
         sharpness,
         smoothness,
+        edgeSoftness,
+        beautyFace,
         isUltraHD
       });
     }, 150); // 150ms debounce
     return () => clearTimeout(timer);
-  }, [brightness, contrast, saturation, sharpness, smoothness, isUltraHD]);
+  }, [brightness, contrast, saturation, sharpness, smoothness, edgeSoftness, beautyFace, isUltraHD]);
   
   // History for Undo/Redo
   const [history, setHistory] = useState<string[]>([]);
@@ -561,9 +567,25 @@ export default function PassportPhotoMaker() {
       }
       
       let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
+      
       if (appliedAdjustments.smoothness > 0) {
-        // Increased blur range for better visibility (max 5px)
-        filterString += ` blur(${appliedAdjustments.smoothness / 20}px)`;
+        // Skin smoothing: subtle blur
+        filterString += ` blur(${appliedAdjustments.smoothness / 100}px)`;
+      }
+
+      if (appliedAdjustments.beautyFace > 0) {
+        // Beauty face: subtle blur + brightness boost + contrast reduction + saturation boost
+        const beautyBlur = appliedAdjustments.beautyFace / 80;
+        const beautyBright = 100 + (appliedAdjustments.beautyFace / 15);
+        const beautyContrast = 100 - (appliedAdjustments.beautyFace / 20);
+        const beautySaturate = 100 + (appliedAdjustments.beautyFace / 20);
+        filterString += ` blur(${beautyBlur}px) brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
+      }
+
+      if (appliedAdjustments.edgeSoftness > 0) {
+        // Edge adjustment: drop-shadow + very subtle blur for feathering
+        const edgeBlur = appliedAdjustments.edgeSoftness / 50;
+        filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
       }
       
       ctx.filter = filterString;
@@ -577,7 +599,7 @@ export default function PassportPhotoMaker() {
       // Apply Sharpness (Highly Optimized Convolution)
       const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
       if (finalSharpness > 0) {
-        const amount = finalSharpness / 30; // Even more aggressive sharpening
+        const amount = finalSharpness / 100; // More balanced sharpening
         const a = amount;
         const b_val = 1 + 4 * a;
         
@@ -922,27 +944,29 @@ export default function PassportPhotoMaker() {
                         </button>
                       </div>
 
-                      <div className="flex gap-2 mb-4">
-                        <button
-                          onClick={undo}
-                          disabled={historyIndex < 0}
-                          className="flex-1 py-2 px-2 bg-gray-100 text-gray-700 rounded-lg text-[10px] font-bold hover:bg-gray-200 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
-                          title="Undo last action"
-                        >
-                          <Undo className="w-3 h-3" /> Undo
-                        </button>
-                        <button
-                          onClick={redo}
-                          disabled={historyIndex >= history.length - 1}
-                          className="flex-1 py-2 px-2 bg-gray-100 text-gray-700 rounded-lg text-[10px] font-bold hover:bg-gray-200 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
-                          title="Redo last action"
-                        >
-                          <Redo className="w-3 h-3" /> Redo
-                        </button>
-                      </div>
-
                       {isManualMode && (
                         <div className="p-3 bg-gray-50 rounded-xl mb-4 space-y-3 border border-gray-200 animate-in fade-in slide-in-from-top-2">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase">Touchup Controls</span>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={undo}
+                                disabled={historyIndex < 0}
+                                className="p-1.5 bg-white text-gray-700 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                                title="Undo"
+                              >
+                                <Undo className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={redo}
+                                disabled={historyIndex >= history.length - 1}
+                                className="p-1.5 bg-white text-gray-700 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                                title="Redo"
+                              >
+                                <Redo className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
                           <div className="flex gap-2">
                             <button
                               onClick={() => setBrushMode('erase')}
@@ -1007,7 +1031,16 @@ export default function PassportPhotoMaker() {
                         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
                           <Sliders className="w-4 h-4" /> Adjustments
                         </h3>
-                        <button onClick={() => { setBrightness(100); setContrast(100); setSaturation(100); setSharpness(0); setSmoothness(0); setIsUltraHD(false); }} className="text-[10px] text-[#e8501a] font-bold hover:underline">Reset</button>
+                        <button onClick={() => { 
+                          setBrightness(100); 
+                          setContrast(100); 
+                          setSaturation(100); 
+                          setSharpness(0); 
+                          setSmoothness(0); 
+                          setEdgeSoftness(0);
+                          setBeautyFace(0);
+                          setIsUltraHD(false); 
+                        }} className="text-[10px] text-[#e8501a] font-bold hover:underline">Reset</button>
                       </div>
                       
                       <label className="flex items-center gap-2 p-3 bg-[#e8501a]/5 border border-[#e8501a]/20 rounded-xl cursor-pointer mb-4 hover:bg-[#e8501a]/10 transition-colors">
@@ -1021,7 +1054,9 @@ export default function PassportPhotoMaker() {
                           { label: 'Contrast', val: contrast, set: setContrast, min: 50, max: 150, unit: '%' },
                           { label: 'Saturation', val: saturation, set: setSaturation, min: 0, max: 200, unit: '%' },
                           { label: 'Sharpness', val: sharpness, set: setSharpness, min: 0, max: 100, unit: '' },
-                          { label: 'Smoothness', val: smoothness, set: setSmoothness, min: 0, max: 100, unit: '' }
+                          { label: 'Skin Smoothing', val: smoothness, set: setSmoothness, min: 0, max: 100, unit: '' },
+                          { label: 'Edge Adjustment', val: edgeSoftness, set: setEdgeSoftness, min: 0, max: 100, unit: '' },
+                          { label: 'Beauty Face', val: beautyFace, set: setBeautyFace, min: 0, max: 100, unit: '' }
                         ].map(adj => (
                           <div key={adj.label}>
                             <div className="flex justify-between text-xs font-bold text-gray-700 mb-1">
