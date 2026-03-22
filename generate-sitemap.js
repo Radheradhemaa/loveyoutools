@@ -10,7 +10,7 @@ try {
     slugs.push(match[1]);
   }
 
-  const baseUrl = 'https://lovetools.io';
+  const baseUrl = 'https://loveyoutools.com';
   const date = new Date().toISOString().split('T')[0];
 
   let sitemap = `<?xml version="1.0" encoding="UTF-8"?>

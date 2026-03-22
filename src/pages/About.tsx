@@ -6,8 +6,8 @@ export default function About() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-16">
       <SEO 
-        title="About Us - LoveTools" 
-        description="Learn more about LoveTools, our mission, and why we build free online tools for everyone."
+        title="About Us - LoveyouTools" 
+        description="Learn more about LoveyouTools, our mission, and why we build free online tools for everyone."
         url={window.location.href}
       />
       
@@ -15,10 +15,10 @@ export default function About() {
         <ArrowLeft className="w-4 h-4" /> Back to Home
       </Link>
 
-      <h1 className="text-4xl font-extrabold mb-8">About LoveTools</h1>
+      <h1 className="text-4xl font-extrabold mb-8">About LoveyouTools</h1>
       <div className="prose prose-lg dark:prose-invert max-w-none space-y-6 text-text-secondary">
         <p>
-          Welcome to <strong>LoveTools</strong>, your ultimate destination for free, fast, and secure online tools. 
+          Welcome to <strong>LoveyouTools</strong>, your ultimate destination for free, fast, and secure online tools. 
           Our mission is simple: to provide high-quality digital utilities that help developers, creators, and everyday users 
           get their work done more efficiently.
         </p>
@@ -41,7 +41,7 @@ export default function About() {
         <h2 className="text-2xl font-bold text-text-primary mt-12 mb-4">Join Our Journey</h2>
         <p>
           We are constantly adding new tools and improving existing ones. If you have a suggestion for a tool 
-          or want to report a bug, feel free to reach out to us. Thank you for using LoveTools!
+          or want to report a bug, feel free to reach out to us. Thank you for using LoveyouTools!
         </p>
       </div>
     </div>

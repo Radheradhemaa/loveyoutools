@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import pngToIco from 'png-to-ico';
 
-const INPUT_FILE = 'public/assets/images/lovetools_transparent.png';
+const INPUT_FILE = 'public/assets/images/loveyoutools_transparent.png';
 const OUTPUT_DIRS = ['public/logo', 'public/favicon', 'public/pwa-icons', 'public/social-preview'];
 
 async function generateAssets() {

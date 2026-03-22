@@ -4,7 +4,7 @@ import { Download, Link as LinkIcon, Type, Phone, Mail, Wifi, MessageSquare, Use
 
 export default function QrGenerator() {
   const [type, setType] = useState('url');
-  const [value, setValue] = useState('https://lovetools.io');
+  const [value, setValue] = useState('https://loveyoutools.com');
   const [size, setSize] = useState(256);
   const [fgColor, setFgColor] = useState('#000000');
   const [bgColor, setBgColor] = useState('#ffffff');
@@ -27,7 +27,9 @@ export default function QrGenerator() {
       const a = document.createElement('a');
       a.href = url;
       a.download = `qrcode-${Date.now()}.png`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
     } else {
       const svg = qrRef.current.querySelector('svg');
       if (!svg) return;
@@ -37,7 +39,9 @@ export default function QrGenerator() {
       const a = document.createElement('a');
       a.href = svgUrl;
       a.download = `qrcode-${Date.now()}.svg`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(svgUrl);
     }
   };
@@ -59,7 +63,7 @@ export default function QrGenerator() {
         return (
           <div className="fg">
             <label className="fl">Website URL</label>
-            <input type="url" className="fi" value={value} onChange={(e) => setValue(e.target.value)} placeholder="lovetools.io" />
+            <input type="url" className="fi" value={value} onChange={(e) => setValue(e.target.value)} placeholder="loveyoutools.com" />
           </div>
         );
       case 'text':

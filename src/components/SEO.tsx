@@ -11,7 +11,7 @@ interface SEOProps {
 }
 
 export default function SEO({ title, description, keywords, url, image = '/social-preview/og-image.png', type = 'website', schema }: SEOProps) {
-  const siteName = 'LoveTools';
+  const siteName = 'LoveyouTools';
   const fullTitle = `${title} | ${siteName}`;
 
   return (

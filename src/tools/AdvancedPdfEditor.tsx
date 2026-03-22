@@ -101,7 +101,6 @@ interface EditorState {
   replaceQuery: string;
   thumbnails: string[];
   isDarkMode: boolean;
-  showAd: boolean;
   exportFormat: 'pdf' | 'docx' | 'jpg' | 'png';
   compressionLevel: number;
   isPasswordProtected: boolean;
@@ -184,8 +183,10 @@ export default function AdvancedPdfEditor() {
     if (lastExportedUrl) {
       const link = document.createElement('a');
       link.href = lastExportedUrl;
-      link.download = `lovetools_edited.pdf`;
+      link.download = `loveyoutools_edited.pdf`;
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
     }
   };
 
@@ -234,7 +235,6 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
     replaceQuery: '',
     thumbnails: [],
     isDarkMode: false,
-    showAd: false,
     exportFormat: 'pdf',
     compressionLevel: 0.7,
     isPasswordProtected: false,
@@ -518,9 +518,9 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
   };
 
   return (
-    <div className={`flex flex-col h-full ${state.isDarkMode ? 'dark bg-gray-900 text-white' : 'bg-gray-100 text-gray-900'}`}>
-      {/* Toolbar */}
-      <header className="h-16 bg-surface border-b border-border flex items-center justify-between px-4 shrink-0 shadow-sm">
+    <div className={`max-w-[1200px] mx-auto w-full h-full p-4 lg:p-6 flex flex-col gap-5 ${state.isDarkMode ? 'dark text-white' : 'text-gray-900'}`}>
+      {/* Top Toolbar */}
+      <div className="bg-surface border border-border rounded-xl p-3 flex flex-wrap items-center justify-between gap-4 z-20 shadow-sm shrink-0">
         <div className="flex items-center gap-4">
           <button 
             onClick={onReset}
@@ -529,61 +529,6 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
             <ChevronLeft className="w-6 h-6" />
           </button>
           <div className="h-8 w-px bg-border mx-2" />
-          <div className="flex items-center gap-1 bg-bg-secondary p-1 rounded-xl">
-            <button onClick={() => setState(prev => ({ ...prev, tool: 'select' }))} className={`p-2 rounded-lg transition-all ${state.tool === 'select' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`}>
-              <MousePointer2 className="w-5 h-5" />
-            </button>
-            <button onClick={addText} className={`p-2 rounded-lg transition-all ${state.tool === 'text' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`}>
-              <TypeIcon className="w-5 h-5" />
-            </button>
-            <button onClick={() => togglePen()} className={`p-2 rounded-lg transition-all ${state.tool === 'pen' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`}>
-              <PenTool className="w-5 h-5" />
-            </button>
-            <button onClick={() => setState(prev => ({ ...prev, tool: 'highlight' }))} className={`p-2 rounded-lg transition-all ${state.tool === 'highlight' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`}>
-              <Highlighter className="w-5 h-5" />
-            </button>
-            <div className="h-6 w-px bg-border mx-1" />
-            <div className="relative group">
-              <button className={`p-2 rounded-lg transition-all ${state.showSearch ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`}>
-                <Search className="w-5 h-5" />
-              </button>
-              <div className="absolute top-full left-0 mt-2 w-72 bg-surface border border-border rounded-2xl shadow-2xl p-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                <h4 className="text-xs font-black uppercase tracking-widest mb-4">Search & Replace</h4>
-                <div className="space-y-4">
-                  <div className="fg">
-                    <label className="fl">Find</label>
-                    <input 
-                      type="text" 
-                      className="fi text-xs"
-                      value={state.searchQuery}
-                      onChange={(e) => setState(prev => ({ ...prev, searchQuery: e.target.value }))}
-                      placeholder="Search text..."
-                    />
-                  </div>
-                  <div className="fg">
-                    <label className="fl">Replace with</label>
-                    <input 
-                      type="text" 
-                      className="fi text-xs"
-                      value={state.replaceQuery}
-                      onChange={(e) => setState(prev => ({ ...prev, replaceQuery: e.target.value }))}
-                      placeholder="Replacement text..."
-                    />
-                  </div>
-                  <button onClick={handleSearchReplace} className="btn bp w-full py-2 text-xs">
-                    Replace All
-                  </button>
-                </div>
-              </div>
-            </div>
-            <button onClick={() => imageInputRef.current?.click()} className="p-2 rounded-lg hover:bg-border transition-all">
-              <ImageIcon className="w-5 h-5" />
-            </button>
-            <input type="file" ref={imageInputRef} className="hidden" accept="image/*" onChange={addImage} />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 bg-bg-secondary px-3 py-1.5 rounded-xl">
             <button onClick={() => setState(prev => ({ ...prev, zoom: Math.max(0.3, prev.zoom - 0.1) }))} className="p-1 hover:bg-border rounded">
               <ZoomOut className="w-4 h-4" />
@@ -593,82 +538,144 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
               <ZoomIn className="w-4 h-4" />
             </button>
           </div>
-          
-          <div className="h-8 w-px bg-border mx-2" />
-          
+        </div>
+
+        <div className="flex items-center gap-4">
           <button 
             onClick={() => setState(prev => ({ ...prev, isDarkMode: !prev.isDarkMode }))}
             className="p-2 hover:bg-bg-secondary rounded-xl transition-colors"
           >
             {state.isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </button>
-
           <div className="h-8 w-px bg-border mx-2" />
-
           <button onClick={exportPdf} className="btn bp px-6 py-2 rounded-xl flex items-center gap-2 font-bold shadow-lg shadow-accent/20">
             <Download className="w-4 h-4" />
             Export PDF
           </button>
         </div>
-      </header>
+      </div>
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
-        <aside className="w-64 border-r border-border bg-surface overflow-y-auto p-4 shrink-0 hidden md:block">
-          <h3 className="text-xs font-black uppercase tracking-widest mb-4 text-text-muted">Pages</h3>
-          <DndContext 
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext 
-              items={state.pageOrder}
-              strategy={verticalListSortingStrategy}
-            >
-              <div className="space-y-4">
-                {state.pageOrder.map((id, index) => (
-                  <SortableThumbnail 
-                    key={id}
-                    id={id}
-                    index={index}
-                    thumb={state.thumbnails[id - 1]}
-                    isActive={state.currentPage === id}
-                    isDeleted={state.deletedPages.includes(id)}
-                    onClick={() => {
-                      setState(prev => ({ ...prev, currentPage: id }));
-                      renderPage(id);
-                    }}
-                    onDelete={(pageId: number) => {
-                      setState(prev => ({
-                        ...prev,
-                        deletedPages: prev.deletedPages.includes(pageId) 
-                          ? prev.deletedPages.filter(p => p !== pageId)
-                          : [...prev.deletedPages, pageId]
-                      }));
-                    }}
-                    onRotate={() => {}}
-                  />
-                ))}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 flex-1 min-h-0">
+        {/* Left Controls */}
+        <aside className="bg-surface border border-border rounded-2xl p-5 flex flex-col gap-6 order-2 lg:order-1 shadow-sm overflow-y-auto">
+          {/* Editing Tools */}
+          <div>
+            <h3 className="text-xs font-black uppercase tracking-widest mb-4 text-text-muted">Editing Tools</h3>
+            <div className="flex flex-wrap items-center gap-2 bg-bg-secondary p-2 rounded-xl">
+              <button onClick={() => setState(prev => ({ ...prev, tool: 'select' }))} className={`p-2 rounded-lg transition-all ${state.tool === 'select' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`} title="Select">
+                <MousePointer2 className="w-5 h-5" />
+              </button>
+              <button onClick={addText} className={`p-2 rounded-lg transition-all ${state.tool === 'text' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`} title="Add Text">
+                <TypeIcon className="w-5 h-5" />
+              </button>
+              <button onClick={() => togglePen()} className={`p-2 rounded-lg transition-all ${state.tool === 'pen' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`} title="Draw">
+                <PenTool className="w-5 h-5" />
+              </button>
+              <button onClick={() => togglePen(true)} className={`p-2 rounded-lg transition-all ${state.tool === 'highlight' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`} title="Highlight">
+                <Highlighter className="w-5 h-5" />
+              </button>
+              <div className="h-6 w-px bg-border mx-1" />
+              <div className="relative group">
+                <button className={`p-2 rounded-lg transition-all ${state.showSearch ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`} title="Search & Replace">
+                  <Search className="w-5 h-5" />
+                </button>
+                <div className="absolute top-full left-0 mt-2 w-72 bg-surface border border-border rounded-2xl shadow-2xl p-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                  <h4 className="text-xs font-black uppercase tracking-widest mb-4">Search & Replace</h4>
+                  <div className="space-y-4">
+                    <div className="fg">
+                      <label className="fl">Find</label>
+                      <input 
+                        type="text" 
+                        className="fi text-xs"
+                        value={state.searchQuery}
+                        onChange={(e) => setState(prev => ({ ...prev, searchQuery: e.target.value }))}
+                        placeholder="Search text..."
+                      />
+                    </div>
+                    <div className="fg">
+                      <label className="fl">Replace with</label>
+                      <input 
+                        type="text" 
+                        className="fi text-xs"
+                        value={state.replaceQuery}
+                        onChange={(e) => setState(prev => ({ ...prev, replaceQuery: e.target.value }))}
+                        placeholder="Replacement text..."
+                      />
+                    </div>
+                    <button onClick={handleSearchReplace} className="btn bp w-full py-2 text-xs">
+                      Replace All
+                    </button>
+                  </div>
+                </div>
               </div>
-            </SortableContext>
-          </DndContext>
+              <button onClick={() => imageInputRef.current?.click()} className="p-2 rounded-lg hover:bg-border transition-all" title="Add Image">
+                <ImageIcon className="w-5 h-5" />
+              </button>
+              <input type="file" ref={imageInputRef} className="hidden" accept="image/*" onChange={addImage} />
+            </div>
+          </div>
+
+          {/* Pages */}
+          <div className="flex-1 flex flex-col min-h-[300px]">
+            <h3 className="text-xs font-black uppercase tracking-widest mb-4 text-text-muted">Pages</h3>
+            <div className="flex-1 overflow-y-auto bg-bg-secondary/50 rounded-xl p-4 border border-border">
+              <DndContext 
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext 
+                  items={state.pageOrder}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div className="space-y-4">
+                    {state.pageOrder.map((id, index) => (
+                      <SortableThumbnail 
+                        key={id}
+                        id={id}
+                        index={index}
+                        thumb={state.thumbnails[id - 1]}
+                        isActive={state.currentPage === id}
+                        isDeleted={state.deletedPages.includes(id)}
+                        onClick={() => {
+                          setState(prev => ({ ...prev, currentPage: id }));
+                          renderPage(id);
+                        }}
+                        onDelete={(pageId: number) => {
+                          setState(prev => ({
+                            ...prev,
+                            deletedPages: prev.deletedPages.includes(pageId) 
+                              ? prev.deletedPages.filter(p => p !== pageId)
+                              : [...prev.deletedPages, pageId]
+                          }));
+                        }}
+                        onRotate={() => {}}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            </div>
+          </div>
         </aside>
 
-        {/* Canvas Area */}
-        <main className="flex-1 relative overflow-auto bg-bg-secondary/30 flex items-center justify-center p-8">
-          <div 
-            className="shadow-2xl bg-white"
-            style={{ 
-              transform: `scale(${state.zoom})`,
-              transformOrigin: 'center center'
-            }}
-          >
-            <canvas ref={canvasRef} />
+        {/* Right Preview (Canvas) */}
+        <main className="bg-surface border border-border rounded-2xl p-5 flex flex-col order-1 lg:order-2 shadow-sm min-h-[500px] relative overflow-hidden">
+          <div className="flex-1 w-full h-full overflow-auto bg-bg-secondary/30 rounded-xl border border-border flex items-center justify-center p-4">
+            <div 
+              className="shadow-2xl bg-white transition-transform duration-200"
+              style={{ 
+                transform: `scale(${state.zoom})`,
+                transformOrigin: 'center center'
+              }}
+            >
+              <canvas ref={canvasRef} />
+            </div>
           </div>
 
           {state.isProcessing && (
-            <div className="absolute inset-0 bg-surface/50 backdrop-blur-sm flex items-center justify-center z-50">
-              <div className="flex flex-col items-center gap-4">
+            <div className="absolute inset-0 bg-surface/50 backdrop-blur-sm flex items-center justify-center z-50 rounded-2xl">
+              <div className="flex flex-col items-center gap-4 bg-surface p-6 rounded-2xl shadow-2xl border border-border">
                 <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
                 <p className="font-bold text-accent">Processing AI Magic...</p>
               </div>

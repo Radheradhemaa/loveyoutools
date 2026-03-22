@@ -64,6 +64,12 @@ export default function ToolLayout({
 
   const handleComplete = () => {
     setState('AFTER');
+    if (onDownload) {
+      // Small delay to allow the animation to start
+      setTimeout(() => {
+        onDownload();
+      }, 500);
+    }
   };
 
   const handleReset = () => {
@@ -91,11 +97,6 @@ export default function ToolLayout({
               <p className="text-xl text-text-muted max-w-2xl mx-auto">
                 {description}
               </p>
-            </div>
-
-            {/* Ad Placeholder Before Upload */}
-            <div className="w-full h-32 bg-bg-secondary/50 border border-dashed border-border rounded-2xl mb-12 flex items-center justify-center text-text-muted text-sm font-medium">
-              Advertisement Space
             </div>
 
             <UploadBox 
@@ -165,11 +166,6 @@ export default function ToolLayout({
                 </div>
               </div>
             )}
-
-            {/* Ad Placeholder After Download */}
-            <div className="w-full h-32 bg-bg-secondary/50 border border-dashed border-border rounded-2xl mb-12 flex items-center justify-center text-text-muted text-sm font-medium">
-              Advertisement Space
-            </div>
 
             <Suggestions toolId={toolId} showFullGrid={true} />
           </motion.div>

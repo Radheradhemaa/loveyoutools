@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Download, RefreshCw, Trash2, ZoomIn, ZoomOut, ImagePlus } from 'lucide-react';
 import JSZip from 'jszip';
 import ToolLayout from '../components/tool-system/ToolLayout';
+import RelatedTools from '../components/tool-system/RelatedTools';
 
 interface ImageSettings {
   quality: number;
@@ -33,7 +34,7 @@ export default function ImageCompressor() {
   const [isProcessingBatch, setIsProcessingBatch] = useState(false);
   const processedFilesRef = useRef<Set<File>>(new Set());
 
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024 ? 1 : 0.5);
 
   const faq = [
     { q: "What image formats are supported?", a: "We support all major formats including JPG, PNG, WEBP, GIF, BMP, and SVG." },
@@ -273,17 +274,94 @@ export default function ImageCompressor() {
         if (!currentImage) return null;
 
         return (
-          <div className="flex flex-col lg:flex-row h-full lg:overflow-hidden bg-bg-secondary/30">
-            {/* Sidebar Controls */}
-            <aside className="w-full lg:w-80 bg-surface border-b lg:border-b-0 lg:border-r border-border flex flex-col shrink-0 shadow-2xl z-10 max-h-[40vh] lg:max-h-none overflow-y-auto scrollbar-hide">
-              <div className="p-4 border-b border-border flex items-center gap-2 overflow-x-auto no-scrollbar">
-                <div className="px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap bg-accent text-white">Compress</div>
+          <div className="w-full h-full flex flex-col lg:flex-row overflow-hidden bg-bg-primary">
+            {/* Left Preview - 2/3 width on desktop */}
+            <main className="flex-[2] bg-[#f5f5f5] flex flex-col overflow-hidden relative h-auto lg:h-full min-h-[300px]">
+              <div className="p-4 bg-surface border-b border-border flex justify-between items-center z-10 shrink-0">
+                <div className="bg-bg-secondary/50 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-sm border border-border flex items-center gap-4">
+                  <span className="truncate max-w-[150px] sm:max-w-[200px]" title={currentImage.file.name}>{currentImage.file.name}</span>
+                  <span className="text-text-muted">|</span>
+                  <span>{currentImage.originalWidth}x{currentImage.originalHeight}</span>
+                  <span className="text-text-muted">|</span>
+                  <span>{formatBytes(currentImage.file.size)} → {currentImage.finalBlob ? formatBytes(currentImage.finalBlob.size) : '...'}</span>
+                  {currentImage.finalBlob && (
+                    <span className="text-success ml-2">
+                      (-{Math.round((1 - currentImage.finalBlob.size / currentImage.file.size) * 100)}%)
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => {
+                    processedFilesRef.current.clear();
+                    onReset();
+                  }} className="bg-surface p-3 rounded-xl hover:bg-bg-secondary shadow-sm border border-border text-red-500 transition-all hover:scale-105">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              <div className="flex-1 relative overflow-hidden flex flex-col items-center justify-center p-4 lg:p-8">
+                {currentImage.isProcessing ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-bg-primary/50 backdrop-blur-sm z-20">
+                    <RefreshCw className="w-8 h-8 animate-spin text-accent" />
+                  </div>
+                ) : null}
+
+                <div className="w-full h-full flex items-center justify-center">
+                  {(currentImage.finalUrl || currentImage.originalUrl) && (
+                    <img 
+                      src={currentImage.finalUrl || currentImage.originalUrl} 
+                      alt="Preview" 
+                      style={{ 
+                        maxHeight: '100%', 
+                        maxWidth: '100%',
+                        transform: `scale(${zoom})`,
+                        objectFit: 'contain'
+                      }} 
+                      className="shadow-2xl rounded-xl border border-border transition-transform duration-300" 
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Image Carousel */}
+              {images.length > 1 && (
+                <div className="p-4 bg-surface border-t border-border flex gap-4 overflow-x-auto shrink-0 shadow-sm items-center">
+                  {images.map((img, idx) => (
+                    <button
+                      key={img.id}
+                      onClick={() => setCurrentIndex(idx)}
+                      className={`relative flex-shrink-0 w-16 h-16 rounded-xl overflow-hidden border-2 transition-all duration-300 ${currentIndex === idx ? 'border-accent scale-105 shadow-xl' : 'border-transparent opacity-60 hover:opacity-100 hover:border-border scale-100'}`}
+                    >
+                      <img src={img.finalUrl || img.originalUrl} alt={`Thumb ${idx}`} className="w-full h-full object-cover" />
+                      <div className="absolute top-1 right-1 bg-black/50 text-white text-[8px] font-black px-1.5 py-0.5 rounded backdrop-blur-sm">
+                        {idx + 1}
+                      </div>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); removeImage(idx); }}
+                        className="absolute bottom-1 right-1 bg-red-500 text-white p-1 rounded-lg opacity-0 hover:opacity-100 transition-opacity"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </button>
+                  ))}
+                  <label className="flex-shrink-0 w-16 h-16 rounded-xl border-2 border-dashed border-border flex flex-col items-center justify-center gap-1 text-text-muted hover:border-accent hover:text-accent transition-all cursor-pointer bg-surface/30 hover:bg-accent/5">
+                    <ImagePlus className="w-5 h-5" />
+                    <span className="text-[8px] font-black uppercase">Add</span>
+                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => {
+                      if (e.target.files) handleFiles(Array.from(e.target.files));
+                    }} />
+                  </label>
+                </div>
+              )}
+            </main>
+
+            {/* Right Controls (Sidebar) */}
+            <aside className="w-full lg:w-1/4 bg-surface border-l border-border flex flex-col shadow-sm overflow-hidden h-auto lg:h-full">
+              <div className="p-6 space-y-6 overflow-y-auto scrollbar-hide flex-1">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-black uppercase tracking-widest text-text-muted">Zoom Preview</label>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-text-muted">Zoom Preview</label>
                     <div className="flex items-center gap-2">
                       <button 
                         onClick={() => setZoom(Math.max(0.1, zoom - 0.25))}
@@ -310,24 +388,24 @@ export default function ImageCompressor() {
 
                 <div className="space-y-6 animate-in fade-in pt-6 border-t border-border">
                   <div>
-                    <label className="text-sm font-bold mb-2 block">Quality: {Math.round(currentImage.settings.quality * 100)}%</label>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-text-muted mb-3 block">Quality: {Math.round(currentImage.settings.quality * 100)}%</label>
                     <input 
                       type="range" min="0.1" max="1" step="0.05" 
                       value={currentImage.settings.quality} 
                       onChange={(e) => updateSettings({ quality: Number(e.target.value) })}
                       className="w-full accent-accent"
                     />
-                    <div className="flex justify-between text-[10px] text-text-muted mt-2">
+                    <div className="flex justify-between text-[10px] font-bold text-text-muted mt-2">
                       <span>Small Size</span>
                       <span>Best Quality</span>
                     </div>
                   </div>
-                  <div>
-                    <label className="text-sm font-bold mb-2 block">Format</label>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-text-muted block">Format</label>
                     <select 
                       value={currentImage.settings.format}
                       onChange={(e) => updateSettings({ format: e.target.value })}
-                      className="w-full bg-bg-secondary border border-border rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-accent"
+                      className="fi text-sm py-2.5 rounded-xl border-border bg-bg-secondary"
                     >
                       <option value="image/jpeg">JPG</option>
                       <option value="image/png">PNG</option>
@@ -336,107 +414,28 @@ export default function ImageCompressor() {
                   </div>
                 </div>
 
+                <RelatedTools currentToolId="image-compressor" />
+
                 <div className="pt-6 border-t border-border space-y-4">
                   {images.length > 1 && (
                     <button 
                       onClick={applyToAll}
-                      className="w-full py-3 rounded-xl bg-bg-secondary hover:bg-border text-sm font-bold transition-colors"
+                      className="w-full py-4 rounded-2xl bg-bg-secondary hover:bg-border text-[10px] font-black uppercase tracking-widest transition-all"
                     >
-                      Apply Settings to All
+                      Apply to All
                     </button>
                   )}
                   <button 
                     onClick={downloadAll} 
                     disabled={isProcessingBatch}
-                    className="btn bp w-full py-4 rounded-2xl gap-2 text-lg font-bold shadow-xl shadow-accent/20 disabled:opacity-50"
+                    className="btn bp w-full py-4 rounded-2xl gap-2 shadow-lg shadow-accent/20 text-xs font-black uppercase tracking-widest disabled:opacity-50"
                   >
-                    {isProcessingBatch ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                    {isProcessingBatch ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                     {images.length > 1 ? 'Download All' : 'Download Image'}
                   </button>
                 </div>
               </div>
             </aside>
-
-            {/* Main Content - Preview */}
-            <div className="flex-1 flex flex-col relative bg-black/5 min-h-[50vh] lg:min-h-0">
-              <div className="absolute top-4 left-4 right-4 flex justify-between items-center z-10 pointer-events-none">
-                <div className="bg-surface/80 backdrop-blur-md px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm pointer-events-auto border border-border flex items-center gap-3">
-                  <span className="truncate max-w-[150px] sm:max-w-[200px]" title={currentImage.file.name}>{currentImage.file.name}</span>
-                  <span className="text-text-muted hidden sm:inline">|</span>
-                  <span className="hidden sm:inline">{currentImage.originalWidth}x{currentImage.originalHeight}</span>
-                  <span className="text-text-muted">|</span>
-                  <span>{formatBytes(currentImage.file.size)} → {currentImage.finalBlob ? formatBytes(currentImage.finalBlob.size) : '...'}</span>
-                  {currentImage.finalBlob && (
-                    <span className="text-success">
-                      (-{Math.round((1 - currentImage.finalBlob.size / currentImage.file.size) * 100)}%)
-                    </span>
-                  )}
-                </div>
-                <div className="flex gap-2 pointer-events-auto">
-                  <button onClick={() => {
-                    processedFilesRef.current.clear();
-                    onReset();
-                  }} className="bg-surface/80 backdrop-blur-md p-2 rounded-xl hover:bg-surface shadow-sm border border-border text-red-500 transition-colors ml-2">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex-1 flex items-center justify-center p-8 overflow-hidden relative touch-none">
-                {currentImage.isProcessing ? (
-                  <div className="absolute inset-0 flex items-center justify-center bg-bg-primary/50 backdrop-blur-sm z-20">
-                    <RefreshCw className="w-8 h-8 animate-spin text-accent" />
-                  </div>
-                ) : null}
-
-                <div className="relative w-full h-full flex items-center justify-center overflow-auto">
-                  {/* Live Preview */}
-                  <div className="flex w-full h-full items-center justify-center min-h-min min-w-min p-4">
-                    <div className="flex-1 flex flex-col items-center justify-center h-full max-h-full relative">
-                      {(currentImage.finalUrl || currentImage.originalUrl) && (
-                        <img 
-                          src={currentImage.finalUrl || currentImage.originalUrl} 
-                          alt="Preview" 
-                          style={{ transform: `scale(${zoom})`, transformOrigin: 'center' }} 
-                          className="max-w-full max-h-[60vh] object-contain rounded-lg shadow-lg transition-transform duration-200" 
-                        />
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Image Carousel */}
-              {images.length > 1 && (
-                <div className="h-24 bg-surface border-t border-border p-2 flex gap-2 overflow-x-auto shrink-0">
-                  {images.map((img, idx) => (
-                    <button
-                      key={img.id}
-                      onClick={() => setCurrentIndex(idx)}
-                      className={`relative h-full aspect-square rounded-xl overflow-hidden border-2 transition-all ${currentIndex === idx ? 'border-accent scale-95' : 'border-transparent hover:border-border'}`}
-                    >
-                      <img src={img.finalUrl || img.originalUrl} alt={`Thumb ${idx}`} className="w-full h-full object-cover" />
-                      <div className="absolute top-1 right-1 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded backdrop-blur-sm">
-                        {idx + 1}
-                      </div>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); removeImage(idx); }}
-                        className="absolute bottom-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 hover:opacity-100 transition-opacity"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </button>
-                  ))}
-                  <label className="h-full aspect-square rounded-xl border-2 border-dashed border-border flex flex-col items-center justify-center text-text-muted hover:text-accent hover:border-accent hover:bg-accent/5 transition-colors cursor-pointer">
-                    <ImagePlus className="w-6 h-6 mb-1" />
-                    <span className="text-[10px] font-bold">Add More</span>
-                    <input type="file" multiple accept="image/*" className="hidden" onChange={(e) => {
-                      if (e.target.files) handleFiles(Array.from(e.target.files));
-                    }} />
-                  </label>
-                </div>
-              )}
-            </div>
           </div>
         );
       }}

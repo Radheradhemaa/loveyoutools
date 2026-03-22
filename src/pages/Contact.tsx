@@ -14,8 +14,8 @@ export default function Contact() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-16">
       <SEO 
-        title="Contact Us - LoveTools" 
-        description="Get in touch with the LoveTools team for support, suggestions, or feedback."
+        title="Contact Us - LoveyouTools" 
+        description="Get in touch with the LoveyouTools team for support, suggestions, or feedback."
         url={window.location.href}
       />
       
@@ -35,14 +35,14 @@ export default function Contact() {
               <Mail className="w-6 h-6" />
             </div>
             <h3 className="font-bold mb-1">Email Us</h3>
-            <p className="text-sm text-text-muted">support@lovetools.io</p>
+            <p className="text-sm text-text-muted">support@loveyoutools.com</p>
           </div>
           <div className="bg-surface border border-border rounded-2xl p-6">
             <div className="w-12 h-12 bg-accent/10 text-accent rounded-xl flex items-center justify-center mb-4">
               <MessageSquare className="w-6 h-6" />
             </div>
             <h3 className="font-bold mb-1">Social Media</h3>
-            <p className="text-sm text-text-muted">@lovetools</p>
+            <p className="text-sm text-text-muted">@loveyoutools</p>
           </div>
         </div>
 

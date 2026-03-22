@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Droplet, Copy, CheckCircle2, Trash2, Image as ImageIcon } from 'lucide-react';
+import { Upload, Droplet, Copy, CheckCircle2, Trash2, Image as ImageIcon, Plus, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import ToolLayout from '../components/tool-system/ToolLayout';
 
 interface ProcessedImage {
   file: File;
@@ -15,15 +16,16 @@ export default function ImageColorPicker() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(e.target.files || []);
-    if (selectedFiles.length > 0) {
-      const newImages = selectedFiles.map((file: File) => ({
+  const initialFilesProcessed = useRef(false);
+
+  const handleFiles = (files: File[]) => {
+    if (files.length > 0) {
+      const newImages = files.map((file: File) => ({
         file,
         preview: URL.createObjectURL(file)
       }));
       setImages(prev => [...prev, ...newImages]);
-      if (images.length === 0) {
+      if (images.length === 0 && !initialFilesProcessed.current) {
         setCurrentIndex(0);
       }
       setColor(null);
@@ -98,135 +100,177 @@ export default function ImageColorPicker() {
 
   const currentImage = images[currentIndex];
 
+  const faqs = [
+    {
+      q: "How do I pick a color from an image?",
+      a: "Upload your image, then simply hover your mouse (or drag your finger on mobile) over the image. The color under your cursor will be displayed in the panel. Click the image to copy the HEX code."
+    },
+    {
+      q: "Can I pick colors from multiple images?",
+      a: "Yes, you can upload multiple images at once. Use the thumbnail strip below the main image to switch between them."
+    },
+    {
+      q: "What color formats are supported?",
+      a: "We provide both HEX (e.g., #FF0000) and RGB (e.g., rgb(255, 0, 0)) formats. You can copy either format with a single click."
+    }
+  ];
+
   return (
-    <div className="space-y-6">
-      {images.length === 0 ? (
-        <div className="border-2 border-dashed border-border rounded-[14px] p-12 text-center hover:bg-bg-secondary transition-colors cursor-pointer relative">
-          <input 
-            type="file" 
-            accept="image/*" 
-            multiple
-            onChange={handleFileChange} 
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          />
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center">
-              <Upload className="w-8 h-8" />
-            </div>
-            <div>
-              <p className="font-bold text-lg mb-1">Upload Images</p>
-              <p className="text-text-muted text-sm">Drag and drop or click to browse. Batch processing supported.</p>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-bg-secondary rounded-[14px] p-4 relative overflow-hidden">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold flex items-center gap-2"><ImageIcon className="w-5 h-5 text-accent" /> Images ({images.length})</h3>
-                <label className="text-sm text-accent hover:underline cursor-pointer">
-                  + Add More
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    multiple
-                    onChange={handleFileChange} 
-                    className="hidden" 
-                  />
-                </label>
-              </div>
+    <ToolLayout
+      title="Image Color Picker"
+      description="Extract precise colors from any image. Hover to pick, click to copy HEX and RGB codes instantly."
+      toolId="image-color-picker"
+      acceptedFileTypes={['image/*']}
+      multiple={true}
+      faq={faqs}
+    >
+      {({ file, state, onComplete, onReset }) => {
+        useEffect(() => {
+          if (!file) {
+            initialFilesProcessed.current = false;
+            setImages([]);
+            return;
+          }
+          if (file && !initialFilesProcessed.current) {
+            handleFiles(Array.isArray(file) ? file : [file]);
+            initialFilesProcessed.current = true;
+          }
+        }, [file]);
 
-              {/* Thumbnail strip */}
-              <div className="flex gap-2 overflow-x-auto pb-4 mb-4 border-b border-border">
-                {images.map((img, idx) => (
-                  <div 
-                    key={idx} 
-                    onClick={() => {
-                      setCurrentIndex(idx);
-                      setColor(null);
-                      setRgb(null);
-                    }}
-                    className={`relative flex-shrink-0 w-20 h-20 rounded-md overflow-hidden cursor-pointer border-2 transition-colors ${currentIndex === idx ? 'border-accent' : 'border-transparent hover:border-border'}`}
-                  >
-                    <img src={img.preview} alt={`Thumb ${idx}`} className="w-full h-full object-cover" />
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); removeImage(idx); }}
-                      className="absolute bottom-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 hover:opacity-100 transition-opacity"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+        if (images.length === 0) return null;
+
+        return (
+          <div className="max-w-[1200px] mx-auto w-full p-4 lg:p-6 flex flex-col gap-5 h-full">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 flex-1 min-h-0">
+              {/* Left Controls (Sidebar) */}
+              <aside className="bg-surface border border-border rounded-2xl flex flex-col shadow-sm order-2 lg:order-1 overflow-hidden h-full">
+                <div className="p-5 space-y-6 overflow-y-auto scrollbar-hide flex-1">
+                  <div className="space-y-4">
+                    <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                      <Droplet className="w-5 h-5 text-accent" /> Picked Color
+                    </h3>
+
+                    {color ? (
+                      <div className="space-y-6">
+                        <div 
+                          className="w-32 h-32 mx-auto rounded-full shadow-lg border-4 border-white"
+                          style={{ backgroundColor: color }}
+                        ></div>
+                        
+                        <div className="space-y-3">
+                          <button 
+                            onClick={() => copyToClipboard(color)}
+                            className="w-full flex items-center justify-between p-3 bg-bg-secondary rounded-lg hover:bg-border transition-colors group"
+                          >
+                            <span className="font-mono font-medium">{color}</span>
+                            {copied ? <CheckCircle2 className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4 text-text-muted group-hover:text-text-primary" />}
+                          </button>
+                          
+                          <button 
+                            onClick={() => rgb && copyToClipboard(rgb)}
+                            className="w-full flex items-center justify-between p-3 bg-bg-secondary rounded-lg hover:bg-border transition-colors group"
+                          >
+                            <span className="font-mono font-medium">{rgb}</span>
+                            {copied ? <CheckCircle2 className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4 text-text-muted group-hover:text-text-primary" />}
+                          </button>
+                        </div>
+                        <p className="text-sm text-text-muted mt-4 text-center">Hover over the image to pick a color, click the image to copy HEX.</p>
+                      </div>
+                    ) : (
+                      <div className="py-12 text-text-muted text-center border-2 border-dashed border-border rounded-xl">
+                        Hover over the image to pick a color
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-
-              {/* Main Image Area */}
-              {currentImage && (
-                <div className="flex flex-col items-center justify-center min-h-[300px] bg-surface rounded-lg p-2 cursor-crosshair touch-none">
-                  <img 
-                    ref={imgRef}
-                    src={currentImage.preview} 
-                    alt="Preview" 
-                    onLoad={handleImageLoad}
-                    onMouseMove={handleMouseMove}
-                    onTouchMove={handleTouchMove}
-                    onTouchStart={handleTouchMove}
-                    onClick={() => color && copyToClipboard(color)}
-                    className="max-w-full max-h-[85vh] object-contain shadow-md rounded-lg" 
-                  />
-                  <canvas ref={canvasRef} className="hidden" />
                 </div>
-              )}
-            </div>
-            
-            <div className="flex gap-4">
-              <button onClick={() => setImages([])} className="btn bs flex-1">
-                Clear All
-              </button>
-            </div>
-          </div>
+                <div className="p-4 border-t border-border/50 bg-bg-secondary/30">
+                  <button onClick={onReset} className="btn bs w-full py-3">
+                    Clear All
+                  </button>
+                </div>
+              </aside>
 
-          <div className="space-y-6">
-            <div className="bg-surface border border-border rounded-[14px] p-6 text-center">
-              <h3 className="font-bold text-lg mb-6 flex items-center justify-center gap-2">
-                <Droplet className="w-5 h-5 text-accent" /> Picked Color
-              </h3>
-
-              {color ? (
-                <div className="space-y-6">
-                  <div 
-                    className="w-32 h-32 mx-auto rounded-full shadow-lg border-4 border-white"
-                    style={{ backgroundColor: color }}
-                  ></div>
+              {/* Right Preview */}
+              <main className="bg-surface border border-border rounded-2xl flex flex-col shadow-sm order-1 lg:order-2 overflow-hidden min-h-[400px] lg:min-h-0 h-full relative p-4 gap-4">
+                {/* Thumbnail Strip */}
+                <div className="flex items-center gap-2 bg-bg-secondary/50 p-2 rounded-xl border border-border shadow-sm overflow-hidden shrink-0">
+                  <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide flex-1">
+                    {images.map((img, idx) => (
+                      <div 
+                        key={idx} 
+                        onClick={() => {
+                          setCurrentIndex(idx);
+                          setColor(null);
+                          setRgb(null);
+                        }}
+                        className={`relative flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${currentIndex === idx ? 'border-accent scale-105 shadow-md' : 'border-transparent hover:border-border scale-100'}`}
+                      >
+                        <img src={img.preview} alt={`Thumb ${idx}`} className="w-full h-full object-cover" />
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); removeImage(idx); }}
+                          className="absolute bottom-0.5 right-0.5 bg-red-500/80 backdrop-blur-sm text-white p-0.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                    <label className="flex-shrink-0 w-12 h-12 rounded-lg border-2 border-dashed border-border flex flex-col items-center justify-center gap-0 text-text-muted hover:border-accent hover:text-accent transition-all cursor-pointer bg-surface/30">
+                      <Plus className="w-4 h-4" />
+                      <span className="text-[8px] font-bold uppercase mt-0.5">Add</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        multiple
+                        onChange={(e) => {
+                          if (e.target.files) handleFiles(Array.from(e.target.files));
+                        }} 
+                        className="hidden" 
+                      />
+                    </label>
+                  </div>
                   
-                  <div className="space-y-3">
+                  <div className="flex items-center gap-1 pr-1">
                     <button 
-                      onClick={() => copyToClipboard(color)}
-                      className="w-full flex items-center justify-between p-3 bg-bg-secondary rounded-lg hover:bg-border transition-colors group"
+                      onClick={() => setCurrentIndex(prev => Math.max(0, prev - 1))}
+                      disabled={currentIndex === 0}
+                      className="p-2 rounded-lg bg-surface border border-border hover:bg-bg-secondary disabled:opacity-30 transition-colors"
                     >
-                      <span className="font-mono font-medium">{color}</span>
-                      {copied ? <CheckCircle2 className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4 text-text-muted group-hover:text-text-primary" />}
+                      <ChevronLeft className="w-4 h-4" />
                     </button>
-                    
                     <button 
-                      onClick={() => rgb && copyToClipboard(rgb)}
-                      className="w-full flex items-center justify-between p-3 bg-bg-secondary rounded-lg hover:bg-border transition-colors group"
+                      onClick={() => setCurrentIndex(prev => Math.min(images.length - 1, prev + 1))}
+                      disabled={currentIndex === images.length - 1}
+                      className="p-2 rounded-lg bg-surface border border-border hover:bg-bg-secondary disabled:opacity-30 transition-colors"
                     >
-                      <span className="font-mono font-medium">{rgb}</span>
-                      {copied ? <CheckCircle2 className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4 text-text-muted group-hover:text-text-primary" />}
+                      <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
-                  <p className="text-sm text-text-muted mt-4">Hover over the image to pick a color, click the image to copy HEX.</p>
                 </div>
-              ) : (
-                <div className="py-12 text-text-muted">
-                  Hover over the image to pick a color
+
+                {/* Main Working Area */}
+                <div className="flex-1 relative bg-bg-secondary/30 rounded-xl overflow-hidden border border-border flex flex-col items-center justify-center p-4 shadow-inner">
+                  {currentImage && (
+                    <div className="w-full h-full flex items-center justify-center overflow-auto scrollbar-hide cursor-crosshair touch-none">
+                      <img 
+                        ref={imgRef}
+                        src={currentImage.preview} 
+                        alt="Preview" 
+                        onLoad={handleImageLoad}
+                        onMouseMove={handleMouseMove}
+                        onTouchMove={handleTouchMove}
+                        onTouchStart={handleTouchMove}
+                        onClick={() => color && copyToClipboard(color)}
+                        className="max-w-full max-h-full object-contain shadow-sm rounded-lg" 
+                      />
+                      <canvas ref={canvasRef} className="hidden" />
+                    </div>
+                  )}
                 </div>
-              )}
+              </main>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        );
+      }}
+    </ToolLayout>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Copy, Trash2, Check, RefreshCw, Sparkles } from 'lucide-react';
+import { GoogleGenAI } from "@google/genai";
 
 export default function AiTools({ toolId }: { toolId: string }) {
   const [input, setInput] = useState('');
@@ -19,41 +20,65 @@ export default function AiTools({ toolId }: { toolId: string }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const generate = () => {
+  const generate = async () => {
     if (!input.trim()) return;
     setLoading(true);
     setOutput('');
     
-    // Simulate AI delay
-    setTimeout(() => {
-      let res = '';
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
       const topic = input.trim();
+      let prompt = '';
+      let systemInstruction = '';
+
       switch (toolId) {
-        case 'ai-content':
-          res = `Here is a generated article about ${topic}:\n\nIn today's fast-paced world, ${topic} has become increasingly important. Many experts agree that understanding the nuances of ${topic} can lead to significant improvements in both personal and professional spheres.\n\nFurthermore, the evolution of ${topic} over the past decade demonstrates a clear trend towards innovation and efficiency. As we look to the future, it is evident that ${topic} will continue to play a pivotal role in shaping our society.\n\nIn conclusion, embracing ${topic} is not just an option, but a necessity for those who wish to stay ahead of the curve. By staying informed and adaptable, we can harness the full potential of ${topic}.`;
+        case 'ai-content-generator':
+          systemInstruction = "You are a professional content writer. Generate high-quality, SEO-friendly articles or blog posts based on the provided topic. Use clear headings, bullet points, and a professional tone.";
+          prompt = `Write a comprehensive article about: ${topic}`;
           break;
-        case 'ai-title':
-          res = `1. The Ultimate Guide to ${topic}\n2. 10 Secrets About ${topic} You Need to Know\n3. How ${topic} is Changing the Game\n4. Master ${topic} in 5 Easy Steps\n5. Why Everyone is Talking About ${topic}\n6. The Future of ${topic}: What to Expect\n7. ${topic} Demystified: A Beginner's Guide\n8. 5 Common Mistakes with ${topic} and How to Avoid Them`;
+        case 'ai-title-generator':
+          systemInstruction = "You are a creative copywriter. Generate catchy, click-worthy, and SEO-optimized titles for the given topic.";
+          prompt = `Generate 10 engaging titles for a blog post or video about: ${topic}`;
           break;
-        case 'ai-email':
-          res = `Subject: Important Update Regarding ${topic}\n\nHi [Name],\n\nI hope this email finds you well.\n\nI am writing to discuss ${topic}. Given recent developments, it is crucial that we align our strategies to ensure optimal outcomes.\n\nPlease let me know your availability for a brief call next week to go over the details.\n\nBest regards,\n[Your Name]`;
+        case 'ai-email-writer':
+          systemInstruction = "You are an expert business communicator. Write professional, clear, and effective emails based on the provided context.";
+          prompt = `Write a professional email about: ${topic}`;
           break;
-        case 'ai-caption':
-          res = `Exploring the wonders of ${topic} today! ✨ Who else loves this as much as I do? Let me know in the comments below! 👇\n\n#${topic.replace(/\s+/g, '')} #inspiration #dailyvibes #explore #trending`;
+        case 'ai-instagram-caption':
+          systemInstruction = "You are a social media manager. Generate engaging, trendy, and emoji-rich Instagram captions with relevant hashtags.";
+          prompt = `Generate 5 creative Instagram captions for a post about: ${topic}`;
           break;
-        case 'ai-story':
-          res = `Once upon a time, in a world where ${topic} was the most sought-after treasure, a young adventurer named Elara set out on a quest. She had heard legends of a hidden valley where ${topic} flowed like water.\n\nHer journey was fraught with peril, but her determination never wavered. Along the way, she met a wise old sage who taught her the true meaning of ${topic}.\n\nFinally, after weeks of travel, she reached the valley. But what she found there was not what she expected. The true treasure was the journey itself, and the friends she made along the way.`;
+        case 'ai-story-generator':
+          systemInstruction = "You are a creative storyteller. Write engaging, imaginative, and well-structured short stories based on the provided theme or prompt.";
+          prompt = `Write a short story about: ${topic}`;
           break;
-        case 'ai-product':
-          res = `Introducing the revolutionary new product for ${topic}! Designed with cutting-edge technology, this product is guaranteed to enhance your experience with ${topic}.\n\nKey Features:\n- Unmatched durability and performance\n- Sleek, modern design\n- Easy to use and maintain\n- 100% satisfaction guarantee\n\nDon't miss out on the opportunity to elevate your ${topic} game. Order yours today!`;
+        case 'ai-product-description':
+          systemInstruction = "You are an expert e-commerce copywriter. Generate persuasive, benefit-driven, and SEO-friendly product descriptions.";
+          prompt = `Write a compelling product description for: ${topic}`;
           break;
-        case 'ai-humanize':
-          res = `Hey there! So, I was thinking about ${topic} the other day. It's pretty crazy how much it affects our daily lives, right? I mean, we use it all the time without even realizing it. I think it's definitely something worth looking into more. What do you guys think?`;
+        case 'ai-text-humanizer':
+          systemInstruction = "You are an editor specializing in natural language. Rewrite the provided text to make it sound more human, conversational, and less like AI-generated content, while preserving the original meaning.";
+          prompt = `Humanize the following text: ${topic}`;
           break;
+        default:
+          prompt = `Generate content about: ${topic}`;
       }
-      setOutput(res);
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: {
+          systemInstruction: systemInstruction,
+        }
+      });
+
+      setOutput(response.text || 'No content generated.');
+    } catch (error) {
+      console.error('AI Generation Error:', error);
+      setOutput('Error: Failed to generate content. Please try again later.');
+    } finally {
       setLoading(false);
-    }, 1500);
+    }
   };
 
   return (

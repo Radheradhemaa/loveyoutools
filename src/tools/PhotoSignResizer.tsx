@@ -3,6 +3,7 @@ import ReactCrop, { type Crop, centerCrop, makeAspectCrop, PixelCrop } from 'rea
 import 'react-image-crop/dist/ReactCrop.css';
 import { Download, RefreshCw, Settings, CheckCircle2, AlertCircle, Image as ImageIcon, Type, Maximize2, FileImage, Lock, Unlock, ZoomIn, ZoomOut } from 'lucide-react';
 import ToolLayout from '../components/tool-system/ToolLayout';
+import RelatedTools from '../components/tool-system/RelatedTools';
 
 export default function PhotoSignResizer() {
   const [image, setImage] = useState<string | null>(null);
@@ -19,7 +20,7 @@ export default function PhotoSignResizer() {
   const [fileName, setFileName] = useState('photo');
   const [originalFileName, setOriginalFileName] = useState('');
   const [lockAspect, setLockAspect] = useState(true);
-  const [zoom, setZoom] = useState(0.5);
+  const [zoom, setZoom] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024 ? 1 : 0.5);
   const imgRef = useRef<HTMLImageElement>(null);
 
   // Cleanup result URL on unmount or change
@@ -62,6 +63,15 @@ export default function PhotoSignResizer() {
       height
     );
     setCrop(initialCrop);
+    
+    // Initialize completedCrop
+    setCompletedCrop({
+      unit: 'px',
+      x: (initialCrop.x * width) / 100,
+      y: (initialCrop.y * height) / 100,
+      width: (initialCrop.width * width) / 100,
+      height: (initialCrop.height * height) / 100
+    });
   };
 
   const handleFiles = (files: File[]) => {
@@ -304,7 +314,9 @@ export default function PhotoSignResizer() {
         const finalKB = res.size.toFixed(0);
         link.download = `${originalFileName || fileName}_${res.width}x${res.height}_${finalKB}KB.jpg`;
         link.href = res.url;
+        document.body.appendChild(link);
         link.click();
+        document.body.removeChild(link);
         if (onComplete) onComplete();
       }
     } catch (e) {
@@ -425,215 +437,217 @@ export default function PhotoSignResizer() {
         if (!image) return null;
 
         return (
-          <div className="flex flex-col lg:flex-row h-full lg:overflow-hidden bg-bg-secondary/30">
-            {/* Sidebar Controls */}
-            <aside className="w-full lg:w-80 bg-surface border-b lg:border-b-0 lg:border-r border-border flex flex-col shrink-0 shadow-2xl z-10 max-h-[40vh] lg:max-h-none overflow-y-auto scrollbar-hide">
-              <div className="p-6 space-y-6">
-                <div className="space-y-4">
-                  <h3 className="text-sm font-bold flex items-center gap-2 text-text-primary">
-                    <Settings className="w-4 h-4 text-accent" /> Presets
-                  </h3>
-                  <div className="flex flex-col gap-2">
-                    <button
-                      onClick={() => setPreset(300, 400, 50, 'photo')}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${targetWidth === 300 ? 'bg-accent text-white shadow-sm' : 'bg-bg-secondary hover:bg-bg-secondary/80 text-text-secondary'}`}
-                    >
-                      Passport Photo (300x400, 50KB)
-                    </button>
-                    <button
-                      onClick={() => setPreset(140, 60, 20, 'sign')}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${targetWidth === 140 ? 'bg-accent text-white shadow-sm' : 'bg-bg-secondary hover:bg-bg-secondary/80 text-text-secondary'}`}
-                    >
-                      Signature (140x60, 20KB)
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-4 pt-4 border-t border-border/50">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-bold flex items-center gap-2 text-text-primary">
-                      <Settings className="w-4 h-4 text-accent" /> Dimensions
-                    </h3>
-                    <select 
-                      value={unit} 
-                      onChange={(e) => handleUnitChange(e.target.value as any)}
-                      className="text-[10px] font-bold bg-bg-secondary border border-border rounded px-1 py-0.5 outline-none"
-                    >
-                      <option value="px">PX</option>
-                      <option value="in">IN</option>
-                      <option value="cm">CM</option>
-                    </select>
-                  </div>
-
-                  {unit !== 'px' && (
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-bold text-text-muted">DPI (Resolution)</label>
-                      <input 
-                        type="number" 
-                        className="fi text-sm py-2" 
-                        value={dpi} 
-                        onChange={e => { setDpi(Number(e.target.value)); setResult(null); }} 
-                      />
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Width ({unit})</label>
-                      <input 
-                        type="number" 
-                        className="fi text-sm py-2" 
-                        value={targetWidth || ''} 
-                        onChange={e => { setTargetWidth(Number(e.target.value)); setResult(null); }} 
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Height ({unit})</label>
-                      <input 
-                        type="number" 
-                        className="fi text-sm py-2" 
-                        value={targetHeight || ''} 
-                        onChange={e => { setTargetHeight(Number(e.target.value)); setResult(null); }} 
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Target Size (Max KB)</label>
-                      {estimatedSize !== null && (
-                        <span className="text-[10px] font-bold text-accent animate-pulse">Live: {estimatedSize.toFixed(2)} KB</span>
-                      )}
-                    </div>
-                    <input 
-                      type="number" 
-                      className="fi text-sm py-2" 
-                      value={targetKB || ''} 
-                      onChange={e => { setTargetKB(Number(e.target.value)); setResult(null); }} 
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-4 pt-4 border-t border-border/50">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-bold flex items-center gap-2 text-text-primary">
-                      <Maximize2 className="w-4 h-4 text-accent" /> Adjust Crop
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => setZoom(Math.max(0.5, zoom - 0.1))}
-                        className="p-1 rounded bg-bg-secondary hover:bg-border text-text-muted transition-colors"
-                        title="Zoom Out"
-                      >
-                        <ZoomOut className="w-3 h-3" />
-                      </button>
-                      <span className="text-[10px] font-bold w-8 text-center">{Math.round(zoom * 100)}%</span>
-                      <button 
-                        onClick={() => setZoom(Math.min(3, zoom + 0.1))}
-                        className="p-1 rounded bg-bg-secondary hover:bg-border text-text-muted transition-colors"
-                        title="Zoom In"
-                      >
-                        <ZoomIn className="w-3 h-3" />
-                      </button>
-                      <button 
-                        onClick={() => setZoom(1)}
-                        className="p-1 rounded bg-bg-secondary hover:bg-border text-text-muted transition-colors"
-                        title="Fit to Screen"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                      </button>
-                      <button 
-                        onClick={() => setLockAspect(!lockAspect)}
-                        className={`p-1.5 rounded-lg transition-colors ${lockAspect ? 'bg-accent/10 text-accent' : 'bg-bg-secondary text-text-muted'}`}
-                        title={lockAspect ? "Unlock Aspect Ratio" : "Lock Aspect Ratio"}
-                      >
-                        {lockAspect ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <input 
-                      type="range" 
-                      min="0.5" 
-                      max="3" 
-                      step="0.1" 
-                      value={zoom} 
-                      onChange={(e) => setZoom(Number(e.target.value))}
-                      className="w-full accent-accent h-1.5"
-                    />
-                    <p className="text-[10px] text-text-muted">Drag the handles on the image to adjust the crop area. Use slider to zoom.</p>
-                  </div>
-                </div>
-
-                <div className="bg-accent/5 border border-accent/10 rounded-xl p-4 mt-6">
-                  <h4 className="text-xs font-bold text-accent mb-2 flex items-center gap-2">
-                    <AlertCircle className="w-3.5 h-3.5" /> Pro Tip
-                  </h4>
-                  <p className="text-[11px] text-text-secondary leading-relaxed">
-                    For best results, upload a high-resolution photo. The tool will automatically handle the compression to meet your KB limit.
-                  </p>
-                </div>
-
-                <div className="pt-6 border-t border-border/50 space-y-3">
-                  <button
-                    onClick={() => handleDownload(onComplete)}
-                    disabled={loading}
-                    className="w-full btn bp py-3 px-6 shadow-lg shadow-accent/20 flex items-center justify-center gap-2 group"
+          <div className="w-full h-full flex flex-col lg:flex-row overflow-hidden bg-bg-primary">
+            {/* Left Workspace (Preview) - 3/4 width */}
+            <main className="flex-[2] lg:flex-1 bg-[#f5f5f5] flex flex-col order-1 overflow-hidden relative h-full min-h-[300px] lg:min-h-0">
+              <div className="flex-1 w-full h-full overflow-auto flex items-center justify-center p-4 lg:p-8 scrollbar-hide">
+                <div className="flex items-center justify-center min-h-min min-w-min">
+                  <ReactCrop
+                    crop={crop}
+                    onChange={c => setCrop(c)}
+                    onComplete={c => setCompletedCrop(c)}
+                    aspect={lockAspect ? targetWidth / targetHeight : undefined}
+                    className="shadow-2xl rounded-sm bg-white"
                   >
-                    {loading ? (
-                      <RefreshCw className="w-5 h-5 animate-spin" />
-                    ) : (
-                      <>
-                        <Download className="w-5 h-5 group-hover:translate-y-0.5 transition-transform" />
-                        <span className="font-bold">Download Result</span>
-                      </>
-                    )}
-                  </button>
-                  <p className="text-[10px] text-center text-text-muted font-medium">
-                    Target: <span className="text-accent">{targetKB} KB</span> · {targetWidth}x{targetHeight}px
-                  </p>
+                    <img
+                      ref={imgRef}
+                      src={image}
+                      alt="Crop source"
+                      onLoad={onImageLoad}
+                      style={{ 
+                        maxHeight: `calc((100vh - 200px) * ${zoom})`, 
+                        maxWidth: `calc(100% * ${zoom})`,
+                        objectFit: 'contain'
+                      }}
+                      className="block w-auto h-auto transition-all duration-200"
+                    />
+                  </ReactCrop>
                 </div>
               </div>
-            </aside>
+              
+              {/* Overlay Info */}
+              <div className="absolute top-6 left-6 z-10 flex flex-col gap-2">
+                <div className="bg-surface/80 backdrop-blur-md text-text-primary px-4 py-2 rounded-2xl text-xs font-black flex items-center gap-2 border border-border shadow-xl w-fit">
+                  <Maximize2 className="w-4 h-4 text-text-muted" /> {targetWidth} x {targetHeight} px
+                </div>
+                {estimatedSize !== null && (
+                  <div className="bg-surface/80 backdrop-blur-md text-text-primary px-4 py-2 rounded-2xl text-xs font-black flex items-center gap-2 border border-border shadow-xl w-fit">
+                    <FileImage className="w-4 h-4 text-accent" /> Est. Size: {estimatedSize.toFixed(2)} KB
+                  </div>
+                )}
+              </div>
+            </main>
 
-            <div className="flex-1 flex flex-col min-w-0 min-h-[50vh] lg:min-h-0 overflow-y-auto relative p-2 lg:p-4 gap-2 lg:gap-4">
-              <div className="flex-1 relative bg-surface rounded-2xl overflow-hidden border border-border/50 shadow-sm group flex items-center justify-center">
-                <div className="w-full h-full overflow-auto p-4 flex items-center justify-center scrollbar-hide">
-                  <div className="flex items-center justify-center">
-                    <ReactCrop
-                      crop={crop}
-                      onChange={c => setCrop(c)}
-                      onComplete={c => setCompletedCrop(c)}
-                      aspect={lockAspect ? targetWidth / targetHeight : undefined}
-                      className="shadow-2xl rounded-sm"
-                    >
-                      <img
-                        ref={imgRef}
-                        src={image}
-                        alt="Crop source"
-                        onLoad={onImageLoad}
-                        style={{ 
-                          maxHeight: `${60 * zoom}vh`, 
-                          maxWidth: `${100 * zoom}%` 
-                        }}
-                        className="block w-auto h-auto transition-all duration-200"
-                      />
-                    </ReactCrop>
-                  </div>
-                </div>
-                
-                {/* Overlay Info */}
-                <div className="absolute top-4 left-4 z-10 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <div className="bg-black/60 backdrop-blur-md text-white px-3 py-1.5 rounded-full text-[10px] font-bold flex items-center gap-2 border border-white/10 w-fit">
-                    <Maximize2 className="w-3 h-3" /> {targetWidth} x {targetHeight} px
-                  </div>
-                  {estimatedSize !== null && (
-                    <div className="bg-accent/80 backdrop-blur-md text-white px-3 py-1.5 rounded-full text-[10px] font-bold flex items-center gap-2 border border-white/10 w-fit">
-                      <FileImage className="w-3 h-3" /> Est. Size: {estimatedSize.toFixed(2)} KB
+            {/* Right Sidebar (Settings) - 1/4 width */}
+            <aside className="w-full lg:w-1/4 bg-surface border-l border-border flex flex-col shadow-sm order-2 overflow-hidden h-auto lg:h-full">
+                <div className="p-5 space-y-6 overflow-y-auto flex-1 scrollbar-hide">
+                  <div className="space-y-4">
+                    <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                      <Settings className="w-5 h-5 text-accent" /> Presets
+                    </h3>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => setPreset(300, 400, 50, 'photo')}
+                        className={`px-4 py-3 rounded-xl text-sm font-medium transition-all text-left ${targetWidth === 300 ? 'bg-accent text-white shadow-sm' : 'bg-bg-secondary hover:bg-bg-secondary/80 text-text-secondary'}`}
+                      >
+                        Passport Photo (300x400, 50KB)
+                      </button>
+                      <button
+                        onClick={() => setPreset(140, 60, 20, 'sign')}
+                        className={`px-4 py-3 rounded-xl text-sm font-medium transition-all text-left ${targetWidth === 140 ? 'bg-accent text-white shadow-sm' : 'bg-bg-secondary hover:bg-bg-secondary/80 text-text-secondary'}`}
+                      >
+                        Signature (140x60, 20KB)
+                      </button>
                     </div>
-                  )}
+                  </div>
+
+                  <div className="space-y-4 pt-6 border-t border-border/50">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                        <Settings className="w-5 h-5 text-accent" /> Dimensions
+                      </h3>
+                      <select 
+                        value={unit} 
+                        onChange={(e) => handleUnitChange(e.target.value as any)}
+                        className="text-xs font-bold bg-bg-secondary border border-border rounded-lg px-2 py-1 outline-none"
+                      >
+                        <option value="px">PX</option>
+                        <option value="in">IN</option>
+                        <option value="cm">CM</option>
+                      </select>
+                    </div>
+
+                    {unit !== 'px' && (
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase tracking-wider font-bold text-text-muted">DPI (Resolution)</label>
+                        <input 
+                          type="number" 
+                          className="fi text-sm py-2" 
+                          value={dpi} 
+                          onChange={e => { setDpi(Number(e.target.value)); setResult(null); }} 
+                        />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Width ({unit})</label>
+                        <input 
+                          type="number" 
+                          className="fi text-sm py-2" 
+                          value={targetWidth || ''} 
+                          onChange={e => { setTargetWidth(Number(e.target.value)); setResult(null); }} 
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Height ({unit})</label>
+                        <input 
+                          type="number" 
+                          className="fi text-sm py-2" 
+                          value={targetHeight || ''} 
+                          onChange={e => { setTargetHeight(Number(e.target.value)); setResult(null); }} 
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Target Size (Max KB)</label>
+                        {estimatedSize !== null && (
+                          <span className="text-[10px] font-bold text-accent animate-pulse">Live: {estimatedSize.toFixed(2)} KB</span>
+                        )}
+                      </div>
+                      <input 
+                        type="number" 
+                        className="fi text-sm py-2" 
+                        value={targetKB || ''} 
+                        onChange={e => { setTargetKB(Number(e.target.value)); setResult(null); }} 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-6 border-t border-border/50">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                        <Maximize2 className="w-5 h-5 text-accent" /> Adjust Crop
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => setZoom(Math.max(0.5, zoom - 0.1))}
+                          className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
+                          title="Zoom Out"
+                        >
+                          <ZoomOut className="w-4 h-4" />
+                        </button>
+                        <span className="text-xs font-bold w-10 text-center">{Math.round(zoom * 100)}%</span>
+                        <button 
+                          onClick={() => setZoom(Math.min(3, zoom + 0.1))}
+                          className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
+                          title="Zoom In"
+                        >
+                          <ZoomIn className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => setZoom(1)}
+                          className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
+                          title="Fit to Screen"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => setLockAspect(!lockAspect)}
+                          className={`p-1.5 rounded-lg transition-colors ${lockAspect ? 'bg-accent/10 text-accent' : 'bg-bg-secondary text-text-muted'}`}
+                          title={lockAspect ? "Unlock Aspect Ratio" : "Lock Aspect Ratio"}
+                        >
+                          {lockAspect ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <input 
+                        type="range" 
+                        min="0.5" 
+                        max="3" 
+                        step="0.1" 
+                        value={zoom} 
+                        onChange={(e) => setZoom(Number(e.target.value))}
+                        className="w-full accent-accent h-1.5"
+                      />
+                      <p className="text-xs text-text-muted">Drag the handles on the image to adjust the crop area. Use slider to zoom.</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-accent/5 border border-accent/10 rounded-xl p-4 mt-6">
+                    <h4 className="text-sm font-bold text-accent mb-2 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4" /> Pro Tip
+                    </h4>
+                    <p className="text-xs text-text-secondary leading-relaxed">
+                      For best results, upload a high-resolution photo. The tool will automatically handle the compression to meet your KB limit.
+                    </p>
+                  </div>
+
+                  <RelatedTools currentToolId="photo-sign-resizer" />
+
+                  <div className="pt-6 border-t border-border/50 space-y-3">
+                    <button
+                      onClick={() => handleDownload(onComplete)}
+                      disabled={loading}
+                      className="w-full btn bp py-3 px-6 shadow-sm flex items-center justify-center gap-2 group"
+                    >
+                      {loading ? (
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <>
+                          <Download className="w-5 h-5 group-hover:translate-y-0.5 transition-transform" />
+                          <span className="font-bold">Download Result</span>
+                        </>
+                      )}
+                    </button>
+                    <p className="text-xs text-center text-text-muted font-medium">
+                      Target: <span className="text-accent">{targetKB} KB</span> · {targetWidth}x{targetHeight}px
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </div>
+              </aside>
           </div>
         );
       }}

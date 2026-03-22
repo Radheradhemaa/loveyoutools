@@ -2,7 +2,7 @@ import fs from 'fs';
 import sharp from 'sharp';
 import pngToIco from 'png-to-ico';
 
-const svgContent = `<svg width="800" height="200" viewBox="0 0 800 200" xmlns="http://www.w3.org/2000/svg">
+const svgContent = `<svg width="1200" height="200" viewBox="0 0 1200 200" xmlns="http://www.w3.org/2000/svg">
   <!-- Icon Group -->
   <g transform="translate(10, 10)">
     <!-- iOS Style Icon Background -->
@@ -31,8 +31,7 @@ const svgContent = `<svg width="800" height="200" viewBox="0 0 800 200" xmlns="h
   <!-- Wordmark Group -->
   <g transform="translate(220, 135)">
     <text font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="100" letter-spacing="-3">
-      <tspan fill="#E8621A">Love</tspan>
-      <tspan fill="#111827">Tools</tspan>
+      <tspan fill="#E8621A">Loveyou</tspan><tspan fill="#111827">Tools</tspan>
     </text>
   </g>
 </svg>`;
@@ -68,19 +67,26 @@ async function generate() {
 
   // 1. Main Logo (Transparent PNG)
   await sharp(svgBuffer)
-    .resize(800, 200)
+    .resize(1200, 200)
     .png()
     .toFile('public/logo.png');
 
+  // Also output to loveyoutools-logo.png for consistency
+  await sharp(svgBuffer)
+    .resize(1200, 200)
+    .png()
+    .toFile('public/loveyoutools-logo.png');
+
   // 2. Transparent Logo
   await sharp(svgBuffer)
-    .resize(800, 200)
+    .resize(1200, 200)
     .png()
     .toFile('public/logo-transparent.png');
 
   // 3. Favicons and PWA Icons
   await sharp(squareBuffer).resize(16, 16).png().toFile('public/favicon/favicon-16x16.png');
   await sharp(squareBuffer).resize(32, 32).png().toFile('public/favicon/favicon-32x32.png');
+  await sharp(squareBuffer).resize(180, 180).png().toFile('public/favicon/apple-touch-icon.png');
   await sharp(squareBuffer).resize(192, 192).png().toFile('public/pwa-icons/icon-192x192.png');
   await sharp(squareBuffer).resize(512, 512).png().toFile('public/pwa-icons/icon-512x512.png');
   await sharp(squareBuffer).resize(180, 180).png().toFile('public/apple-touch-icon.png');
@@ -90,7 +96,7 @@ async function generate() {
   fs.writeFileSync('public/favicon.ico', icoBuffer);
 
   // 5. Also update the assets folder ones
-  await sharp(svgBuffer).png().toFile('public/assets/images/lovetools_transparent.png');
+  await sharp(svgBuffer).png().toFile('public/assets/images/loveyoutools_transparent.png');
 
   console.log('Ultra HD Transparent Logo and all assets generated successfully!');
 }

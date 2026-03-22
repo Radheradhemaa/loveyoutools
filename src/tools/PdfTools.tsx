@@ -423,8 +423,109 @@ export default function PdfTools({ toolId }: { toolId: string }) {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {/* Left Controls (Settings) */}
+          <div className="bg-surface border border-border rounded-2xl p-5 flex flex-col gap-6 order-2 lg:order-1 shadow-sm">
+            <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+              <Settings className="w-5 h-5 text-accent" /> Settings
+            </h3>
+
+            {isEncrypted && (
+              <div className="fg mb-6 p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                <label className="fl text-amber-600 flex items-center gap-2">
+                  <Lock className="w-4 h-4" /> Document Password
+                </label>
+                <input 
+                  type="password" 
+                  className="fi border-amber-500/50 focus:border-amber-500 focus:ring-amber-500/20" 
+                  value={documentPassword || ''} 
+                  onChange={e => setDocumentPassword(e.target.value)} 
+                  placeholder="Enter PDF password to unlock" 
+                />
+                <p className="text-xs text-amber-600 mt-2">This PDF is encrypted. You must provide the password to process it.</p>
+              </div>
+            )}
+
+            {toolId === 'pdf-protect' && (
+              <div className="fg">
+                <label className="fl">Password</label>
+                <input type="password" className="fi" value={password || ''} onChange={e => setPassword(e.target.value)} placeholder="Enter password to secure PDF" />
+              </div>
+            )}
+
+            {['pdf-watermark', 'pdf-add-text'].includes(toolId) && (
+              <div className="fg">
+                <label className="fl">Text to Add</label>
+                <input type="text" className="fi" value={watermark || ''} onChange={e => setWatermark(e.target.value)} />
+              </div>
+            )}
+
+            {toolId === 'pdf-add-image' && (
+              <div className="fg">
+                <label className="fl">Image to Add</label>
+                <input type="file" accept="image/*" className="fi" onChange={e => {
+                  if (e.target.files && e.target.files[0]) {
+                    setWatermarkImage(e.target.files[0]);
+                  }
+                }} />
+              </div>
+            )}
+
+            {['pdf-split', 'pdf-extract', 'pdf-delete-pages'].includes(toolId) && (
+              <div className="fg">
+                <label className="fl">Pages (e.g., 1, 3-5)</label>
+                <input type="text" className="fi" value={splitPage || ''} onChange={e => setSplitPage(e.target.value)} placeholder="1, 3-5" />
+              </div>
+            )}
+
+            {toolId === 'pdf-reorder' && (
+              <div className="fg">
+                <label className="fl">New Page Order (e.g., 3, 1, 2)</label>
+                <input type="text" className="fi" value={splitPage || ''} onChange={e => setSplitPage(e.target.value)} placeholder="3, 1, 2" />
+              </div>
+            )}
+
+            {toolId === 'pdf-rotate' && (
+              <div className="fg">
+                <label className="fl">Rotation Angle (Degrees)</label>
+                <select className="fi" value={rotationAngle || '90'} onChange={e => setRotationAngle(e.target.value)}>
+                  <option value="90">90° Clockwise</option>
+                  <option value="180">180°</option>
+                  <option value="270">90° Counter-Clockwise</option>
+                </select>
+              </div>
+            )}
+
+            {toolId === 'pdf-metadata' && metadata && (
+              <div className="space-y-2 text-sm">
+                {Object.entries(metadata).map(([k, v]) => (
+                  <div key={k} className="flex justify-between border-b border-border pb-1">
+                    <span className="text-text-muted capitalize">{k.replace(/([A-Z])/g, ' $1').trim()}</span>
+                    <span className="font-medium text-text-primary">{v as string}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {toolId !== 'pdf-metadata' && toolId !== 'pdf-reader' && (
+              <button onClick={processPdf} disabled={loading || (isMultiFileTool && files.length < 1)} className="btn bp w-full mt-6 gap-2">
+                {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
+                Process PDF
+              </button>
+            )}
+            {isMultiFileTool && files.length < 1 && (
+              <p className="text-xs text-red-500 mt-2 text-center">Please select at least 1 file.</p>
+            )}
+            {toolId === 'pdf-metadata' && (
+              <p className="text-xs text-text-muted mt-2 text-center">Metadata is automatically extracted when you select a file.</p>
+            )}
+            {toolId === 'pdf-reader' && (
+              <p className="text-xs text-text-muted mt-2 text-center">The PDF is displayed in the reader on the right.</p>
+            )}
+          </div>
+
+          {/* Right Preview */}
+          <div className="bg-surface border border-border rounded-2xl p-5 flex flex-col gap-6 order-1 lg:order-2 shadow-sm min-h-[400px]">
             {error && (
               <div className="bg-red-500/10 text-red-500 p-4 rounded-lg text-sm">
                 {error}
@@ -469,7 +570,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             </div>
             
             {toolId === 'pdf-reader' && files.length > 0 && (
-              <div className="mt-6 h-[85vh] min-h-[800px]">
+              <div className="mt-6 flex-1 min-h-[600px]">
                 <iframe src={URL.createObjectURL(files[0])} className="w-full h-full rounded-lg border border-border" />
               </div>
             )}
@@ -492,7 +593,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
               </div>
             )}
 
-            <div className="flex gap-4">
+            <div className="flex gap-4 mt-auto">
               <button onClick={() => { setFiles([]); setOutput(null); setOutputFiles([]); setError(null); setWarning(null); }} className="btn bs flex-1">
                 Start Over
               </button>
@@ -500,107 +601,6 @@ export default function PdfTools({ toolId }: { toolId: string }) {
                 <button onClick={downloadPdf} className="btn bp flex-1 gap-2">
                   <Download className="w-4 h-4" /> Download Result
                 </button>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <div className="bg-surface border border-border rounded-[14px] p-6">
-              <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                <Settings className="w-5 h-5 text-accent" /> Settings
-              </h3>
-
-              {isEncrypted && (
-                <div className="fg mb-6 p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg">
-                  <label className="fl text-amber-600 flex items-center gap-2">
-                    <Lock className="w-4 h-4" /> Document Password
-                  </label>
-                  <input 
-                    type="password" 
-                    className="fi border-amber-500/50 focus:border-amber-500 focus:ring-amber-500/20" 
-                    value={documentPassword || ''} 
-                    onChange={e => setDocumentPassword(e.target.value)} 
-                    placeholder="Enter PDF password to unlock" 
-                  />
-                  <p className="text-xs text-amber-600 mt-2">This PDF is encrypted. You must provide the password to process it.</p>
-                </div>
-              )}
-
-              {toolId === 'pdf-protect' && (
-                <div className="fg">
-                  <label className="fl">Password</label>
-                  <input type="password" className="fi" value={password || ''} onChange={e => setPassword(e.target.value)} placeholder="Enter password to secure PDF" />
-                </div>
-              )}
-
-              {['pdf-watermark', 'pdf-add-text'].includes(toolId) && (
-                <div className="fg">
-                  <label className="fl">Text to Add</label>
-                  <input type="text" className="fi" value={watermark || ''} onChange={e => setWatermark(e.target.value)} />
-                </div>
-              )}
-
-              {toolId === 'pdf-add-image' && (
-                <div className="fg">
-                  <label className="fl">Image to Add</label>
-                  <input type="file" accept="image/*" className="fi" onChange={e => {
-                    if (e.target.files && e.target.files[0]) {
-                      setWatermarkImage(e.target.files[0]);
-                    }
-                  }} />
-                </div>
-              )}
-
-              {['pdf-split', 'pdf-extract', 'pdf-delete-pages'].includes(toolId) && (
-                <div className="fg">
-                  <label className="fl">Pages (e.g., 1, 3-5)</label>
-                  <input type="text" className="fi" value={splitPage || ''} onChange={e => setSplitPage(e.target.value)} placeholder="1, 3-5" />
-                </div>
-              )}
-
-              {toolId === 'pdf-reorder' && (
-                <div className="fg">
-                  <label className="fl">New Page Order (e.g., 3, 1, 2)</label>
-                  <input type="text" className="fi" value={splitPage || ''} onChange={e => setSplitPage(e.target.value)} placeholder="3, 1, 2" />
-                </div>
-              )}
-
-              {toolId === 'pdf-rotate' && (
-                <div className="fg">
-                  <label className="fl">Rotation Angle (Degrees)</label>
-                  <select className="fi" value={rotationAngle || '90'} onChange={e => setRotationAngle(e.target.value)}>
-                    <option value="90">90° Clockwise</option>
-                    <option value="180">180°</option>
-                    <option value="270">90° Counter-Clockwise</option>
-                  </select>
-                </div>
-              )}
-
-              {toolId === 'pdf-metadata' && metadata && (
-                <div className="space-y-2 text-sm">
-                  {Object.entries(metadata).map(([k, v]) => (
-                    <div key={k} className="flex justify-between border-b border-border pb-1">
-                      <span className="text-text-muted capitalize">{k.replace(/([A-Z])/g, ' $1').trim()}</span>
-                      <span className="font-medium text-text-primary">{v as string}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {toolId !== 'pdf-metadata' && toolId !== 'pdf-reader' && (
-                <button onClick={processPdf} disabled={loading || (isMultiFileTool && files.length < 1)} className="btn bp w-full mt-6 gap-2">
-                  {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
-                  Process PDF
-                </button>
-              )}
-              {isMultiFileTool && files.length < 1 && (
-                <p className="text-xs text-red-500 mt-2 text-center">Please select at least 1 file.</p>
-              )}
-              {toolId === 'pdf-metadata' && (
-                <p className="text-xs text-text-muted mt-2 text-center">Metadata is automatically extracted when you select a file.</p>
-              )}
-              {toolId === 'pdf-reader' && (
-                <p className="text-xs text-text-muted mt-2 text-center">The PDF is displayed in the reader on the left.</p>
               )}
             </div>
           </div>

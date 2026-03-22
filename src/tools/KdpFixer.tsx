@@ -222,7 +222,10 @@ export default function KdpFixer() {
       const link = document.createElement('a');
       link.href = url;
       link.download = `kdp_interior_${trimSize.width || customWidth}x${trimSize.height || customHeight}_fixed.pdf`;
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     } catch (error: any) {
       const errorStr = typeof error === 'string' ? error : (error?.message || '');
       const isPasswordError = error?.name === 'PasswordException' || 

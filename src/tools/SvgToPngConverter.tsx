@@ -1,5 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Download, Image as ImageIcon, X, Settings, CheckCircle2, AlertCircle, Plus, Undo, Redo, ZoomIn, ZoomOut, Move, Type, Droplet, Square, Box, Layers } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Upload, Download, Image as ImageIcon, X, Settings, CheckCircle2, AlertCircle, Plus, Undo, Redo, ZoomIn, ZoomOut, Move, Type, Droplet, Square, Box, Layers, Trash2, ImagePlus, RotateCcw } from 'lucide-react';
+import ToolLayout from '../components/tool-system/ToolLayout';
+import RelatedTools from '../components/tool-system/RelatedTools';
 
 interface SvgFile {
   id: string;
@@ -62,7 +64,7 @@ export default function SvgToPngConverter() {
   const [history, setHistory] = useState<EditorState[]>([initialState]);
   const [historyIndex, setHistoryIndex] = useState(0);
   
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(0.5);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
@@ -207,11 +209,6 @@ export default function SvgToPngConverter() {
       }
       return updated;
     });
-  };
-
-  const clearAll = () => {
-    setFiles([]);
-    setSelectedFileId(null);
   };
 
   // Preview Canvas Interactions
@@ -479,47 +476,38 @@ export default function SvgToPngConverter() {
     setFiles([...updatedFiles]);
   };
 
-  if (files.length === 0) {
-    return (
-      <div className="max-w-4xl mx-auto p-4 sm:p-6">
-        <div className="bg-bg-surface border border-border rounded-2xl p-6 sm:p-12 shadow-sm text-center">
-          <div className="w-20 h-20 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-6">
-            <ImageIcon className="w-10 h-10" />
-          </div>
-          <h2 className="text-2xl font-bold mb-4">Advanced SVG to PNG Converter</h2>
-          <p className="text-text-muted mb-8 max-w-lg mx-auto">
-            Convert, edit, and customize SVG files. Add watermarks, shadows, borders, and export to PNG, JPG, or WebP in high resolution.
-          </p>
-          
-          <div
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-10 cursor-pointer transition-all duration-200 ${
-              isDragging 
-                ? 'border-accent bg-accent/5 scale-[1.02]' 
-                : 'border-border hover:border-accent/50 hover:bg-bg-secondary'
-            }`}
-          >
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              accept=".svg,image/svg+xml"
-              multiple
-              className="hidden"
-            />
-            <Upload className="w-8 h-8 text-text-muted mx-auto mb-4" />
-            <h3 className="text-lg font-bold mb-2">Drag & Drop SVG Files</h3>
-            <p className="text-text-muted text-sm">or click to browse from your device</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const clearAll = (onReset?: () => void) => {
+    setFiles([]);
+    setSelectedFileId(null);
+    setHistory([initialState]);
+    setHistoryIndex(0);
+    if (onReset) onReset();
+  };
 
   return (
+    <>
+    <ToolLayout
+      title="Advanced SVG to PNG Converter"
+      description="Convert, edit, and customize SVG files. Add watermarks, shadows, borders, and export to PNG, JPG, or WebP in high resolution."
+      toolId="svg-to-png"
+      acceptedFileTypes={['.svg', 'image/svg+xml']}
+      multiple={true}
+      onDownload={handleConvertAll}
+    >
+      {({ file: uploadedFiles, state: toolState, onReset }) => {
+        // Sync uploaded files with internal state
+        useEffect(() => {
+          if (uploadedFiles) {
+            const fileList = Array.isArray(uploadedFiles) ? uploadedFiles : [uploadedFiles];
+            if (fileList.length > 0 && files.length === 0) {
+              processFiles(fileList);
+            }
+          }
+        }, [uploadedFiles, files.length]);
+
+        if (files.length === 0) return null;
+
+        return (
     <div className="w-full max-w-[1920px] mx-auto p-4 lg:h-[85vh] lg:min-h-[800px] flex flex-col">
       {/* Top Bar */}
       <div className="bg-bg-surface border border-border rounded-xl p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm shrink-0">
@@ -551,7 +539,7 @@ export default function SvgToPngConverter() {
         </div>
         
         <div className="flex items-center gap-3 w-full sm:w-auto justify-center">
-          <button onClick={clearAll} className="text-sm font-medium text-text-muted hover:text-red-500 transition-colors">
+          <button onClick={() => clearAll(onReset)} className="text-sm font-medium text-text-muted hover:text-red-500 transition-colors">
             Clear All
           </button>
           <button 
@@ -573,145 +561,148 @@ export default function SvgToPngConverter() {
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
-        {/* Left Sidebar - File List */}
-        <div className="w-full lg:w-56 bg-bg-surface border border-border rounded-xl flex flex-col shadow-sm shrink-0 overflow-hidden max-h-[30vh] lg:max-h-none">
-          <div className="p-3 border-b border-border flex items-center justify-between bg-bg-secondary/50">
-            <h3 className="font-bold text-xs">Files ({files.length})</h3>
-            <button 
-              onClick={() => fileInputRef.current?.click()}
-              className="p-1 bg-accent/10 text-accent rounded-lg hover:bg-accent/20 transition-colors"
-              title="Add more files"
-            >
-              <Plus className="w-3 h-3" />
-            </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              accept=".svg,image/svg+xml"
-              multiple
-              className="hidden"
-            />
-          </div>
-          <div className="flex-1 overflow-y-auto p-1.5 space-y-1.5">
-            {files.map(file => (
-              <div 
-                key={file.id}
-                onClick={() => setSelectedFileId(file.id)}
-                className={`p-1.5 rounded-lg border cursor-pointer flex items-center gap-2 transition-colors group ${
-                  selectedFileId === file.id 
-                    ? 'border-accent bg-accent/5' 
-                    : 'border-transparent hover:bg-bg-secondary'
-                }`}
+      <div className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-4 flex-1 min-h-0">
+        {/* Left Side: File List & Preview */}
+        <div className="flex flex-col lg:flex-row gap-4 min-h-0">
+          {/* File List Sidebar */}
+          <div className="w-full lg:w-56 bg-bg-surface border border-border rounded-xl flex flex-col shadow-sm shrink-0 overflow-hidden max-h-[30vh] lg:max-h-none">
+            <div className="p-3 border-b border-border flex items-center justify-between bg-bg-secondary/50">
+              <h3 className="font-bold text-xs">Files ({files.length})</h3>
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                className="p-1 bg-accent/10 text-accent rounded-lg hover:bg-accent/20 transition-colors"
+                title="Add more files"
               >
-                <div className="w-9 h-9 rounded bg-bg-surface border border-border flex items-center justify-center shrink-0 checkerboard-bg overflow-hidden">
-                  <img src={file.previewUrl} alt="" className="max-w-full max-h-full object-contain p-0.5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium truncate">{file.name}</p>
-                  <p className="text-[10px] text-text-muted">{file.width}x{file.height}</p>
-                </div>
-                <button 
-                  onClick={(e) => removeFile(file.id, e)}
-                  className="p-1 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded opacity-0 group-hover:opacity-100 transition-all"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Center - Live Preview */}
-        <div className="flex-1 bg-bg-secondary border border-border rounded-xl overflow-hidden relative shadow-inner flex items-center justify-center min-h-[400px] lg:min-h-0 touch-none"
-             ref={previewContainerRef}
-             onWheel={handleWheel}
-             onMouseDown={handlePreviewMouseDown}
-             onMouseMove={handlePreviewMouseMove}
-             onMouseUp={handlePreviewMouseUp}
-             onMouseLeave={handlePreviewMouseUp}
-             onTouchStart={handlePreviewTouchStart}
-             onTouchMove={handlePreviewTouchMove}
-             onTouchEnd={handlePreviewTouchEnd}>
-          
-          {selectedFile ? (
-            <div 
-              className="relative transition-transform duration-75"
-              style={{ 
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                cursor: isPanning ? 'grabbing' : 'grab'
-              }}
-            >
-              {/* Background */}
-              <div 
-                className="absolute inset-0 shadow-sm"
-                style={{
-                  backgroundColor: currentState.isTransparent ? 'transparent' : currentState.bgColor,
-                  backgroundImage: currentState.isTransparent ? `
-                    linear-gradient(45deg, #e5e5e5 25%, transparent 25%),
-                    linear-gradient(-45deg, #e5e5e5 25%, transparent 25%),
-                    linear-gradient(45deg, transparent 75%, #e5e5e5 75%),
-                    linear-gradient(-45deg, transparent 75%, #e5e5e5 75%)
-                  ` : 'none',
-                  backgroundSize: '20px 20px',
-                  backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
-                }}
+                <Plus className="w-3 h-3" />
+              </button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept=".svg,image/svg+xml"
+                multiple
+                className="hidden"
               />
-              
-              {/* SVG Image */}
-              <img 
-                src={selectedFile.previewUrl} 
-                alt="Preview" 
-                className="relative z-10 pointer-events-none"
-                style={{
-                  width: selectedFile.width,
-                  height: selectedFile.height,
-                  filter: currentState.shadow.enabled ? `drop-shadow(${currentState.shadow.offsetX}px ${currentState.shadow.offsetY}px ${currentState.shadow.blur}px ${currentState.shadow.color})` : 'none',
-                  border: currentState.border.enabled ? `${currentState.border.width}px solid ${currentState.border.color}` : 'none',
-                  boxSizing: 'border-box'
-                }}
-              />
-
-              {/* Watermark */}
-              {currentState.watermark.enabled && (
+            </div>
+            <div className="flex-1 overflow-y-auto p-1.5 space-y-1.5">
+              {files.map(file => (
                 <div 
-                  className="absolute z-20 cursor-move hover:outline hover:outline-2 hover:outline-accent/50 p-1"
-                  style={{
-                    left: (localWatermarkPos ? localWatermarkPos.x : currentState.watermark.x),
-                    top: (localWatermarkPos ? localWatermarkPos.y : currentState.watermark.y),
-                    color: currentState.watermark.color,
-                    fontSize: `${currentState.watermark.fontSize}px`,
-                    fontFamily: currentState.watermark.fontFamily,
-                    whiteSpace: 'nowrap',
-                    userSelect: 'none'
-                  }}
-                  onMouseDown={handleTextMouseDown}
-                  onTouchStart={handleTextTouchStart}
-                  onTouchMove={handleTextTouchMove}
-                  onTouchEnd={handleTextTouchEnd}
+                  key={file.id}
+                  onClick={() => setSelectedFileId(file.id)}
+                  className={`p-1.5 rounded-lg border cursor-pointer flex items-center gap-2 transition-colors group ${
+                    selectedFileId === file.id 
+                      ? 'border-accent bg-accent/5' 
+                      : 'border-transparent hover:bg-bg-secondary'
+                  }`}
                 >
-                  {currentState.watermark.text}
+                  <div className="w-9 h-9 rounded bg-bg-surface border border-border flex items-center justify-center shrink-0 checkerboard-bg overflow-hidden">
+                    <img src={file.previewUrl} alt="" className="max-w-full max-h-full object-contain p-0.5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium truncate">{file.name}</p>
+                    <p className="text-[10px] text-text-muted">{file.width}x{file.height}</p>
+                  </div>
+                  <button 
+                    onClick={(e) => removeFile(file.id, e)}
+                    className="p-1 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </div>
-              )}
+              ))}
             </div>
-          ) : (
-            <div className="text-text-muted flex flex-col items-center">
-              <ImageIcon className="w-12 h-12 mb-2 opacity-50" />
-              <p>Select a file to preview</p>
+          </div>
+
+          {/* Live Preview */}
+          <div className="flex-1 bg-bg-secondary border border-border rounded-xl overflow-hidden relative shadow-inner flex items-center justify-center min-h-[400px] lg:min-h-0 touch-none"
+               ref={previewContainerRef}
+               onWheel={handleWheel}
+               onMouseDown={handlePreviewMouseDown}
+               onMouseMove={handlePreviewMouseMove}
+               onMouseUp={handlePreviewMouseUp}
+               onMouseLeave={handlePreviewMouseUp}
+               onTouchStart={handlePreviewTouchStart}
+               onTouchMove={handlePreviewTouchMove}
+               onTouchEnd={handlePreviewTouchEnd}>
+            
+            {selectedFile ? (
+              <div 
+                className="relative transition-transform duration-75"
+                style={{ 
+                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                  cursor: isPanning ? 'grabbing' : 'grab'
+                }}
+              >
+                {/* Background */}
+                <div 
+                  className="absolute inset-0 shadow-sm"
+                  style={{
+                    backgroundColor: currentState.isTransparent ? 'transparent' : currentState.bgColor,
+                    backgroundImage: currentState.isTransparent ? `
+                      linear-gradient(45deg, #e5e5e5 25%, transparent 25%),
+                      linear-gradient(-45deg, #e5e5e5 25%, transparent 25%),
+                      linear-gradient(45deg, transparent 75%, #e5e5e5 75%),
+                      linear-gradient(-45deg, transparent 75%, #e5e5e5 75%)
+                    ` : 'none',
+                    backgroundSize: '20px 20px',
+                    backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                  }}
+                />
+                
+                {/* SVG Image */}
+                <img 
+                  src={selectedFile.previewUrl} 
+                  alt="Preview" 
+                  className="relative z-10 pointer-events-none"
+                  style={{
+                    width: selectedFile.width,
+                    height: selectedFile.height,
+                    filter: currentState.shadow.enabled ? `drop-shadow(${currentState.shadow.offsetX}px ${currentState.shadow.offsetY}px ${currentState.shadow.blur}px ${currentState.shadow.color})` : 'none',
+                    border: currentState.border.enabled ? `${currentState.border.width}px solid ${currentState.border.color}` : 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
+
+                {/* Watermark */}
+                {currentState.watermark.enabled && (
+                  <div 
+                    className="absolute z-20 cursor-move hover:outline hover:outline-2 hover:outline-accent/50 p-1"
+                    style={{
+                      left: (localWatermarkPos ? localWatermarkPos.x : currentState.watermark.x),
+                      top: (localWatermarkPos ? localWatermarkPos.y : currentState.watermark.y),
+                      color: currentState.watermark.color,
+                      fontSize: `${currentState.watermark.fontSize}px`,
+                      fontFamily: currentState.watermark.fontFamily,
+                      whiteSpace: 'nowrap',
+                      userSelect: 'none'
+                    }}
+                    onMouseDown={handleTextMouseDown}
+                    onTouchStart={handleTextTouchStart}
+                    onTouchMove={handleTextTouchMove}
+                    onTouchEnd={handleTextTouchEnd}
+                  >
+                    {currentState.watermark.text}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-text-muted flex flex-col items-center">
+                <ImageIcon className="w-12 h-12 mb-2 opacity-50" />
+                <p>Select a file to preview</p>
+              </div>
+            )}
+            
+            {/* Instructions overlay */}
+            <div className="absolute bottom-4 left-4 bg-bg-surface/80 backdrop-blur text-xs px-3 py-2 rounded-lg border border-border text-text-secondary pointer-events-none">
+              <p><strong>Ctrl + Scroll:</strong> Zoom</p>
+              <p><strong>Alt + Drag:</strong> Pan canvas</p>
+              {currentState.watermark.enabled && <p><strong>Drag text:</strong> Move watermark</p>}
             </div>
-          )}
-          
-          {/* Instructions overlay */}
-          <div className="absolute bottom-4 left-4 bg-bg-surface/80 backdrop-blur text-xs px-3 py-2 rounded-lg border border-border text-text-secondary pointer-events-none">
-            <p><strong>Ctrl + Scroll:</strong> Zoom</p>
-            <p><strong>Alt + Drag:</strong> Pan canvas</p>
-            {currentState.watermark.enabled && <p><strong>Drag text:</strong> Move watermark</p>}
           </div>
         </div>
 
         {/* Right Sidebar - Controls */}
-        <div className="w-full lg:w-80 bg-bg-surface border border-border rounded-xl shadow-sm shrink-0 overflow-y-auto max-h-[50vh] lg:max-h-none">
+        <div className="w-full bg-bg-surface border border-border rounded-xl shadow-sm shrink-0 overflow-y-auto max-h-[50vh] lg:max-h-none">
           <div className="p-4 border-b border-border bg-bg-secondary/50 sticky top-0 z-10">
             <h3 className="font-bold text-sm flex items-center gap-2"><Settings className="w-4 h-4" /> Customization</h3>
           </div>
@@ -951,5 +942,10 @@ export default function SvgToPngConverter() {
         }
       `}} />
     </div>
+        );
+      }}
+    </ToolLayout>
+    <RelatedTools currentToolId="svg-to-png" />
+    </>
   );
 }

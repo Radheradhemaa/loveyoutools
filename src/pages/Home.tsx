@@ -78,7 +78,7 @@ export default function Home() {
         </div>
 
         <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-text-primary mb-4 max-w-4xl mx-auto leading-tight">
-          LoveyouTools: Professional Tools to Simplify Your Digital Tasks.
+          Professional Tools to Simplify Your Digital Tasks.
         </h1>
 
         <div className="flex flex-wrap justify-center gap-6 text-sm font-medium text-text-muted mb-4">

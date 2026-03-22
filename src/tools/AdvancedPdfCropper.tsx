@@ -26,7 +26,7 @@ export default function AdvancedPdfCropper() {
   const [pdfDoc, setPdfDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [pageNum, setPageNum] = useState(1);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(0.5);
   const [loading, setLoading] = useState(false);
   const [resultBlob, setResultBlob] = useState<Blob | null>(null);
   const [resultName, setResultName] = useState('');
@@ -583,9 +583,9 @@ export default function AdvancedPdfCropper() {
         }
 
         return (
-          <div className="flex flex-col h-full bg-bg-secondary/30">
+          <div className="w-full h-full flex flex-col overflow-hidden bg-bg-primary">
             {/* Custom Toolbar inside DURING state */}
-            <div className="bg-surface border-b border-border p-3 flex flex-wrap items-center justify-between gap-4 z-20">
+            <div className="bg-surface border-b border-border p-4 flex flex-wrap items-center justify-between gap-4 z-20 shadow-sm shrink-0">
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
                   {files.length > 1 && (
@@ -660,9 +660,9 @@ export default function AdvancedPdfCropper() {
               </div>
             </div>
 
-            <div className="flex flex-1 overflow-hidden">
-              {/* Left Sidebar - Tools */}
-              <aside className="w-72 bg-surface border-r border-border p-6 overflow-y-auto space-y-8 custom-scrollbar">
+            <div className="flex flex-1 min-h-0 overflow-hidden">
+              {/* Left Sidebar - Tools - 1/4 width */}
+              <aside className="w-full lg:w-1/4 bg-surface border-r border-border flex flex-col shadow-sm order-2 lg:order-1 overflow-hidden h-full">
                 <div className="space-y-4">
                   <h3 className="text-[10px] font-black uppercase tracking-widest text-text-muted flex items-center gap-2">
                     <Zap size={14} className="text-accent" /> Smart Actions
@@ -758,17 +758,19 @@ export default function AdvancedPdfCropper() {
                 </div>
               </aside>
 
-              {/* Canvas Area */}
-              <main 
-                className="flex-1 overflow-auto p-12 flex justify-center items-start bg-bg-secondary/50 pattern-grid relative"
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
-              >
-                {pageData && (
-                  <div 
-                    className="relative shadow-2xl bg-white ring-1 ring-black/5" 
-                    style={{ 
+              {/* Main Workspace - 3/4 width */}
+              <main className="flex-1 bg-bg-secondary/20 flex flex-col order-1 lg:order-2 overflow-hidden relative h-full">
+                <div 
+                  className="flex-1 relative overflow-hidden flex flex-col items-center justify-center p-8"
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
+                >
+                  <div className="w-full h-full overflow-auto flex items-center justify-center scrollbar-hide">
+                    {pageData && (
+                      <div 
+                        className="relative shadow-2xl bg-white ring-1 ring-black/5 shrink-0" 
+                        style={{ 
                       width: pageData.viewport.width * zoom, 
                       height: pageData.viewport.height * zoom,
                       transform: `rotate(${pageData.rotation}deg)`,
@@ -832,14 +834,16 @@ export default function AdvancedPdfCropper() {
                           {Math.round(pageData.cropBox.width)} × {Math.round(pageData.cropBox.height)} px
                         </div>
                       </div>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </main>
-            </div>
+                  )}
+                </div>
+              </div>
+            </main>
           </div>
-        );
-      }}
-    </ToolLayout>
-  );
+        </div>
+      );
+    }}
+  </ToolLayout>
+);
 }

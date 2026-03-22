@@ -64,9 +64,14 @@ export const tools = [
   { id: 'kdp-margin-bleed-fixer', c: 'pdf', n: 'Amazon KDP Book Margin & Bleed Fixer', d: 'Fix margins, trim size, and bleed for Amazon KDP books.', i: '📚', b: '#fef3c7' },
 
   // SEO TOOLS (bg: #d1fae5)
-  { id: 'meta-tag-generator', c: 'seo', n: 'Meta Tag Generator', d: 'Generate HTML meta tags.', i: '🏷️', b: '#d1fae5' },
-  { id: 'robots-txt-generator', c: 'seo', n: 'Robots.txt Generator', d: 'Create robots.txt file.', i: '🤖', b: '#d1fae5' },
-  { id: 'keyword-density-checker', c: 'seo', n: 'Keyword Density Checker', d: 'Check keyword frequency.', i: '📊', b: '#d1fae5' },
+  { id: 'keyword-research-tool', c: 'seo', n: 'Keyword Research Tool', d: 'Find high-volume, low-competition keywords for your content.', i: '🔍', b: '#d1fae5', popular: true },
+  { id: 'backlink-checker', c: 'seo', n: 'Backlink Checker', d: 'Analyze backlinks for any domain or URL.', i: '🔗', b: '#d1fae5' },
+  { id: 'domain-authority-checker', c: 'seo', n: 'Domain Authority Checker', d: 'Check DA, PA, and Spam Score of any website.', i: '📈', b: '#d1fae5' },
+  { id: 'plagiarism-checker', c: 'seo', n: 'Plagiarism Checker', d: 'Check your content for plagiarism and uniqueness.', i: '📝', b: '#d1fae5', popular: true },
+  { id: 'website-speed-test', c: 'seo', n: 'Website Speed Test', d: 'Analyze your website speed and performance metrics.', i: '⚡', b: '#d1fae5', popular: true },
+  { id: 'meta-tag-generator', c: 'seo', n: 'Meta Tag Generator', d: 'Generate advanced HTML meta tags for SEO and Social Media.', i: '🏷️', b: '#d1fae5' },
+  { id: 'robots-txt-generator', c: 'seo', n: 'Robots.txt Generator', d: 'Create robots.txt file with advanced configuration.', i: '🤖', b: '#d1fae5' },
+  { id: 'keyword-density-checker', c: 'seo', n: 'Keyword Density Checker', d: 'Check keyword frequency and optimization.', i: '📊', b: '#d1fae5' },
   { id: 'url-slug-generator', c: 'seo', n: 'URL Slug Generator', d: 'Create SEO friendly URLs.', i: '🔗', b: '#d1fae5' },
   { id: 'open-graph-generator', c: 'seo', n: 'Open Graph Generator', d: 'Generate OG meta tags.', i: '📲', b: '#d1fae5' },
   { id: 'seo-title-generator', c: 'seo', n: 'SEO Title Generator', d: 'Generate catchy SEO titles.', i: '✍️', b: '#d1fae5' },
@@ -114,11 +119,15 @@ export const tools = [
   { id: 'fake-address-generator', c: 'generator', n: 'Fake Address Generator', d: 'Generate random addresses.', i: '📍', b: '#ecfdf5' },
 
   // SOCIAL MEDIA TOOLS (bg: #ffedd5)
-  { id: 'youtube-tag-generator', c: 'social', n: 'YouTube Tag Generator', d: 'Generate tags for YouTube.', i: '▶️', b: '#ffedd5' },
-  { id: 'hashtag-generator', c: 'social', n: 'Hashtag Generator', d: 'Generate trending hashtags.', i: '#️⃣', b: '#ffedd5' },
-  { id: 'tweet-length-checker', c: 'social', n: 'Tweet Length Checker', d: 'Check tweet character limit.', i: '🐦', b: '#ffedd5' },
-  { id: 'social-media-bio-generator', c: 'social', n: 'Social Media Bio Generator', d: 'Generate social bios.', i: '📜', b: '#ffedd5' },
-  { id: 'emoji-picker', c: 'social', n: 'Emoji Picker', d: 'Find and copy emojis.', i: '😊', b: '#ffedd5' },
+  { id: 'youtube-tag-generator', c: 'social', n: 'YouTube Tag Generator', d: 'Generate high-ranking tags for your YouTube videos.', i: '▶️', b: '#ffedd5', popular: true },
+  { id: 'youtube-thumbnail-downloader', c: 'social', n: 'YouTube Thumbnail Downloader', d: 'Download high-quality thumbnails from any YouTube video.', i: '🖼️', b: '#ffedd5', popular: true },
+  { id: 'instagram-dp-downloader', c: 'social', n: 'Instagram DP Downloader', d: 'View and download Instagram profile pictures in full size.', i: '📸', b: '#ffedd5' },
+  { id: 'reel-video-downloader', c: 'social', n: 'Reel/Video Downloader', d: 'Download Instagram Reels, Videos, and YouTube Shorts.', i: '📥', b: '#ffedd5', popular: true },
+  { id: 'hashtag-generator', c: 'social', n: 'Hashtag Generator', d: 'Generate trending and relevant hashtags with AI.', i: '#️⃣', b: '#ffedd5', popular: true },
+  { id: 'caption-generator', c: 'social', n: 'Caption Generator', d: 'Generate engaging social media captions with AI.', i: '✍️', b: '#ffedd5', popular: true },
+  { id: 'tweet-length-checker', c: 'social', n: 'Tweet Length Checker', d: 'Check tweet character limit and optimize for engagement.', i: '🐦', b: '#ffedd5' },
+  { id: 'social-media-bio-generator', c: 'social', n: 'Social Media Bio Generator', d: 'Generate professional and creative social media bios.', i: '📜', b: '#ffedd5' },
+  { id: 'emoji-picker', c: 'social', n: 'Emoji Picker', d: 'Find and copy emojis for your posts.', i: '😊', b: '#ffedd5' },
 
   // CALCULATOR TOOLS (bg: #fef9c3)
   { id: 'age-calculator', c: 'calculator', n: 'Age Calculator', d: 'Calculate exact age.', i: '🎂', b: '#fef9c3', popular: true },

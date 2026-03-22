@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Image as ImageIcon, Download, Settings, RefreshCw, Crop, Move, Type, Droplet, Info, Trash2, CheckCircle2 } from 'lucide-react';
+import { ImageIcon, Download, Settings, RefreshCw, Trash2, CheckCircle2 } from 'lucide-react';
 import JSZip from 'jszip';
+import ToolLayout from '../components/tool-system/ToolLayout';
 
 interface ProcessedImage {
   file: File;
@@ -32,8 +33,8 @@ export default function ImageTools({ toolId }: { toolId: string }) {
     setImages([]);
   }, [toolId]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(e.target.files || []);
+  const handleFiles = (files: File | File[]) => {
+    const selectedFiles = Array.isArray(files) ? files : [files];
     if (selectedFiles.length > 0) {
       const newImages = selectedFiles.map((file: File) => {
         const url = URL.createObjectURL(file);
@@ -278,239 +279,265 @@ export default function ImageTools({ toolId }: { toolId: string }) {
     return (base64String.length * 0.75) - padding;
   };
 
-  return (
-    <div className="space-y-6">
-      <canvas ref={canvasRef} className="hidden" />
-      {images.length === 0 ? (
-        <div className="border-2 border-dashed border-border rounded-[14px] p-12 text-center hover:bg-bg-secondary transition-colors cursor-pointer relative">
-          <input 
-            type="file" 
-            accept="image/*" 
-            multiple
-            onChange={handleFileChange} 
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-          />
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-16 h-16 bg-accent/10 text-accent rounded-full flex items-center justify-center">
-              <Upload className="w-8 h-8" />
-            </div>
-            <div>
-              <p className="font-bold text-lg mb-1">Upload Images</p>
-              <p className="text-text-muted text-sm">Drag and drop or click to browse. Batch processing supported.</p>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-bg-secondary rounded-[14px] p-4 relative lg:overflow-hidden min-h-[50vh] lg:min-h-0">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold flex items-center gap-2"><ImageIcon className="w-5 h-5 text-accent" /> Images ({images.length})</h3>
-                <label className="text-sm text-accent hover:underline cursor-pointer">
-                  + Add More
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    multiple
-                    onChange={handleFileChange} 
-                    className="hidden" 
-                  />
-                </label>
-              </div>
+  const getToolTitle = () => {
+    switch (toolId) {
+      case 'image-resizer': return 'Image Resizer';
+      case 'image-converter': return 'Image Converter';
+      case 'image-rotator-flipper': return 'Rotate & Flip Image';
+      case 'photo-filters': return 'Photo Filters';
+      case 'watermark-adder': return 'Add Watermark';
+      case 'image-metadata-viewer': return 'Image Metadata Viewer';
+      default: return 'Image Tools';
+    }
+  };
 
-              {toolId === 'image-metadata-viewer' ? (
-                <div className="space-y-4 max-h-[60vh] lg:max-h-[85vh] overflow-y-auto pr-2">
-                  {images.map((img, idx) => (
-                    <div key={idx} className="bg-surface border border-border rounded-lg p-4 relative group">
-                      <button 
-                        onClick={() => removeImage(idx)}
-                        className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                      <div className="flex gap-4">
-                        <img src={img.preview} alt={img.file.name} className="w-24 h-24 object-cover rounded-md border border-border" />
-                        <div className="flex-1 space-y-1 text-sm">
-                          {img.metadata && Object.entries(img.metadata).map(([k, v]) => (
-                            <div key={k} className="flex justify-between border-b border-border pb-1">
-                              <span className="text-text-muted capitalize">{k.replace(/([A-Z])/g, ' $1').trim()}</span>
-                              <span className="font-medium text-text-primary">{v as string}</span>
-                            </div>
+  const getToolDescription = () => {
+    switch (toolId) {
+      case 'image-resizer': return 'Resize images to exact dimensions or target file size.';
+      case 'image-converter': return 'Convert images between JPG, PNG, and WebP formats.';
+      case 'image-rotator-flipper': return 'Rotate images by 90 degrees or flip them horizontally/vertically.';
+      case 'photo-filters': return 'Apply various filters like grayscale, sepia, and blur to your photos.';
+      case 'watermark-adder': return 'Add a custom text watermark to your images.';
+      case 'image-metadata-viewer': return 'View EXIF data and other metadata hidden in your image files.';
+      default: return 'Process and edit your images.';
+    }
+  };
+
+  return (
+    <ToolLayout
+      title={getToolTitle()}
+      description={getToolDescription()}
+      toolId={toolId}
+      acceptedFileTypes={['image/*']}
+      multiple={true}
+      onDownload={downloadAll}
+    >
+      {({ file, onComplete, onReset }) => {
+        useEffect(() => {
+          if (file) {
+            handleFiles(file);
+          }
+        }, [file]);
+
+        if (images.length === 0) return null;
+
+        return (
+          <div className="max-w-[1200px] mx-auto w-full p-4 lg:p-6 flex flex-col gap-5 h-full">
+            <canvas ref={canvasRef} className="hidden" />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 flex-1 min-h-0">
+              {/* Left Controls (Sidebar) */}
+              <aside className="bg-surface border border-border rounded-2xl flex flex-col shadow-sm order-2 lg:order-1 overflow-y-auto scrollbar-hide">
+                <div className="p-5 space-y-6">
+                  <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                    <Settings className="w-5 h-5 text-accent" /> Settings
+                  </h3>
+
+                  {toolId === 'image-resizer' && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-bold text-text-primary">Units</label>
+                        <div className="flex bg-bg-secondary rounded-lg p-1">
+                          {['px', 'in', 'cm'].map(u => (
+                            <button
+                              key={u}
+                              onClick={() => setUnit(u as any)}
+                              className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${unit === u ? 'bg-accent text-white shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
+                            >
+                              {u.toUpperCase()}
+                            </button>
                           ))}
                         </div>
                       </div>
+
+                      {unit !== 'px' && (
+                        <div className="fg">
+                          <label className="fl">DPI (Resolution)</label>
+                          <input type="number" className="fi" value={dpi} onChange={e => setDpi(Number(e.target.value))} />
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="fg">
+                          <label className="fl">Width ({unit})</label>
+                          <input type="number" className="fi" value={width || ''} onChange={e => setWidth(Number(e.target.value))} />
+                        </div>
+                        <div className="fg">
+                          <label className="fl">Height ({unit})</label>
+                          <input type="number" className="fi" value={height || ''} onChange={e => setHeight(Number(e.target.value))} />
+                        </div>
+                      </div>
+
+                      <div className="fg">
+                        <label className="fl">Target File Size (KB)</label>
+                        <div className="relative">
+                          <input 
+                            type="number" 
+                            className="fi pr-12" 
+                            placeholder="Optional"
+                            value={targetKB || ''} 
+                            onChange={e => setTargetKB(Number(e.target.value))} 
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted">KB</span>
+                        </div>
+                        <p className="text-[10px] text-text-muted mt-1">Leave 0 for no limit. Only works for JPG output.</p>
+                      </div>
                     </div>
-                  ))}
+                  )}
+
+                  {toolId === 'image-converter' && (
+                    <div className="fg">
+                      <label className="fl">Convert To</label>
+                      <select className="fi" value={format} onChange={e => setFormat(e.target.value)}>
+                        <option value="image/jpeg">JPG</option>
+                        <option value="image/png">PNG</option>
+                        <option value="image/webp">WebP</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {toolId === 'image-rotator-flipper' && (
+                    <div className="space-y-4">
+                      <div className="fg">
+                        <label className="fl">Rotation</label>
+                        <div className="flex gap-2">
+                          {[0, 90, 180, 270].map(deg => (
+                            <button key={deg} onClick={() => setRotation(deg)} className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${rotation === deg ? 'bg-accent text-white' : 'bg-bg-secondary text-text-secondary hover:bg-border'}`}>
+                              {deg}°
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={flipH} onChange={e => setFlipH(e.target.checked)} className="rounded text-accent focus:ring-accent" />
+                          <span className="text-sm font-medium">Flip Horizontal</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={flipV} onChange={e => setFlipV(e.target.checked)} className="rounded text-accent focus:ring-accent" />
+                          <span className="text-sm font-medium">Flip Vertical</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {toolId === 'photo-filters' && (
+                    <div className="fg">
+                      <label className="fl">Select Filter</label>
+                      <select className="fi" value={filter} onChange={e => setFilter(e.target.value)}>
+                        <option value="none">Normal</option>
+                        <option value="grayscale(100%)">Grayscale</option>
+                        <option value="sepia(100%)">Sepia</option>
+                        <option value="invert(100%)">Invert</option>
+                        <option value="blur(5px)">Blur</option>
+                        <option value="brightness(150%)">Brighten</option>
+                        <option value="contrast(200%)">High Contrast</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {toolId === 'watermark-adder' && (
+                    <div className="fg">
+                      <label className="fl">Watermark Text</label>
+                      <input type="text" className="fi" value={watermarkText} onChange={e => setWatermarkText(e.target.value)} />
+                    </div>
+                  )}
+
+                  {toolId !== 'image-metadata-viewer' && (
+                    <div className="flex flex-col gap-3 mt-6">
+                      <button onClick={() => { processImages(); onComplete(); }} disabled={loading || allProcessed} className="btn bp w-full gap-2">
+                        {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
+                        {loading ? 'Processing...' : allProcessed ? 'All Processed' : 'Process All'}
+                      </button>
+                      <button onClick={() => { setImages([]); onReset(); }} className="btn bs2 w-full">
+                        Clear All
+                      </button>
+                    </div>
+                  )}
+
+                  {allProcessed && toolId !== 'image-metadata-viewer' && (
+                    <div className="bg-success/10 border border-success/20 rounded-[14px] p-6 text-center animate-in fade-in slide-in-from-bottom-4 mt-6">
+                      <h4 className="text-success font-bold text-lg mb-4">Processing Successful!</h4>
+                      <button onClick={downloadAll} className="btn bg w-full gap-2">
+                        <Download className="w-4 h-4" /> Download All {images.length > 1 ? '(ZIP)' : ''}
+                      </button>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-h-[60vh] lg:max-h-[85vh] overflow-y-auto pr-2">
-                  {images.map((img, idx) => (
-                    <div key={idx} className="relative group rounded-lg overflow-hidden border border-border bg-surface aspect-square flex flex-col">
-                      <div className="flex-1 relative flex items-center justify-center p-2">
-                        <img 
-                          src={img.output || img.preview} 
-                          alt={img.file.name} 
-                          className="max-w-full max-h-full object-contain" 
-                          style={{ filter: toolId === 'photo-filters' && !img.output ? filter : 'none' }} 
-                        />
+              </aside>
+
+              {/* Right Preview */}
+              <main className="bg-surface border border-border rounded-2xl flex flex-col shadow-sm order-1 lg:order-2 overflow-hidden min-h-[400px] lg:min-h-[600px] relative p-4 gap-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold flex items-center gap-2"><ImageIcon className="w-5 h-5 text-accent" /> Images ({images.length})</h3>
+                  <label className="text-sm text-accent hover:underline cursor-pointer">
+                    + Add More
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      multiple
+                      onChange={(e) => {
+                        if (e.target.files) handleFiles(Array.from(e.target.files));
+                      }} 
+                      className="hidden" 
+                    />
+                  </label>
+                </div>
+
+                {toolId === 'image-metadata-viewer' ? (
+                  <div className="space-y-4 max-h-[60vh] lg:max-h-[85vh] overflow-y-auto pr-2">
+                    {images.map((img, idx) => (
+                      <div key={idx} className="bg-surface border border-border rounded-lg p-4 relative group">
                         <button 
                           onClick={() => removeImage(idx)}
                           className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
+                        <div className="flex gap-4">
+                          <img src={img.preview} alt={img.file.name} className="w-24 h-24 object-cover rounded-md border border-border" />
+                          <div className="flex-1 space-y-1 text-sm">
+                            {img.metadata && Object.entries(img.metadata).map(([k, v]) => (
+                              <div key={k} className="flex justify-between border-b border-border pb-1">
+                                <span className="text-text-muted capitalize">{k.replace(/([A-Z])/g, ' $1').trim()}</span>
+                                <span className="font-medium text-text-primary">{v as string}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       </div>
-                      <div className="bg-bg-secondary p-2 text-xs border-t border-border flex justify-between items-center">
-                        <p className="truncate font-medium" title={img.file.name}>{img.file.name}</p>
-                        {img.output && <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />}
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-h-[60vh] lg:max-h-[85vh] overflow-y-auto pr-2">
+                    {images.map((img, idx) => (
+                      <div key={idx} className="relative group rounded-lg overflow-hidden border border-border bg-surface aspect-square flex flex-col">
+                        <div className="flex-1 relative flex items-center justify-center p-2">
+                          <img 
+                            src={img.output || img.preview} 
+                            alt={img.file.name} 
+                            className="max-w-full max-h-full object-contain" 
+                            style={{ filter: toolId === 'photo-filters' && !img.output ? filter : 'none' }} 
+                          />
+                          <button 
+                            onClick={() => removeImage(idx)}
+                            className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="bg-bg-secondary p-2 text-xs border-t border-border flex justify-between items-center">
+                          <p className="truncate font-medium" title={img.file.name}>{img.file.name}</p>
+                          {img.output && <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </main>
             </div>
           </div>
-
-          <div className="space-y-6">
-            <div className="bg-surface border border-border rounded-[14px] p-6">
-              <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                <Settings className="w-5 h-5 text-accent" /> Settings
-              </h3>
-
-              {toolId === 'image-resizer' && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-bold text-text-primary">Units</label>
-                    <div className="flex bg-bg-secondary rounded-lg p-1">
-                      {['px', 'in', 'cm'].map(u => (
-                        <button
-                          key={u}
-                          onClick={() => setUnit(u as any)}
-                          className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${unit === u ? 'bg-accent text-white shadow-sm' : 'text-text-muted hover:text-text-primary'}`}
-                        >
-                          {u.toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {unit !== 'px' && (
-                    <div className="fg">
-                      <label className="fl">DPI (Resolution)</label>
-                      <input type="number" className="fi" value={dpi} onChange={e => setDpi(Number(e.target.value))} />
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="fg">
-                      <label className="fl">Width ({unit})</label>
-                      <input type="number" className="fi" value={width || ''} onChange={e => setWidth(Number(e.target.value))} />
-                    </div>
-                    <div className="fg">
-                      <label className="fl">Height ({unit})</label>
-                      <input type="number" className="fi" value={height || ''} onChange={e => setHeight(Number(e.target.value))} />
-                    </div>
-                  </div>
-
-                  <div className="fg">
-                    <label className="fl">Target File Size (KB)</label>
-                    <div className="relative">
-                      <input 
-                        type="number" 
-                        className="fi pr-12" 
-                        placeholder="Optional"
-                        value={targetKB || ''} 
-                        onChange={e => setTargetKB(Number(e.target.value))} 
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-text-muted">KB</span>
-                    </div>
-                    <p className="text-[10px] text-text-muted mt-1">Leave 0 for no limit. Only works for JPG output.</p>
-                  </div>
-                </div>
-              )}
-
-              {toolId === 'image-converter' && (
-                <div className="fg">
-                  <label className="fl">Convert To</label>
-                  <select className="fi" value={format} onChange={e => setFormat(e.target.value)}>
-                    <option value="image/jpeg">JPG</option>
-                    <option value="image/png">PNG</option>
-                    <option value="image/webp">WebP</option>
-                  </select>
-                </div>
-              )}
-
-              {toolId === 'image-rotator-flipper' && (
-                <div className="space-y-4">
-                  <div className="fg">
-                    <label className="fl">Rotation</label>
-                    <div className="flex gap-2">
-                      {[0, 90, 180, 270].map(deg => (
-                        <button key={deg} onClick={() => setRotation(deg)} className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${rotation === deg ? 'bg-accent text-white' : 'bg-bg-secondary text-text-secondary hover:bg-border'}`}>
-                          {deg}°
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={flipH} onChange={e => setFlipH(e.target.checked)} className="rounded text-accent focus:ring-accent" />
-                      <span className="text-sm font-medium">Flip Horizontal</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={flipV} onChange={e => setFlipV(e.target.checked)} className="rounded text-accent focus:ring-accent" />
-                      <span className="text-sm font-medium">Flip Vertical</span>
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              {toolId === 'photo-filters' && (
-                <div className="fg">
-                  <label className="fl">Select Filter</label>
-                  <select className="fi" value={filter} onChange={e => setFilter(e.target.value)}>
-                    <option value="none">Normal</option>
-                    <option value="grayscale(100%)">Grayscale</option>
-                    <option value="sepia(100%)">Sepia</option>
-                    <option value="invert(100%)">Invert</option>
-                    <option value="blur(5px)">Blur</option>
-                    <option value="brightness(150%)">Brighten</option>
-                    <option value="contrast(200%)">High Contrast</option>
-                  </select>
-                </div>
-              )}
-
-              {toolId === 'watermark-adder' && (
-                <div className="fg">
-                  <label className="fl">Watermark Text</label>
-                  <input type="text" className="fi" value={watermarkText} onChange={e => setWatermarkText(e.target.value)} />
-                </div>
-              )}
-
-              {toolId !== 'image-metadata-viewer' && (
-                <div className="flex flex-col gap-3 mt-6">
-                  <button onClick={processImages} disabled={loading || allProcessed} className="btn bp w-full gap-2">
-                    {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
-                    {loading ? 'Processing...' : allProcessed ? 'All Processed' : 'Process All'}
-                  </button>
-                  <button onClick={() => setImages([])} className="btn bs2 w-full">
-                    Clear All
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {allProcessed && toolId !== 'image-metadata-viewer' && (
-              <div className="bg-success/10 border border-success/20 rounded-[14px] p-6 text-center animate-in fade-in slide-in-from-bottom-4">
-                <h4 className="text-success font-bold text-lg mb-4">Processing Successful!</h4>
-                <button onClick={downloadAll} className="btn bg w-full gap-2">
-                  <Download className="w-4 h-4" /> Download All {images.length > 1 ? '(ZIP)' : ''}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+        );
+      }}
+    </ToolLayout>
   );
 }
