@@ -44,7 +44,7 @@ export default function Layout() {
           "@type": "Organization",
           "name": "LoveyouTools",
           "url": "https://loveyoutools.com/",
-          "logo": "https://loveyoutools.com/logo.png",
+          "logo": "https://loveyoutools.com/logo.png?v=2",
           "sameAs": [
             "https://twitter.com/loveyoutools",
             "https://github.com/loveyoutools"
@@ -59,7 +59,7 @@ export default function Layout() {
             <Link to="/" className="flex items-center gap-2 group shrink-0" onClick={() => setSearchQuery('')}>
               <div className="relative flex items-center">
                 <img 
-                  src="/logo.png" 
+                  src="/logo.png?v=2" 
                   alt="LoveyouTools - Professional Multi-Tools Platform" 
                   title="LoveyouTools - Professional Multi-Tools Platform"
                   width="240"
@@ -229,7 +229,7 @@ export default function Layout() {
                 <Link to="/" className="flex items-center mb-6" onClick={() => setSearchQuery('')}>
                   <div className="relative flex items-center">
                     <img 
-                      src="/logo.png" 
+                      src="/logo.png?v=2" 
                       alt="LoveyouTools - Professional Multi-Tools Platform" 
                       title="LoveyouTools - Professional Multi-Tools Platform"
                       width="240"

@@ -47,5 +47,6 @@ Sitemap: ${baseUrl}/sitemap.xml
 
   console.log('Sitemap and robots.txt generated successfully!');
 } catch (error) {
-  console.error('Warning: Failed to generate sitemap:', error);
+  console.error('Error generating sitemap:', error);
+  process.exit(1);
 }

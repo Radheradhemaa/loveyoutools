@@ -29,7 +29,7 @@ async function generateAssets() {
 
   if (!isInputValid) {
     console.error(`Error: Input file ${INPUT_FILE} not found or invalid.`);
-    return;
+    process.exit(1);
   }
 
   // Create output directories
@@ -115,5 +115,6 @@ async function generateAssets() {
 }
 
 generateAssets().catch(err => {
-  console.error('Warning: Error generating assets. Skipping asset generation:', err);
+  console.error('Error generating assets:', err);
+  process.exit(1);
 });

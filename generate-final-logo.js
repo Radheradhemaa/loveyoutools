@@ -101,4 +101,7 @@ async function generate() {
   console.log('Ultra HD Transparent Logo and all assets generated successfully!');
 }
 
-generate().catch(console.error);
+generate().catch(err => {
+  console.error(err);
+  process.exit(1);
+});

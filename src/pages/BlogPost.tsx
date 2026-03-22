@@ -30,7 +30,7 @@ export default function BlogPost() {
       "name": "LoveTools",
       "logo": {
         "@type": "ImageObject",
-        "url": `${window.location.origin}/logo.png`
+        "url": `${window.location.origin}/logo.png?v=2`
       }
     },
     "mainEntityOfPage": {

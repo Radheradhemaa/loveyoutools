@@ -10,7 +10,7 @@ interface SEOProps {
   schema?: any;
 }
 
-export default function SEO({ title, description, keywords, url, image = '/social-preview/og-image.png', type = 'website', schema }: SEOProps) {
+export default function SEO({ title, description, keywords, url, image = '/social-preview/og-image.png?v=2', type = 'website', schema }: SEOProps) {
   const siteName = 'LoveyouTools';
   const fullTitle = `${title} | ${siteName}`;
 
