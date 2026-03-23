@@ -143,7 +143,7 @@ export default function ImageColorPicker() {
           <div className="max-w-[1200px] mx-auto w-full p-4 lg:p-6 flex flex-col gap-5 h-full">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 flex-1 min-h-0">
               {/* Left Controls (Sidebar) */}
-              <aside className="bg-surface border border-border rounded-2xl flex flex-col shadow-sm order-2 lg:order-1 overflow-hidden h-full">
+              <aside className="bg-surface border border-border rounded-2xl flex flex-col shadow-sm order-2 lg:order-1 overflow-hidden h-auto lg:h-full">
                 <div className="p-5 space-y-6 overflow-y-auto scrollbar-hide flex-1">
                   <div className="space-y-4">
                     <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
@@ -191,7 +191,7 @@ export default function ImageColorPicker() {
               </aside>
 
               {/* Right Preview */}
-              <main className="bg-surface border border-border rounded-2xl flex flex-col shadow-sm order-1 lg:order-2 overflow-hidden min-h-[400px] lg:min-h-0 h-full relative p-4 gap-4">
+              <main className="bg-surface border border-border rounded-2xl flex flex-col shadow-sm order-1 lg:order-2 overflow-hidden min-h-[400px] lg:min-h-0 h-auto lg:h-full relative p-4 gap-4">
                 {/* Thumbnail Strip */}
                 <div className="flex items-center gap-2 bg-bg-secondary/50 p-2 rounded-xl border border-border shadow-sm overflow-hidden shrink-0">
                   <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide flex-1">
@@ -250,7 +250,7 @@ export default function ImageColorPicker() {
                 {/* Main Working Area */}
                 <div className="flex-1 relative bg-bg-secondary/30 rounded-xl overflow-hidden border border-border flex flex-col items-center justify-center p-4 shadow-inner">
                   {currentImage && (
-                    <div className="w-full h-full flex items-center justify-center overflow-auto scrollbar-hide cursor-crosshair touch-none">
+                    <div className="w-full h-full max-h-[60vh] lg:max-h-none flex items-center justify-center overflow-auto scrollbar-hide cursor-crosshair touch-none">
                       <img 
                         ref={imgRef}
                         src={currentImage.preview} 

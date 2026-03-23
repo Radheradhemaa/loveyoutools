@@ -192,65 +192,70 @@ export default function QrGenerator() {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-      <div className="lg:col-span-2 space-y-6">
-        <div className="bg-surface border border-border rounded-2xl p-6">
-          <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Settings className="w-5 h-5 text-accent" /> Data Type</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {[
-              { id: 'url', icon: LinkIcon, label: 'URL' },
-              { id: 'text', icon: Type, label: 'Text' },
-              { id: 'phone', icon: Phone, label: 'Phone' },
-              { id: 'email', icon: Mail, label: 'Email' },
-              { id: 'sms', icon: MessageSquare, label: 'SMS' },
-              { id: 'vcard', icon: User, label: 'vCard' },
-              { id: 'whatsapp', icon: MessageCircle, label: 'WhatsApp' },
-              { id: 'upi', icon: CreditCard, label: 'UPI' },
-              { id: 'wifi', icon: Wifi, label: 'WiFi' },
-            ].map((btn) => (
-              <button 
-                key={btn.id}
-                onClick={() => { setType(btn.id); setValue(''); }} 
-                className={`btn ${type === btn.id ? 'bp' : 'bs2'} gap-2 text-sm`}
-              >
-                <btn.icon className="w-4 h-4" /> {btn.label}
-              </button>
-            ))}
+    <div className="tool-layout-container">
+      {/* Left Controls (Sidebar) */}
+      <aside className="tool-sidebar">
+        <div className="sidebar-content custom-scrollbar p-6 space-y-6">
+          <div className="space-y-4">
+            <h3 className="font-black text-[10px] uppercase tracking-widest flex items-center gap-2 text-text-muted">
+              <Settings className="w-4 h-4 text-accent" /> Data Type
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {[
+                { id: 'url', icon: LinkIcon, label: 'URL' },
+                { id: 'text', icon: Type, label: 'Text' },
+                { id: 'phone', icon: Phone, label: 'Phone' },
+                { id: 'email', icon: Mail, label: 'Email' },
+                { id: 'sms', icon: MessageSquare, label: 'SMS' },
+                { id: 'vcard', icon: User, label: 'vCard' },
+                { id: 'whatsapp', icon: MessageCircle, label: 'WhatsApp' },
+                { id: 'upi', icon: CreditCard, label: 'UPI' },
+                { id: 'wifi', icon: Wifi, label: 'WiFi' },
+              ].map((btn) => (
+                <button 
+                  key={btn.id}
+                  onClick={() => { setType(btn.id); setValue(''); }} 
+                  className={`btn ${type === btn.id ? 'bp' : 'bs2'} gap-2 text-xs py-2 px-2`}
+                >
+                  <btn.icon className="w-3 h-3" /> {btn.label}
+                </button>
+              ))}
+            </div>
+            <div className="mt-4">
+              {renderInput()}
+            </div>
           </div>
-          <div className="mt-6">
-            {renderInput()}
-          </div>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-surface border border-border rounded-2xl p-6">
-            <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><Palette className="w-5 h-5 text-accent" /> Customization</h3>
+          <div className="pt-6 border-t border-border space-y-4">
+            <h3 className="font-black text-[10px] uppercase tracking-widest flex items-center gap-2 text-text-muted">
+              <Palette className="w-4 h-4 text-accent" /> Customization
+            </h3>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="fg">
-                  <label className="fl">Foreground</label>
+                  <label className="text-xs font-bold mb-2 block text-text-secondary">Foreground</label>
                   <div className="flex gap-2">
                     <input type="color" value={fgColor} onChange={(e) => setFgColor(e.target.value)} className="w-10 h-10 rounded cursor-pointer border-0 p-0" />
-                    <input type="text" value={fgColor} onChange={(e) => setFgColor(e.target.value)} className="fi flex-1 font-mono uppercase text-xs" />
+                    <input type="text" value={fgColor} onChange={(e) => setFgColor(e.target.value)} className="fi flex-1 font-mono uppercase text-xs py-2" />
                   </div>
                 </div>
                 <div className="fg">
-                  <label className="fl">Background</label>
+                  <label className="text-xs font-bold mb-2 block text-text-secondary">Background</label>
                   <div className="flex gap-2">
                     <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="w-10 h-10 rounded cursor-pointer border-0 p-0" />
-                    <input type="text" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="fi flex-1 font-mono uppercase text-xs" />
+                    <input type="text" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="fi flex-1 font-mono uppercase text-xs py-2" />
                   </div>
                 </div>
               </div>
 
               <div className="fg">
-                <label className="fl">Error Correction: {level}</label>
+                <label className="text-xs font-bold mb-2 block text-text-secondary">Error Correction: {level}</label>
                 <div className="flex gap-2">
                   {['L', 'M', 'Q', 'H'].map((l) => (
                     <button 
                       key={l}
                       onClick={() => setLevel(l as any)}
-                      className={`flex-1 py-1 rounded-lg border text-xs font-bold transition-colors ${level === l ? 'bg-accent text-white border-accent' : 'border-border hover:bg-bg-secondary'}`}
+                      className={`flex-1 py-1.5 rounded-lg border text-xs font-bold transition-colors ${level === l ? 'bg-accent text-white border-accent' : 'border-border hover:bg-bg-secondary'}`}
                     >
                       {l}
                     </button>
@@ -259,7 +264,7 @@ export default function QrGenerator() {
               </div>
 
               <div className="flex items-center justify-between p-3 bg-bg-secondary rounded-xl border border-border">
-                <span className="text-sm font-medium">Include Margin</span>
+                <span className="text-xs font-bold text-text-secondary">Include Margin</span>
                 <button
                   onClick={() => setIncludeMargin(!includeMargin)}
                   className={`relative w-10 h-5 rounded-full transition-colors ${includeMargin ? 'bg-accent' : 'bg-border'}`}
@@ -270,8 +275,10 @@ export default function QrGenerator() {
             </div>
           </div>
 
-          <div className="bg-surface border border-border rounded-2xl p-6">
-            <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><ImageIcon className="w-5 h-5 text-accent" /> Logo Overlay</h3>
+          <div className="pt-6 border-t border-border space-y-4">
+            <h3 className="font-black text-[10px] uppercase tracking-widest flex items-center gap-2 text-text-muted">
+              <ImageIcon className="w-4 h-4 text-accent" /> Logo Overlay
+            </h3>
             <div className="space-y-4">
               <input 
                 type="file" 
@@ -284,26 +291,26 @@ export default function QrGenerator() {
               {!logoImage ? (
                 <button 
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-full aspect-video border-2 border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-2 hover:border-accent hover:bg-accent/5 transition-all text-text-muted"
+                  className="w-full aspect-video border-2 border-dashed border-border rounded-xl flex flex-col items-center justify-center gap-2 hover:border-accent hover:bg-accent/5 transition-all text-text-muted bg-surface/30"
                 >
-                  <ImageIcon className="w-8 h-8" />
-                  <span className="text-xs font-medium">Upload Logo (PNG/JPG)</span>
+                  <ImageIcon className="w-6 h-6" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider">Upload Logo (PNG/JPG)</span>
                 </button>
               ) : (
                 <div className="relative group">
                   <img src={logoImage} className="w-full aspect-video object-contain bg-bg-secondary rounded-xl border border-border p-4" alt="Logo preview" />
                   <button 
                     onClick={() => setLogoImage(null)}
-                    className="absolute top-2 right-2 p-2 bg-error text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+                    className="absolute top-2 right-2 p-1.5 bg-red-500/80 backdrop-blur-sm text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-3 h-3" />
                   </button>
                 </div>
               )}
 
               {logoImage && (
                 <div className="fg">
-                  <label className="fl">Logo Size: {logoSize}px</label>
+                  <label className="text-xs font-bold mb-2 block text-text-secondary">Logo Size: {logoSize}px</label>
                   <input 
                     type="range" 
                     min="20" max="100" step="5" 
@@ -316,55 +323,76 @@ export default function QrGenerator() {
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="space-y-6">
-        <div className="bg-surface border border-border rounded-2xl p-8 flex flex-col items-center justify-center min-h-[60vh] sticky top-8">
-          <div 
-            ref={qrRef} 
-            className="p-4 rounded-2xl shadow-xl mb-8 transition-all bg-white flex items-center justify-center"
-            style={{ backgroundColor: bgColor }}
-          >
-            {downloadFormat === 'png' ? (
-              <QRCodeCanvas 
-                value={value || ' '} 
-                size={size} 
-                bgColor={bgColor} 
-                fgColor={fgColor} 
-                level={level}
-                includeMargin={includeMargin}
-                imageSettings={logoImage ? {
-                  src: logoImage,
-                  x: undefined,
-                  y: undefined,
-                  height: logoSize,
-                  width: logoSize,
-                  excavate: true,
-                } : undefined}
-              />
-            ) : (
-              <QRCodeSVG 
-                value={value || ' '} 
-                size={size} 
-                bgColor={bgColor} 
-                fgColor={fgColor} 
-                level={level}
-                includeMargin={includeMargin}
-                imageSettings={logoImage ? {
-                  src: logoImage,
-                  x: undefined,
-                  y: undefined,
-                  height: logoSize,
-                  width: logoSize,
-                  excavate: true,
-                } : undefined}
-              />
-            )}
+        <div className="sidebar-actions p-4 border-t border-border bg-surface flex flex-col gap-2">
+          <div className="flex gap-2">
+            <button 
+              onClick={() => setDownloadFormat('png')} 
+              className={`flex-1 py-2 rounded-xl border font-bold text-xs transition-all ${downloadFormat === 'png' ? 'bg-accent text-white border-accent' : 'border-border hover:bg-bg-secondary'}`}
+            >
+              PNG
+            </button>
+            <button 
+              onClick={() => setDownloadFormat('svg')} 
+              className={`flex-1 py-2 rounded-xl border font-bold text-xs transition-all ${downloadFormat === 'svg' ? 'bg-accent text-white border-accent' : 'border-border hover:bg-bg-secondary'}`}
+            >
+              SVG
+            </button>
           </div>
+          <button onClick={handleDownload} className="btn bp gap-2 w-full py-4 text-xs font-black uppercase tracking-widest shadow-lg shadow-accent/20">
+            <Download className="w-4 h-4" /> Download {downloadFormat.toUpperCase()}
+          </button>
+        </div>
+      </aside>
 
-          <div className="w-full space-y-4">
-            <div className="fg">
-              <label className="fl">Output Size: {size}px</label>
+      {/* Right Preview */}
+      <main className="tool-main-preview">
+        <div className="preview-content-wrapper p-4 lg:p-8 flex flex-col gap-4">
+          <div className="flex-1 flex flex-col items-center justify-center p-4 overflow-hidden relative touch-none bg-bg-secondary/30 rounded-xl border border-border shadow-inner">
+            <div 
+              ref={qrRef} 
+              className="p-6 rounded-2xl shadow-xl transition-all bg-white flex items-center justify-center"
+              style={{ backgroundColor: bgColor }}
+            >
+              {downloadFormat === 'png' ? (
+                <QRCodeCanvas 
+                  value={value || ' '} 
+                  size={size} 
+                  bgColor={bgColor} 
+                  fgColor={fgColor} 
+                  level={level}
+                  includeMargin={includeMargin}
+                  imageSettings={logoImage ? {
+                    src: logoImage,
+                    x: undefined,
+                    y: undefined,
+                    height: logoSize,
+                    width: logoSize,
+                    excavate: true,
+                  } : undefined}
+                />
+              ) : (
+                <QRCodeSVG 
+                  value={value || ' '} 
+                  size={size} 
+                  bgColor={bgColor} 
+                  fgColor={fgColor} 
+                  level={level}
+                  includeMargin={includeMargin}
+                  imageSettings={logoImage ? {
+                    src: logoImage,
+                    x: undefined,
+                    y: undefined,
+                    height: logoSize,
+                    width: logoSize,
+                    excavate: true,
+                  } : undefined}
+                />
+              )}
+            </div>
+            
+            <div className="mt-8 w-full max-w-md bg-surface p-4 rounded-xl border border-border shadow-sm">
+              <label className="text-xs font-bold mb-2 block text-text-secondary text-center">Output Size: {size}px</label>
               <input 
                 type="range" 
                 min="128" max="1024" step="64" 
@@ -373,28 +401,9 @@ export default function QrGenerator() {
                 className="w-full accent-accent"
               />
             </div>
-
-            <div className="flex gap-2">
-              <button 
-                onClick={() => setDownloadFormat('png')} 
-                className={`flex-1 py-2 rounded-xl border font-bold text-sm transition-all ${downloadFormat === 'png' ? 'bg-accent text-white border-accent' : 'border-border hover:bg-bg-secondary'}`}
-              >
-                PNG
-              </button>
-              <button 
-                onClick={() => setDownloadFormat('svg')} 
-                className={`flex-1 py-2 rounded-xl border font-bold text-sm transition-all ${downloadFormat === 'svg' ? 'bg-accent text-white border-accent' : 'border-border hover:bg-bg-secondary'}`}
-              >
-                SVG
-              </button>
-            </div>
-            
-            <button onClick={handleDownload} className="btn bp gap-2 w-full py-4 text-lg">
-              <Download className="w-5 h-5" /> Download {downloadFormat.toUpperCase()}
-            </button>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

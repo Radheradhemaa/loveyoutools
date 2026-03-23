@@ -660,9 +660,9 @@ export default function AdvancedPdfCropper() {
               </div>
             </div>
 
-            <div className="flex flex-1 min-h-0 overflow-hidden">
+            <div className="flex flex-col lg:flex-row flex-1 min-h-0 lg:overflow-hidden">
               {/* Left Sidebar - Tools - 1/4 width */}
-              <aside className="w-full lg:w-1/4 bg-surface border-r border-border flex flex-col shadow-sm order-2 lg:order-1 overflow-hidden h-full">
+              <aside className="w-full lg:w-1/4 shrink-0 bg-surface border-r border-border flex flex-col shadow-sm order-2 lg:order-1 overflow-hidden h-auto lg:h-full">
                 <div className="space-y-4">
                   <h3 className="text-[10px] font-black uppercase tracking-widest text-text-muted flex items-center gap-2">
                     <Zap size={14} className="text-accent" /> Smart Actions
@@ -759,7 +759,7 @@ export default function AdvancedPdfCropper() {
               </aside>
 
               {/* Main Workspace - 3/4 width */}
-              <main className="flex-1 bg-bg-secondary/20 flex flex-col order-1 lg:order-2 overflow-hidden relative h-full">
+              <main className="flex-1 lg:flex-[3] bg-bg-secondary/20 flex flex-col order-1 lg:order-2 overflow-hidden relative min-h-[40vh] lg:min-h-0">
                 <div 
                   className="flex-1 relative overflow-hidden flex flex-col items-center justify-center p-8"
                   onMouseMove={handleMouseMove}

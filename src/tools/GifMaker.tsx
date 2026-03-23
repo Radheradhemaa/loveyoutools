@@ -89,7 +89,7 @@ export default function GifMaker() {
           <div className="max-w-[1200px] mx-auto w-full p-4 lg:p-6 flex flex-col gap-5 h-full">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 flex-1 min-h-0">
               {/* Left Controls (Sidebar) */}
-              <aside className="order-2 lg:order-1 bg-surface border border-border rounded-xl flex flex-col shadow-sm overflow-hidden h-full">
+              <aside className="order-2 lg:order-1 bg-surface border border-border rounded-xl flex flex-col shadow-sm overflow-hidden h-auto lg:h-full">
                 <div className="p-5 border-b border-border flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
                   <div className="px-3 py-1.5 rounded-lg text-sm font-bold whitespace-nowrap bg-accent text-white">Settings</div>
                 </div>
@@ -125,7 +125,7 @@ export default function GifMaker() {
               </aside>
 
               {/* Right Preview */}
-              <main className="order-1 lg:order-2 w-full bg-[#f8f9fa] border border-[#e9ecef] rounded-xl p-4 lg:p-6 flex flex-col min-h-[400px] lg:min-h-0 h-full overflow-hidden relative gap-4">
+              <main className="order-1 lg:order-2 w-full bg-[#f8f9fa] border border-[#e9ecef] rounded-xl p-4 lg:p-6 flex flex-col min-h-[400px] lg:min-h-0 h-auto lg:h-full overflow-hidden relative gap-4">
                 <div className="flex justify-between items-center z-10 pointer-events-none">
                   <div className="bg-surface/80 backdrop-blur-md px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm pointer-events-auto border border-border flex items-center gap-3">
                     <span className="font-bold">{previews.length} frames</span>
@@ -149,7 +149,7 @@ export default function GifMaker() {
                     </div>
                   )}
 
-                  <div className="relative w-full h-full flex items-center justify-center overflow-auto">
+                  <div className="relative w-full h-full max-h-[50vh] lg:max-h-none flex items-center justify-center overflow-auto">
                     {output ? (
                       <img src={output} alt="Generated GIF" className="max-w-full max-h-full object-contain rounded-lg shadow-sm" />
                     ) : (

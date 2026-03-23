@@ -182,9 +182,9 @@ export default function ImageCropper() {
         if (images.length === 0) return null;
 
         return (
-          <div className="w-full h-full flex flex-col lg:flex-row overflow-hidden bg-bg-primary">
+          <div className="w-full min-h-full lg:h-full flex flex-col lg:flex-row lg:overflow-hidden bg-bg-primary">
             {/* Left Preview Section - 2/3 width on desktop */}
-            <main className="flex-[2] bg-[#f5f5f5] flex flex-col overflow-hidden relative h-auto lg:h-full min-h-[300px]">
+            <main className="flex-1 lg:flex-[3] bg-[#f5f5f5] flex flex-col overflow-hidden relative min-h-[40vh] lg:min-h-0">
               {/* Thumbnail Strip */}
               <div className="p-4 bg-surface border-b border-border flex items-center gap-4 shrink-0 overflow-hidden text-text-primary">
                 <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-hide flex-1 items-center">
@@ -272,13 +272,13 @@ export default function ImageCropper() {
                         </button>
                       </div>
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center p-4">
+                      <div className="w-full h-full max-h-[60vh] lg:max-h-none flex items-center justify-center p-4">
                         <ReactCrop
                           crop={crop}
                           onChange={(c) => setCrop(c)}
                           onComplete={(c) => setCompletedCrop(c)}
                           aspect={aspect}
-                          className="shadow-2xl rounded-sm"
+                          className="shadow-2xl rounded-sm max-h-full"
                         >
                           <img 
                             ref={imgRef} 
@@ -286,7 +286,7 @@ export default function ImageCropper() {
                             onLoad={onLoad} 
                             alt="Crop target" 
                             style={{ 
-                              maxHeight: 'calc(100vh - 200px)', 
+                              maxHeight: '100%', 
                               maxWidth: '100%',
                               transform: `scale(${zoom})`,
                               objectFit: 'contain'
@@ -309,7 +309,7 @@ export default function ImageCropper() {
             </main>
 
             {/* Right Settings Panel */}
-            <aside className="w-full lg:w-1/4 bg-surface border-l border-border flex flex-col shadow-sm overflow-hidden h-auto lg:h-full">
+            <aside className="w-full lg:w-1/4 shrink-0 bg-surface border-l border-border flex flex-col shadow-sm overflow-hidden h-auto lg:h-full">
               <div className="p-6 space-y-6 overflow-y-auto scrollbar-hide flex-1">
                 <div className="space-y-4">
                   <h3 className="font-black text-[10px] uppercase tracking-widest flex items-center gap-2 text-text-muted">
@@ -397,7 +397,13 @@ export default function ImageCropper() {
                     {currentImage?.output ? 'Cropped' : 'Crop Current'}
                   </button>
                   {processedCount > 0 && (
-                    <button onClick={() => { downloadAll(); onComplete(); }} className="btn bg w-full py-4 rounded-2xl gap-2 shadow-md text-xs font-black uppercase tracking-widest">
+                    <button 
+                      onClick={async () => { 
+                        await downloadAll(); 
+                        onComplete(); 
+                      }} 
+                      className="btn bg w-full py-4 rounded-2xl gap-2 shadow-md text-xs font-black uppercase tracking-widest"
+                    >
                       <Download className="w-4 h-4" />
                       Download {processedCount > 1 ? `All (${processedCount})` : 'Cropped'}
                     </button>

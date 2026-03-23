@@ -155,22 +155,6 @@ export default function BackgroundRemover() {
     prewarmEngine();
   }, []);
 
-  useEffect(() => {
-    if (isManualMode && resultImage && canvasRef.current) {
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      const img = new Image();
-      img.onload = () => {
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-      };
-      img.src = resultImage;
-    }
-  }, [isManualMode, resultImage]);
-
   const updateCanvasFromSrc = (src: string | null) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -504,263 +488,317 @@ export default function BackgroundRemover() {
       title="AI Background Remover"
       description="Remove image backgrounds instantly with professional precision using MediaPipe AI."
       toolId="background-remover"
+      acceptedFileTypes={['image/*']}
     >
-      <div className="max-w-5xl mx-auto p-4 lg:p-8">
-        {!imageSrc ? (
-          <div className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-3xl p-12 bg-surface/50 hover:bg-surface transition-colors cursor-pointer group"
-               onClick={() => document.getElementById('file-upload')?.click()}>
-            <input type="file" id="file-upload" className="hidden" accept="image/*" onChange={handleFile} />
-            <div className="w-20 h-20 rounded-2xl bg-accent/10 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-              <Upload className="w-10 h-10 text-accent" />
-            </div>
-            <h3 className="text-xl font-bold mb-2">Upload an Image</h3>
-            <p className="text-text-muted text-center max-w-xs">Drag and drop or click to upload. High quality images work best.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Preview Area */}
-            <div className="lg:col-span-8 space-y-4">
-              <div className="relative bg-bg-secondary rounded-3xl overflow-hidden border border-border min-h-[400px] flex items-center justify-center group">
-                {isManualMode ? (
-                  <canvas
-                    ref={canvasRef}
-                    onMouseDown={startDrawing}
-                    onMouseMove={draw}
-                    onMouseUp={stopDrawing}
-                    onMouseLeave={stopDrawing}
-                    onTouchStart={startDrawing}
-                    onTouchMove={draw}
-                    onTouchEnd={stopDrawing}
-                    className="max-w-full max-h-[70vh] cursor-crosshair shadow-lg"
-                  />
-                ) : (
-                  <div className="relative w-full h-full flex items-center justify-center p-4">
-                    <img 
-                      src={resultImage || imageSrc} 
-                      alt="Preview" 
-                      className="max-w-full max-h-[70vh] object-contain shadow-lg rounded-lg"
-                      style={{ 
-                        backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
-                        backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
-                        backgroundSize: '20px 20px',
-                        backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
-                      }}
-                    />
-                    {isProcessing && (
-                      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center text-white p-6 text-center">
-                        <Loader2 className="w-12 h-12 animate-spin mb-4 text-accent" />
-                        <p className="font-bold text-lg mb-2">{statusText}</p>
-                        <p className="text-sm opacity-80">This usually takes a few seconds...</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-                
-                {/* Floating Controls */}
-                <div className="absolute top-4 right-4 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => { setImageSrc(null); setResultImage(null); }} className="p-2 bg-white/90 hover:bg-white text-red-500 rounded-full shadow-lg transition-colors">
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
+      {({ file, onReset }) => {
+        // Sync with ToolLayout file
+        useEffect(() => {
+          if (file && !Array.isArray(file)) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              const src = event.target?.result as string;
+              setImageSrc(src);
+              setResultImage(null);
+              setHistory([]);
+              setHistoryIndex(-1);
+              setIsManualMode(false);
+              
+              const img = new Image();
+              img.onload = () => { originalImgRef.current = img; };
+              img.src = src;
+            };
+            reader.readAsDataURL(file);
+          } else if (!file) {
+            setImageSrc(null);
+            setResultImage(null);
+            setHistory([]);
+            setHistoryIndex(-1);
+            setIsManualMode(false);
+          }
+        }, [file]);
 
-              {/* Status Bar */}
-              {resultImage && !isManualMode && (
-                <div className="flex items-center justify-between bg-accent/5 border border-accent/20 rounded-2xl p-4">
-                  <div className="flex items-center gap-2 text-accent">
-                    <Check className="w-5 h-5" />
-                    <span className="font-bold">Background Removed Perfectly!</span>
-                  </div>
-                  <button onClick={() => setIsManualMode(true)} className="text-sm font-bold text-accent hover:underline flex items-center gap-1">
-                    <Eraser className="w-4 h-4" /> Manual Touchup
-                  </button>
-                </div>
-              )}
-            </div>
+        useEffect(() => {
+          if (isManualMode && resultImage && canvasRef.current) {
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
 
-            {/* Controls Sidebar */}
-            <div className="lg:col-span-4 space-y-6">
-              {!resultImage ? (
-                <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm">
-                  <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
-                    <Wand2 className="w-5 h-5 text-accent" /> AI Processing
-                  </h3>
-                  <button 
-                    onClick={removeBackground}
-                    disabled={isProcessing}
-                    className="w-full btn bp py-4 rounded-2xl gap-2 text-lg"
-                  >
-                    {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                    Remove Background
-                  </button>
-                  <p className="text-xs text-text-muted mt-4 text-center">
-                    Our AI will analyze your image and remove the background with high precision.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {/* Manual Mode Controls */}
-                  {isManualMode ? (
-                    <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm space-y-6">
-                      <div className="flex items-center justify-between">
-                        <h3 className="font-bold text-lg flex items-center gap-2">
-                          <Eraser className="w-5 h-5 text-accent" /> Touchup
-                        </h3>
-                        <button onClick={() => setIsManualMode(false)} className="p-1 hover:bg-bg-secondary rounded-full">
-                          <X className="w-5 h-5" />
-                        </button>
-                      </div>
+            const img = new Image();
+            img.onload = () => {
+              canvas.width = img.width;
+              canvas.height = img.height;
+              ctx.drawImage(img, 0, 0);
+            };
+            img.src = resultImage;
+          }
+        }, [isManualMode, resultImage]);
 
-                      <div className="flex bg-bg-secondary rounded-xl p-1">
-                        <button 
-                          onClick={() => setBrushMode('erase')}
-                          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-bold transition-all ${brushMode === 'erase' ? 'bg-accent text-white shadow-md' : 'text-text-muted hover:text-text-primary'}`}
-                        >
-                          <Eraser className="w-4 h-4" /> Erase
-                        </button>
-                        <button 
-                          onClick={() => setBrushMode('restore')}
-                          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-bold transition-all ${brushMode === 'restore' ? 'bg-accent text-white shadow-md' : 'text-text-muted hover:text-text-primary'}`}
-                        >
-                          <Paintbrush className="w-4 h-4" /> Restore
-                        </button>
-                      </div>
+        if (!imageSrc) return null;
 
-                      <div className="space-y-3">
-                        <div className="flex justify-between text-sm font-bold">
-                          <span>Brush Size</span>
-                          <span className="text-accent">{brushSize}px</span>
-                        </div>
-                        <input 
-                          type="range" 
-                          min="5" max="100" 
-                          value={brushSize} 
-                          onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                          className="w-full accent-accent"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <button onClick={undo} disabled={historyIndex < 0} className="btn bs2 py-3 rounded-xl gap-2 disabled:opacity-50 text-xs">
-                          <RefreshCw className="w-4 h-4" /> Undo
-                        </button>
-                        <button onClick={redo} disabled={historyIndex >= history.length - 1} className="btn bs2 py-3 rounded-xl gap-2 disabled:opacity-50 text-xs">
-                          <RefreshCw className="w-4 h-4 rotate-180" /> Redo
-                        </button>
-                      </div>
-                      <button onClick={() => setIsManualMode(false)} className="w-full btn bp py-3 rounded-xl">
-                        Done
+        return (
+          <div className="tool-layout-container">
+            {/* --- SIDEBAR (CONTROLS) --- */}
+            <aside className="tool-sidebar">
+              <div className="sidebar-content">
+                <div className="space-y-6">
+                  {!resultImage ? (
+                    <div className="space-y-4">
+                      <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                        <Wand2 className="w-5 h-5 text-accent" /> AI Processing
+                      </h3>
+                      <button 
+                        onClick={removeBackground}
+                        disabled={isProcessing}
+                        className="w-full btn bp py-4 rounded-2xl gap-2 text-lg shadow-lg shadow-accent/20"
+                      >
+                        {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+                        Remove Background
                       </button>
+                      <p className="text-xs text-text-muted text-center">
+                        Our AI will analyze your image and remove the background with high precision.
+                      </p>
                     </div>
                   ) : (
-                    <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm space-y-6">
-                      <h3 className="font-bold text-lg flex items-center gap-2">
-                        <Sliders className="w-5 h-5 text-accent" /> Background
-                      </h3>
+                    <>
+                      {/* Manual Mode Controls */}
+                      {isManualMode ? (
+                        <div className="space-y-6 animate-in fade-in slide-in-from-left-4">
+                          <div className="flex items-center justify-between">
+                            <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                              <Eraser className="w-5 h-5 text-accent" /> Touchup
+                            </h3>
+                            <button onClick={() => setIsManualMode(false)} className="p-1 hover:bg-bg-secondary rounded-full transition-colors">
+                              <X className="w-5 h-5 text-text-muted" />
+                            </button>
+                          </div>
 
-                      <div className="grid grid-cols-4 gap-2">
-                        {['transparent', '#ffffff', '#1e3a8a', '#dc2626', '#bae6fd', '#f3f4f6'].map(color => (
-                          <button
-                            key={color}
-                            onClick={() => setBgColor(color)}
-                            className={`w-full aspect-square rounded-xl border-2 transition-all ${bgColor === color ? 'border-accent scale-110 shadow-md' : 'border-transparent hover:border-border'}`}
-                            style={{ 
-                              backgroundColor: color === 'transparent' ? 'white' : color,
-                              backgroundImage: color === 'transparent' ? 'linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%, #eee 100%), linear-gradient(45deg, #eee 25%, white 25%, white 75%, #eee 75%, #eee 100%)' : 'none',
-                              backgroundSize: color === 'transparent' ? '10px 10px' : 'auto',
-                              backgroundPosition: color === 'transparent' ? '0 0, 5px 5px' : '0 0'
-                            }}
-                          />
-                        ))}
-                        <button
-                          onClick={() => setBgColor('custom')}
-                          className={`w-full aspect-square rounded-xl border-2 flex items-center justify-center bg-gradient-to-br from-red-500 via-green-500 to-blue-500 transition-all ${bgColor === 'custom' ? 'border-accent scale-110 shadow-md' : 'border-transparent hover:border-border'}`}
-                        >
-                          <div className="w-4 h-4 rounded-full bg-white/50" />
-                        </button>
-                      </div>
+                          <div className="flex bg-bg-secondary rounded-xl p-1">
+                            <button 
+                              onClick={() => setBrushMode('erase')}
+                              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-bold transition-all ${brushMode === 'erase' ? 'bg-accent text-white shadow-md' : 'text-text-muted hover:text-text-primary'}`}
+                            >
+                              <Eraser className="w-4 h-4" /> Erase
+                            </button>
+                            <button 
+                              onClick={() => setBrushMode('restore')}
+                              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-bold transition-all ${brushMode === 'restore' ? 'bg-accent text-white shadow-md' : 'text-text-muted hover:text-text-primary'}`}
+                            >
+                              <Paintbrush className="w-4 h-4" /> Restore
+                            </button>
+                          </div>
 
-                      {bgColor === 'custom' && (
-                        <div className="fg">
-                          <label className="fl">Custom Color</label>
-                          <div className="flex gap-2">
-                            <input type="color" value={customColor} onChange={(e) => setCustomColor(e.target.value)} className="w-12 h-10 rounded-lg cursor-pointer" />
-                            <input type="text" value={customColor} onChange={(e) => setCustomColor(e.target.value)} className="fi flex-1" />
+                          <div className="space-y-3">
+                            <div className="flex justify-between text-sm font-bold text-text-primary">
+                              <span>Brush Size</span>
+                              <span className="text-accent">{brushSize}px</span>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="5" max="100" 
+                              value={brushSize} 
+                              onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                              className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <button onClick={undo} disabled={historyIndex < 0} className="btn bs2 py-3 rounded-xl gap-2 disabled:opacity-50 text-xs">
+                              <Undo className="w-4 h-4" /> Undo
+                            </button>
+                            <button onClick={redo} disabled={historyIndex >= history.length - 1} className="btn bs2 py-3 rounded-xl gap-2 disabled:opacity-50 text-xs">
+                              <Redo className="w-4 h-4" /> Redo
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-6 animate-in fade-in slide-in-from-left-4">
+                          <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                            <ImageIcon className="w-5 h-5 text-accent" /> Background
+                          </h3>
+
+                          <div className="grid grid-cols-4 gap-2">
+                            {['transparent', '#ffffff', '#1e3a8a', '#dc2626', '#bae6fd', '#f3f4f6'].map(color => (
+                              <button
+                                key={color}
+                                onClick={() => setBgColor(color)}
+                                className={`w-full aspect-square rounded-xl border-2 transition-all ${bgColor === color ? 'border-accent scale-110 shadow-md' : 'border-transparent hover:border-border'}`}
+                                style={{ 
+                                  backgroundColor: color === 'transparent' ? 'white' : color,
+                                  backgroundImage: color === 'transparent' ? 'linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%, #eee 100%), linear-gradient(45deg, #eee 25%, white 25%, white 75%, #eee 75%, #eee 100%)' : 'none',
+                                  backgroundSize: color === 'transparent' ? '10px 10px' : 'auto',
+                                  backgroundPosition: color === 'transparent' ? '0 0, 5px 5px' : '0 0'
+                                }}
+                              />
+                            ))}
+                            <button
+                              onClick={() => setBgColor('custom')}
+                              className={`w-full aspect-square rounded-xl border-2 flex items-center justify-center bg-gradient-to-br from-red-500 via-green-500 to-blue-500 transition-all ${bgColor === 'custom' ? 'border-accent scale-110 shadow-md' : 'border-transparent hover:border-border'}`}
+                            >
+                              <div className="w-4 h-4 rounded-full bg-white/50" />
+                            </button>
+                          </div>
+
+                          {bgColor === 'custom' && (
+                            <div className="space-y-2">
+                              <label className="text-xs font-bold text-text-muted uppercase">Custom Color</label>
+                              <div className="flex gap-2">
+                                <input type="color" value={customColor} onChange={(e) => setCustomColor(e.target.value)} className="w-12 h-10 rounded-lg cursor-pointer bg-transparent border-none" />
+                                <input type="text" value={customColor} onChange={(e) => setCustomColor(e.target.value)} className="fi flex-1" />
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="pt-4 border-t border-border space-y-6">
+                            <div className="flex items-center justify-between">
+                              <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                                <Sliders className="w-5 h-5 text-accent" /> Adjustments
+                              </h3>
+                              <button onClick={() => { 
+                                setBrightness(100); setContrast(100); setSaturation(100); 
+                                setSharpness(0); setSmoothness(0); setEdgeSoftness(0); setBeautyFace(0); 
+                                setIsUltraHD(false); 
+                              }} className="text-xs text-accent font-bold hover:underline">Reset</button>
+                            </div>
+
+                            <label className="flex items-center gap-2 p-3 bg-accent/5 border border-accent/20 rounded-xl cursor-pointer hover:bg-accent/10 transition-colors">
+                              <input type="checkbox" checked={isUltraHD} onChange={(e) => setIsUltraHD(e.target.checked)} className="accent-accent w-4 h-4" />
+                              <span className="text-sm font-bold text-accent flex items-center gap-1"><Sparkles className="w-4 h-4" /> Ultra HD Enhance</span>
+                            </label>
+
+                            <div className="space-y-4">
+                              {[
+                                { label: 'Brightness', val: brightness, set: setBrightness, min: 50, max: 150, unit: '%' },
+                                { label: 'Contrast', val: contrast, set: setContrast, min: 50, max: 150, unit: '%' },
+                                { label: 'Saturation', val: saturation, set: setSaturation, min: 0, max: 200, unit: '%' },
+                                { label: 'Sharpness', val: sharpness, set: setSharpness, min: 0, max: 100, unit: '' },
+                                { label: 'Skin Smoothing', val: smoothness, set: setSmoothness, min: 0, max: 100, unit: '' },
+                                { label: 'Edge Adjustment', val: edgeSoftness, set: setEdgeSoftness, min: 0, max: 100, unit: '' },
+                                { label: 'Beauty Face', val: beautyFace, set: setBeautyFace, min: 0, max: 100, unit: '' }
+                              ].map(adj => (
+                                <div key={adj.label}>
+                                  <div className="flex justify-between text-xs font-bold text-text-primary mb-1">
+                                    <span>{adj.label}</span>
+                                    <span>{adj.val}{adj.unit}</span>
+                                  </div>
+                                  <input 
+                                    type="range" 
+                                    min={adj.min} max={adj.max} 
+                                    value={adj.val} 
+                                    onChange={(e) => adj.set(Number(e.target.value))}
+                                    className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                                  />
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       )}
+                    </>
+                  )}
 
-                      <div className="pt-4 border-t border-border space-y-6">
-                        <div className="flex items-center justify-between">
-                          <h3 className="font-bold text-lg flex items-center gap-2">
-                            <Sliders className="w-5 h-5 text-accent" /> Adjustments
-                          </h3>
-                          <button onClick={() => { 
-                            setBrightness(100); setContrast(100); setSaturation(100); 
-                            setSharpness(0); setSmoothness(0); setEdgeSoftness(0); setBeautyFace(0); 
-                            setIsUltraHD(false); 
-                          }} className="text-xs text-accent font-bold hover:underline">Reset</button>
+                  {/* Tips Box */}
+                  <div className="bg-accent/5 border border-accent/20 rounded-2xl p-4">
+                    <h4 className="font-bold text-accent text-sm mb-2 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4" /> Pro Tips
+                    </h4>
+                    <ul className="text-[10px] text-text-secondary space-y-1.5 list-disc pl-4">
+                      <li>Use well-lit photos for best results.</li>
+                      <li>Clear contrast between subject and background helps AI.</li>
+                      <li>Use "Manual Touchup" to fix tiny details.</li>
+                      <li>Download as PNG to keep transparency.</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sidebar Actions */}
+              <div className="sidebar-actions">
+                {isManualMode ? (
+                  <button onClick={() => setIsManualMode(false)} className="w-full btn bp py-3 rounded-xl font-bold">
+                    Done Touchup
+                  </button>
+                ) : (
+                  resultImage && (
+                    <div className="flex flex-col gap-2">
+                      <button onClick={downloadImage} className="w-full btn bp py-3 rounded-xl gap-2 font-bold shadow-lg shadow-accent/20">
+                        <Download className="w-5 h-5" /> Download Image
+                      </button>
+                      <button onClick={onReset} className="w-full text-xs font-bold text-text-muted hover:text-red-500 transition-colors py-2">
+                        Start Over
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
+            </aside>
+
+            {/* --- MAIN PREVIEW --- */}
+            <main className="tool-main-preview">
+              <div className="preview-content-wrapper">
+                <div className="relative w-full h-full bg-bg-secondary rounded-3xl overflow-hidden border border-border flex items-center justify-center group shadow-inner">
+                  {isManualMode ? (
+                    <canvas
+                      ref={canvasRef}
+                      onMouseDown={startDrawing}
+                      onMouseMove={draw}
+                      onMouseUp={stopDrawing}
+                      onMouseLeave={stopDrawing}
+                      onTouchStart={startDrawing}
+                      onTouchMove={draw}
+                      onTouchEnd={stopDrawing}
+                      className="max-w-full max-h-full cursor-crosshair shadow-2xl"
+                    />
+                  ) : (
+                    <div className="relative w-full h-full flex items-center justify-center">
+                      <img 
+                        src={resultImage || imageSrc} 
+                        alt="Preview" 
+                        className="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
+                        style={{ 
+                          backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
+                          backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
+                          backgroundSize: '20px 20px',
+                          backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                        }}
+                      />
+                      
+                      {isProcessing && (
+                        <div className="preview-loading-overlay">
+                          <div className="flex flex-col items-center text-center">
+                            <Loader2 className="w-12 h-12 animate-spin mb-4 text-accent" />
+                            <p className="font-bold text-xl mb-2 text-white">{statusText}</p>
+                            <p className="text-sm text-white/70">This usually takes a few seconds...</p>
+                          </div>
                         </div>
-
-                        <label className="flex items-center gap-2 p-3 bg-accent/5 border border-accent/20 rounded-xl cursor-pointer hover:bg-accent/10 transition-colors">
-                          <input type="checkbox" checked={isUltraHD} onChange={(e) => setIsUltraHD(e.target.checked)} className="accent-accent w-4 h-4" />
-                          <span className="text-sm font-bold text-accent flex items-center gap-1"><Sparkles className="w-4 h-4" /> Ultra HD Enhance</span>
-                        </label>
-
-                        <div className="space-y-4">
-                          {[
-                            { label: 'Brightness', val: brightness, set: setBrightness, min: 50, max: 150, unit: '%' },
-                            { label: 'Contrast', val: contrast, set: setContrast, min: 50, max: 150, unit: '%' },
-                            { label: 'Saturation', val: saturation, set: setSaturation, min: 0, max: 200, unit: '%' },
-                            { label: 'Sharpness', val: sharpness, set: setSharpness, min: 0, max: 100, unit: '' },
-                            { label: 'Skin Smoothing', val: smoothness, set: setSmoothness, min: 0, max: 100, unit: '' },
-                            { label: 'Edge Adjustment', val: edgeSoftness, set: setEdgeSoftness, min: 0, max: 100, unit: '' },
-                            { label: 'Beauty Face', val: beautyFace, set: setBeautyFace, min: 0, max: 100, unit: '' }
-                          ].map(adj => (
-                            <div key={adj.label}>
-                              <div className="flex justify-between text-xs font-bold text-text-primary mb-1">
-                                <span>{adj.label}</span>
-                                <span>{adj.val}{adj.unit}</span>
-                              </div>
-                              <input 
-                                type="range" 
-                                min={adj.min} max={adj.max} 
-                                value={adj.val} 
-                                onChange={(e) => adj.set(Number(e.target.value))}
-                                className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
-                              />
-                            </div>
-                          ))}
-                        </div>
-
-                        <button onClick={downloadImage} className="w-full btn bp py-4 rounded-2xl gap-2 text-lg shadow-lg shadow-accent/20">
-                          <Download className="w-5 h-5" /> Download Image
-                        </button>
-                        <button onClick={() => { setImageSrc(null); setResultImage(null); }} className="w-full mt-3 text-sm font-bold text-text-muted hover:text-red-500 transition-colors">
-                          Start Over
-                        </button>
-                      </div>
+                      )}
                     </div>
                   )}
-                </>
-              )}
+                  
+                  {/* Floating Controls */}
+                  <div className="absolute top-4 right-4 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onClick={onReset} className="p-3 bg-white/90 hover:bg-white text-red-500 rounded-full shadow-xl transition-all hover:scale-110">
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
 
-              {/* Tips Box */}
-              <div className="bg-accent/5 border border-accent/20 rounded-3xl p-6">
-                <h4 className="font-bold text-accent mb-2 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4" /> Pro Tips
-                </h4>
-                <ul className="text-xs text-text-secondary space-y-2 list-disc pl-4">
-                  <li>Use well-lit photos for best results.</li>
-                  <li>Clear contrast between subject and background helps AI.</li>
-                  <li>Use "Manual Touchup" to fix tiny details.</li>
-                  <li>Download as PNG to keep transparency.</li>
-                </ul>
+                {/* Status Bar */}
+                {resultImage && !isManualMode && (
+                  <div className="mt-4 flex items-center justify-between bg-accent/5 border border-accent/20 rounded-2xl p-4 animate-in slide-in-from-bottom-4">
+                    <div className="flex items-center gap-2 text-accent">
+                      <Check className="w-5 h-5" />
+                      <span className="font-bold text-sm">Background Removed Perfectly!</span>
+                    </div>
+                    <button onClick={() => setIsManualMode(true)} className="text-sm font-bold text-accent hover:underline flex items-center gap-1 bg-accent/10 px-3 py-1.5 rounded-lg transition-colors">
+                      <Eraser className="w-4 h-4" /> Manual Touchup
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
+            </main>
           </div>
-        )}
-      </div>
+        );
+      }}
     </ToolLayout>
   );
 }

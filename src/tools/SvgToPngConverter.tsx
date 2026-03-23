@@ -508,444 +508,466 @@ export default function SvgToPngConverter() {
         if (files.length === 0) return null;
 
         return (
-    <div className="w-full max-w-[1920px] mx-auto p-4 lg:h-[85vh] lg:min-h-[800px] flex flex-col">
-      {/* Top Bar */}
-      <div className="bg-bg-surface border border-border rounded-xl p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm shrink-0">
-        <div className="flex flex-wrap items-center justify-center gap-4">
-          <h2 className="font-bold text-lg hidden sm:block">SVG Editor</h2>
-          <div className="flex items-center gap-2 bg-bg-secondary rounded-lg p-1">
-            <button 
-              onClick={undo} 
-              disabled={historyIndex === 0}
-              className="p-2 rounded hover:bg-bg-surface disabled:opacity-50 transition-colors"
-              title="Undo"
-            >
-              <Undo className="w-4 h-4" />
-            </button>
-            <button 
-              onClick={redo} 
-              disabled={historyIndex === history.length - 1}
-              className="p-2 rounded hover:bg-bg-surface disabled:opacity-50 transition-colors"
-              title="Redo"
-            >
-              <Redo className="w-4 h-4" />
-            </button>
-          </div>
-          <div className="flex items-center gap-2 bg-bg-secondary rounded-lg p-1">
-            <button onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} className="p-2 rounded hover:bg-bg-surface"><ZoomOut className="w-4 h-4" /></button>
-            <span className="text-xs font-mono w-12 text-center">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom(z => Math.min(5, z + 0.1))} className="p-2 rounded hover:bg-bg-surface"><ZoomIn className="w-4 h-4" /></button>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-3 w-full sm:w-auto justify-center">
-          <button onClick={() => clearAll(onReset)} className="text-sm font-medium text-text-muted hover:text-red-500 transition-colors">
-            Clear All
-          </button>
-          <button 
-            onClick={handleConvertAll}
-            disabled={isConverting}
-            className="btn bp py-2 px-6 flex items-center gap-2 flex-1 sm:flex-none justify-center"
-          >
-            {isConverting ? (
-              <span className="flex items-center gap-2">
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Exporting...
-              </span>
-            ) : (
-              <>
-                <Download className="w-4 h-4" /> Export All
-              </>
-            )}
-          </button>
-        </div>
-      </div>
+          <div className="tool-layout-container">
+            {/* Sidebar: Files & Settings */}
+            <aside className="tool-sidebar">
+              <div className="sidebar-content">
+                {/* File List Section */}
+                <div className="space-y-4 mb-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-text-muted uppercase tracking-wider flex items-center gap-2">
+                      <Layers className="w-3 h-3" /> Files ({files.length})
+                    </h3>
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-1.5 bg-accent/10 text-accent rounded-lg hover:bg-accent/20 transition-colors"
+                      title="Add more files"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileChange}
+                      accept=".svg,image/svg+xml"
+                      multiple
+                      className="hidden"
+                    />
+                  </div>
+                  
+                  <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                    {files.map(file => (
+                      <div 
+                        key={file.id}
+                        onClick={() => setSelectedFileId(file.id)}
+                        className={`p-2 rounded-xl border cursor-pointer flex items-center gap-3 transition-all group ${
+                          selectedFileId === file.id 
+                            ? 'border-accent bg-accent/5 ring-1 ring-accent/20' 
+                            : 'border-border hover:border-accent/30 hover:bg-bg-secondary'
+                        }`}
+                      >
+                        <div className="w-10 h-10 rounded-lg bg-bg-surface border border-border flex items-center justify-center shrink-0 checkerboard-bg overflow-hidden">
+                          <img src={file.previewUrl} alt="" className="max-w-full max-h-full object-contain p-1" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold truncate">{file.name}</p>
+                          <p className="text-[10px] text-text-muted">{file.width}x{file.height}</p>
+                        </div>
+                        <button 
+                          onClick={(e) => removeFile(file.id, e)}
+                          className="p-1.5 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-4 flex-1 min-h-0">
-        {/* Left Side: File List & Preview */}
-        <div className="flex flex-col lg:flex-row gap-4 min-h-0">
-          {/* File List Sidebar */}
-          <div className="w-full lg:w-56 bg-bg-surface border border-border rounded-xl flex flex-col shadow-sm shrink-0 overflow-hidden max-h-[30vh] lg:max-h-none">
-            <div className="p-3 border-b border-border flex items-center justify-between bg-bg-secondary/50">
-              <h3 className="font-bold text-xs">Files ({files.length})</h3>
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="p-1 bg-accent/10 text-accent rounded-lg hover:bg-accent/20 transition-colors"
-                title="Add more files"
-              >
-                <Plus className="w-3 h-3" />
-              </button>
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept=".svg,image/svg+xml"
-                multiple
-                className="hidden"
-              />
-            </div>
-            <div className="flex-1 overflow-y-auto p-1.5 space-y-1.5">
-              {files.map(file => (
-                <div 
-                  key={file.id}
-                  onClick={() => setSelectedFileId(file.id)}
-                  className={`p-1.5 rounded-lg border cursor-pointer flex items-center gap-2 transition-colors group ${
-                    selectedFileId === file.id 
-                      ? 'border-accent bg-accent/5' 
-                      : 'border-transparent hover:bg-bg-secondary'
-                  }`}
+                <hr className="border-border mb-6" />
+
+                {/* Customization Section */}
+                <div className="space-y-6">
+                  <h3 className="text-xs font-bold text-text-muted uppercase tracking-wider flex items-center gap-2">
+                    <Settings className="w-3 h-3" /> Customization
+                  </h3>
+
+                  {/* Background Settings */}
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-medium text-text-secondary flex items-center gap-2">
+                      <Droplet className="w-3 h-3" /> Background
+                    </h4>
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={currentState.isTransparent}
+                          onChange={(e) => updateState({ isTransparent: e.target.checked })}
+                          className="rounded border-border text-accent focus:ring-accent"
+                        />
+                        Transparent
+                      </label>
+                    </div>
+                    {!currentState.isTransparent && (
+                      <div className="flex items-center gap-3 bg-bg-secondary p-2 rounded-lg border border-border">
+                        <input 
+                          type="color" 
+                          value={currentState.bgColor}
+                          onChange={(e) => updateState({ bgColor: e.target.value })}
+                          className="w-8 h-8 rounded-lg cursor-pointer border-0 p-0 overflow-hidden"
+                        />
+                        <span className="text-xs font-mono font-medium">{currentState.bgColor}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Shadow Settings */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-medium text-text-secondary flex items-center gap-2">
+                        <Box className="w-3 h-3" /> Shadow
+                      </h4>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" className="sr-only peer" checked={currentState.shadow.enabled} onChange={(e) => updateState({ shadow: { ...currentState.shadow, enabled: e.target.checked } })} />
+                        <div className="w-8 h-4 bg-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-accent"></div>
+                      </label>
+                    </div>
+                    
+                    {currentState.shadow.enabled && (
+                      <div className="space-y-4 bg-bg-secondary p-3 rounded-xl border border-border">
+                        <div className="flex items-center gap-3">
+                          <input type="color" value={currentState.shadow.color} onChange={(e) => updateState({ shadow: { ...currentState.shadow, color: e.target.value } })} className="w-6 h-6 rounded-md cursor-pointer border-0 p-0" />
+                          <span className="text-xs font-medium">Color</span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] font-bold text-text-muted uppercase"><span>Blur</span><span>{currentState.shadow.blur}px</span></div>
+                          <input type="range" min="0" max="50" value={currentState.shadow.blur} onChange={(e) => updateState({ shadow: { ...currentState.shadow, blur: parseInt(e.target.value) } })} className="w-full accent-accent" />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-text-muted uppercase block">Offset X</span>
+                            <input type="number" value={currentState.shadow.offsetX} onChange={(e) => updateState({ shadow: { ...currentState.shadow, offsetX: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+                          </div>
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-text-muted uppercase block">Offset Y</span>
+                            <input type="number" value={currentState.shadow.offsetY} onChange={(e) => updateState({ shadow: { ...currentState.shadow, offsetY: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Border Settings */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-medium text-text-secondary flex items-center gap-2">
+                        <Square className="w-3 h-3" /> Border
+                      </h4>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" className="sr-only peer" checked={currentState.border.enabled} onChange={(e) => updateState({ border: { ...currentState.border, enabled: e.target.checked } })} />
+                        <div className="w-8 h-4 bg-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-accent"></div>
+                      </label>
+                    </div>
+                    
+                    {currentState.border.enabled && (
+                      <div className="space-y-4 bg-bg-secondary p-3 rounded-xl border border-border">
+                        <div className="flex items-center gap-3">
+                          <input type="color" value={currentState.border.color} onChange={(e) => updateState({ border: { ...currentState.border, color: e.target.value } })} className="w-6 h-6 rounded-md cursor-pointer border-0 p-0" />
+                          <span className="text-xs font-medium">Color</span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] font-bold text-text-muted uppercase"><span>Width</span><span>{currentState.border.width}px</span></div>
+                          <input type="range" min="1" max="50" value={currentState.border.width} onChange={(e) => updateState({ border: { ...currentState.border, width: parseInt(e.target.value) } })} className="w-full accent-accent" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Watermark Settings */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-medium text-text-secondary flex items-center gap-2">
+                        <Type className="w-3 h-3" /> Watermark
+                      </h4>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" className="sr-only peer" checked={currentState.watermark.enabled} onChange={(e) => updateState({ watermark: { ...currentState.watermark, enabled: e.target.checked } })} />
+                        <div className="w-8 h-4 bg-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-accent"></div>
+                      </label>
+                    </div>
+                    
+                    {currentState.watermark.enabled && (
+                      <div className="space-y-4 bg-bg-secondary p-3 rounded-xl border border-border">
+                        <input 
+                          type="text" 
+                          value={currentState.watermark.text}
+                          onChange={(e) => updateState({ watermark: { ...currentState.watermark, text: e.target.value } })}
+                          className="w-full bg-bg-surface border border-border rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-accent/20 outline-none"
+                          placeholder="Watermark text"
+                        />
+                        <div className="flex items-center gap-3">
+                          <input type="color" value={currentState.watermark.color.length === 7 ? currentState.watermark.color : '#ffffff'} onChange={(e) => updateState({ watermark: { ...currentState.watermark, color: e.target.value } })} className="w-6 h-6 rounded-md cursor-pointer border-0 p-0" />
+                          <span className="text-xs font-medium">Color</span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] font-bold text-text-muted uppercase"><span>Font Size</span><span>{currentState.watermark.fontSize}px</span></div>
+                          <input type="range" min="10" max="200" value={currentState.watermark.fontSize} onChange={(e) => updateState({ watermark: { ...currentState.watermark, fontSize: parseInt(e.target.value) } })} className="w-full accent-accent" />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold text-text-muted uppercase block">Font Family</span>
+                          <select 
+                            value={currentState.watermark.fontFamily}
+                            onChange={(e) => updateState({ watermark: { ...currentState.watermark, fontFamily: e.target.value } })}
+                            className="w-full bg-bg-surface border border-border rounded-lg px-2 py-2 text-xs outline-none focus:ring-2 focus:ring-accent/20"
+                          >
+                            <option value="Arial">Arial</option>
+                            <option value="Times New Roman">Times New Roman</option>
+                            <option value="Courier New">Courier New</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Verdana">Verdana</option>
+                            <option value="Impact">Impact</option>
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-text-muted uppercase block">Pos X</span>
+                            <input type="number" value={Math.round(currentState.watermark.x)} onChange={(e) => updateState({ watermark: { ...currentState.watermark, x: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+                          </div>
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold text-text-muted uppercase block">Pos Y</span>
+                            <input type="number" value={Math.round(currentState.watermark.y)} onChange={(e) => updateState({ watermark: { ...currentState.watermark, y: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <hr className="border-border" />
+
+                  {/* Export Settings */}
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider flex items-center gap-2">
+                      <Download className="w-3 h-3" /> Export Settings
+                    </h4>
+                    
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-bold text-text-muted uppercase block">Format</span>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(['png', 'jpeg', 'webp'] as const).map((fmt) => (
+                          <button
+                            key={fmt}
+                            onClick={() => updateState({ exportFormat: fmt })}
+                            className={`py-2 px-2 rounded-xl text-[10px] font-bold border transition-all uppercase ${
+                              currentState.exportFormat === fmt 
+                                ? 'border-accent bg-accent/5 text-accent ring-1 ring-accent/20' 
+                                : 'border-border hover:border-accent/30 text-text-secondary'
+                            }`}
+                          >
+                            {fmt}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-bold text-text-muted uppercase block">Resolution</span>
+                      <div className="grid grid-cols-4 gap-2">
+                        {(['1x', '2x', '4x', 'custom'] as const).map((res) => (
+                          <button
+                            key={res}
+                            onClick={() => updateState({ exportResolution: res })}
+                            className={`py-2 px-1 rounded-xl text-[10px] font-bold border transition-all ${
+                              currentState.exportResolution === res 
+                                ? 'border-accent bg-accent/5 text-accent ring-1 ring-accent/20' 
+                                : 'border-border hover:border-accent/30 text-text-secondary'
+                            }`}
+                          >
+                            {res === '1x' ? 'Orig' : res === '2x' ? 'HD' : res === '4x' ? '4K' : 'Cust'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {currentState.exportResolution === 'custom' && (
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-text-muted uppercase block">Custom Width (px)</span>
+                        <input 
+                          type="number" 
+                          value={currentState.customWidth} 
+                          onChange={(e) => updateState({ customWidth: Math.max(1, parseInt(e.target.value) || 1) })}
+                          className="w-full bg-bg-surface border border-border rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-accent/20"
+                        />
+                        <p className="text-[10px] text-text-muted italic">Height calculated automatically.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <RelatedTools currentToolId="svg-to-png" />
+              </div>
+
+              <div className="sidebar-actions">
+                <button 
+                  onClick={() => selectedFile && handleConvertSingle(selectedFile.id)}
+                  disabled={!selectedFile || isConverting}
+                  className="w-full btn bp py-3 text-sm flex items-center justify-center gap-2"
                 >
-                  <div className="w-9 h-9 rounded bg-bg-surface border border-border flex items-center justify-center shrink-0 checkerboard-bg overflow-hidden">
-                    <img src={file.previewUrl} alt="" className="max-w-full max-h-full object-contain p-0.5" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium truncate">{file.name}</p>
-                    <p className="text-[10px] text-text-muted">{file.width}x{file.height}</p>
-                  </div>
+                  <Download className="w-4 h-4" /> Export Current
+                </button>
+                <button 
+                  onClick={handleConvertAll}
+                  disabled={isConverting || files.length === 0}
+                  className="w-full btn bs py-3 text-sm flex items-center justify-center gap-2"
+                >
+                  {isConverting ? (
+                    <span className="flex items-center gap-2">
+                      <div className="w-4 h-4 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+                      Exporting...
+                    </span>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" /> Export All ({files.length})
+                    </>
+                  )}
+                </button>
+              </div>
+            </aside>
+
+            {/* Main Preview Area */}
+            <main className="tool-main-preview">
+              {/* Toolbar */}
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-bg-surface/90 backdrop-blur-md border border-border p-1.5 rounded-2xl shadow-xl">
+                <div className="flex items-center gap-1 border-r border-border pr-1 mr-1">
                   <button 
-                    onClick={(e) => removeFile(file.id, e)}
-                    className="p-1 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded opacity-0 group-hover:opacity-100 transition-all"
+                    onClick={undo} 
+                    disabled={historyIndex === 0}
+                    className="p-2 rounded-xl hover:bg-bg-secondary disabled:opacity-30 transition-all"
+                    title="Undo"
                   >
-                    <X className="w-3 h-3" />
+                    <Undo className="w-4 h-4" />
+                  </button>
+                  <button 
+                    onClick={redo} 
+                    disabled={historyIndex === history.length - 1}
+                    className="p-2 rounded-xl hover:bg-bg-secondary disabled:opacity-30 transition-all"
+                    title="Redo"
+                  >
+                    <Redo className="w-4 h-4" />
                   </button>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Live Preview */}
-          <div className="flex-1 bg-bg-secondary border border-border rounded-xl overflow-hidden relative shadow-inner flex items-center justify-center min-h-[400px] lg:min-h-0 touch-none"
-               ref={previewContainerRef}
-               onWheel={handleWheel}
-               onMouseDown={handlePreviewMouseDown}
-               onMouseMove={handlePreviewMouseMove}
-               onMouseUp={handlePreviewMouseUp}
-               onMouseLeave={handlePreviewMouseUp}
-               onTouchStart={handlePreviewTouchStart}
-               onTouchMove={handlePreviewTouchMove}
-               onTouchEnd={handlePreviewTouchEnd}>
-            
-            {selectedFile ? (
-              <div 
-                className="relative transition-transform duration-75"
-                style={{ 
-                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                  cursor: isPanning ? 'grabbing' : 'grab'
-                }}
-              >
-                {/* Background */}
-                <div 
-                  className="absolute inset-0 shadow-sm"
-                  style={{
-                    backgroundColor: currentState.isTransparent ? 'transparent' : currentState.bgColor,
-                    backgroundImage: currentState.isTransparent ? `
-                      linear-gradient(45deg, #e5e5e5 25%, transparent 25%),
-                      linear-gradient(-45deg, #e5e5e5 25%, transparent 25%),
-                      linear-gradient(45deg, transparent 75%, #e5e5e5 75%),
-                      linear-gradient(-45deg, transparent 75%, #e5e5e5 75%)
-                    ` : 'none',
-                    backgroundSize: '20px 20px',
-                    backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
-                  }}
-                />
                 
-                {/* SVG Image */}
-                <img 
-                  src={selectedFile.previewUrl} 
-                  alt="Preview" 
-                  className="relative z-10 pointer-events-none"
-                  style={{
-                    width: selectedFile.width,
-                    height: selectedFile.height,
-                    filter: currentState.shadow.enabled ? `drop-shadow(${currentState.shadow.offsetX}px ${currentState.shadow.offsetY}px ${currentState.shadow.blur}px ${currentState.shadow.color})` : 'none',
-                    border: currentState.border.enabled ? `${currentState.border.width}px solid ${currentState.border.color}` : 'none',
-                    boxSizing: 'border-box'
-                  }}
-                />
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} className="p-2 rounded-xl hover:bg-bg-secondary transition-all"><ZoomOut className="w-4 h-4" /></button>
+                  <div className="px-3 py-1 bg-bg-secondary rounded-lg text-[10px] font-bold font-mono min-w-[60px] text-center">
+                    {Math.round(zoom * 100)}%
+                  </div>
+                  <button onClick={() => setZoom(z => Math.min(5, z + 0.1))} className="p-2 rounded-xl hover:bg-bg-secondary transition-all"><ZoomIn className="w-4 h-4" /></button>
+                  <button onClick={() => { setZoom(0.5); setPan({x: 0, y: 0}); }} className="p-2 rounded-xl hover:bg-bg-secondary transition-all" title="Reset View"><RotateCcw className="w-4 h-4" /></button>
+                </div>
+              </div>
 
-                {/* Watermark */}
-                {currentState.watermark.enabled && (
+              <div className="preview-content-wrapper checkerboard-bg"
+                   ref={previewContainerRef}
+                   onWheel={handleWheel}
+                   onMouseDown={handlePreviewMouseDown}
+                   onMouseMove={handlePreviewMouseMove}
+                   onMouseUp={handlePreviewMouseUp}
+                   onMouseLeave={handlePreviewMouseUp}
+                   onTouchStart={handlePreviewTouchStart}
+                   onTouchMove={handlePreviewTouchMove}
+                   onTouchEnd={handlePreviewTouchEnd}>
+                
+                {selectedFile ? (
                   <div 
-                    className="absolute z-20 cursor-move hover:outline hover:outline-2 hover:outline-accent/50 p-1"
-                    style={{
-                      left: (localWatermarkPos ? localWatermarkPos.x : currentState.watermark.x),
-                      top: (localWatermarkPos ? localWatermarkPos.y : currentState.watermark.y),
-                      color: currentState.watermark.color,
-                      fontSize: `${currentState.watermark.fontSize}px`,
-                      fontFamily: currentState.watermark.fontFamily,
-                      whiteSpace: 'nowrap',
-                      userSelect: 'none'
+                    className="relative transition-transform duration-75 will-change-transform"
+                    style={{ 
+                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                      cursor: isPanning ? 'grabbing' : 'grab'
                     }}
-                    onMouseDown={handleTextMouseDown}
-                    onTouchStart={handleTextTouchStart}
-                    onTouchMove={handleTextTouchMove}
-                    onTouchEnd={handleTextTouchEnd}
                   >
-                    {currentState.watermark.text}
+                    {/* Background */}
+                    <div 
+                      className="absolute inset-0 shadow-2xl"
+                      style={{
+                        backgroundColor: currentState.isTransparent ? 'transparent' : currentState.bgColor,
+                        backgroundImage: currentState.isTransparent ? `
+                          linear-gradient(45deg, #e5e5e5 25%, transparent 25%),
+                          linear-gradient(-45deg, #e5e5e5 25%, transparent 25%),
+                          linear-gradient(45deg, transparent 75%, #e5e5e5 75%),
+                          linear-gradient(-45deg, transparent 75%, #e5e5e5 75%)
+                        ` : 'none',
+                        backgroundSize: '20px 20px',
+                        backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                      }}
+                    />
+                    
+                    {/* SVG Image */}
+                    <img 
+                      src={selectedFile.previewUrl} 
+                      alt="Preview" 
+                      className="relative z-10 pointer-events-none select-none"
+                      style={{
+                        width: selectedFile.width,
+                        height: selectedFile.height,
+                        filter: currentState.shadow.enabled ? `drop-shadow(${currentState.shadow.offsetX}px ${currentState.shadow.offsetY}px ${currentState.shadow.blur}px ${currentState.shadow.color})` : 'none',
+                        border: currentState.border.enabled ? `${currentState.border.width}px solid ${currentState.border.color}` : 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+
+                    {/* Watermark */}
+                    {currentState.watermark.enabled && (
+                      <div 
+                        className="absolute z-20 cursor-move hover:outline hover:outline-2 hover:outline-accent/50 p-1 rounded transition-shadow"
+                        style={{
+                          left: (localWatermarkPos ? localWatermarkPos.x : currentState.watermark.x),
+                          top: (localWatermarkPos ? localWatermarkPos.y : currentState.watermark.y),
+                          color: currentState.watermark.color,
+                          fontSize: `${currentState.watermark.fontSize}px`,
+                          fontFamily: currentState.watermark.fontFamily,
+                          whiteSpace: 'nowrap',
+                          userSelect: 'none',
+                          textShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        }}
+                        onMouseDown={handleTextMouseDown}
+                        onTouchStart={handleTextTouchStart}
+                        onTouchMove={handleTextTouchMove}
+                        onTouchEnd={handleTextTouchEnd}
+                      >
+                        {currentState.watermark.text}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="preview-placeholder">
+                    <div className="w-20 h-20 bg-bg-secondary rounded-full flex items-center justify-center mb-4">
+                      <ImageIcon className="w-10 h-10 text-text-muted opacity-20" />
+                    </div>
+                    <p className="text-text-muted font-medium">Select a file to preview</p>
                   </div>
                 )}
+                
+                {/* Instructions overlay */}
+                <div className="absolute bottom-6 left-6 bg-bg-surface/90 backdrop-blur-md text-[10px] font-bold uppercase tracking-widest px-4 py-2.5 rounded-xl border border-border text-text-secondary pointer-events-none shadow-lg flex flex-col gap-1">
+                  <div className="flex items-center gap-2"><span className="w-1 h-1 bg-accent rounded-full"></span> Ctrl + Scroll: Zoom</div>
+                  <div className="flex items-center gap-2"><span className="w-1 h-1 bg-accent rounded-full"></span> Alt + Drag: Pan</div>
+                  {currentState.watermark.enabled && <div className="flex items-center gap-2"><span className="w-1 h-1 bg-accent rounded-full"></span> Drag text: Move watermark</div>}
+                </div>
               </div>
-            ) : (
-              <div className="text-text-muted flex flex-col items-center">
-                <ImageIcon className="w-12 h-12 mb-2 opacity-50" />
-                <p>Select a file to preview</p>
-              </div>
-            )}
-            
-            {/* Instructions overlay */}
-            <div className="absolute bottom-4 left-4 bg-bg-surface/80 backdrop-blur text-xs px-3 py-2 rounded-lg border border-border text-text-secondary pointer-events-none">
-              <p><strong>Ctrl + Scroll:</strong> Zoom</p>
-              <p><strong>Alt + Drag:</strong> Pan canvas</p>
-              {currentState.watermark.enabled && <p><strong>Drag text:</strong> Move watermark</p>}
-            </div>
+            </main>
+
+            <style dangerouslySetInnerHTML={{__html: `
+              .checkerboard-bg {
+                background-image: linear-gradient(45deg, #e5e5e5 25%, transparent 25%),
+                  linear-gradient(-45deg, #e5e5e5 25%, transparent 25%),
+                  linear-gradient(45deg, transparent 75%, #e5e5e5 75%),
+                  linear-gradient(-45deg, transparent 75%, #e5e5e5 75%);
+                background-size: 20px 20px;
+                background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+              }
+              .dark .checkerboard-bg {
+                background-image: linear-gradient(45deg, #2a2a2a 25%, transparent 25%),
+                  linear-gradient(-45deg, #2a2a2a 25%, transparent 25%),
+                  linear-gradient(45deg, transparent 75%, #2a2a2a 75%),
+                  linear-gradient(-45deg, transparent 75%, #2a2a2a 75%);
+              }
+              .custom-scrollbar::-webkit-scrollbar {
+                width: 4px;
+              }
+              .custom-scrollbar::-webkit-scrollbar-track {
+                background: transparent;
+              }
+              .custom-scrollbar::-webkit-scrollbar-thumb {
+                background: var(--border);
+                border-radius: 10px;
+              }
+              .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+                background: var(--text-muted);
+              }
+            `}} />
           </div>
-        </div>
-
-        {/* Right Sidebar - Controls */}
-        <div className="w-full bg-bg-surface border border-border rounded-xl shadow-sm shrink-0 overflow-y-auto max-h-[50vh] lg:max-h-none">
-          <div className="p-4 border-b border-border bg-bg-secondary/50 sticky top-0 z-10">
-            <h3 className="font-bold text-sm flex items-center gap-2"><Settings className="w-4 h-4" /> Customization</h3>
-          </div>
-          
-          <div className="p-4 space-y-6">
-            {/* Background Settings */}
-            <div className="space-y-3">
-              <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider flex items-center gap-2"><Droplet className="w-3 h-3" /> Background</h4>
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    checked={currentState.isTransparent}
-                    onChange={(e) => updateState({ isTransparent: e.target.checked })}
-                    className="rounded border-border text-accent focus:ring-accent"
-                  />
-                  Transparent
-                </label>
-              </div>
-              {!currentState.isTransparent && (
-                <div className="flex items-center gap-3">
-                  <input 
-                    type="color" 
-                    value={currentState.bgColor}
-                    onChange={(e) => updateState({ bgColor: e.target.value })}
-                    className="w-8 h-8 rounded cursor-pointer border-0 p-0"
-                  />
-                  <span className="text-sm font-mono">{currentState.bgColor}</span>
-                </div>
-              )}
-            </div>
-
-            <hr className="border-border" />
-
-            {/* Shadow Settings */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider flex items-center gap-2"><Layers className="w-3 h-3" /> Shadow</h4>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" className="sr-only peer" checked={currentState.shadow.enabled} onChange={(e) => updateState({ shadow: { ...currentState.shadow, enabled: e.target.checked } })} />
-                  <div className="w-9 h-5 bg-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
-                </label>
-              </div>
-              
-              {currentState.shadow.enabled && (
-                <div className="space-y-3 bg-bg-secondary p-3 rounded-lg border border-border">
-                  <div className="flex items-center gap-3">
-                    <input type="color" value={currentState.shadow.color} onChange={(e) => updateState({ shadow: { ...currentState.shadow, color: e.target.value } })} className="w-6 h-6 rounded cursor-pointer border-0 p-0" />
-                    <span className="text-xs">Color</span>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-xs mb-1"><span>Blur</span><span>{currentState.shadow.blur}px</span></div>
-                    <input type="range" min="0" max="50" value={currentState.shadow.blur} onChange={(e) => updateState({ shadow: { ...currentState.shadow, blur: parseInt(e.target.value) } })} className="w-full accent-accent" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <span className="text-xs text-text-muted block mb-1">Offset X</span>
-                      <input type="number" value={currentState.shadow.offsetX} onChange={(e) => updateState({ shadow: { ...currentState.shadow, offsetX: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded px-2 py-1 text-sm" />
-                    </div>
-                    <div>
-                      <span className="text-xs text-text-muted block mb-1">Offset Y</span>
-                      <input type="number" value={currentState.shadow.offsetY} onChange={(e) => updateState({ shadow: { ...currentState.shadow, offsetY: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded px-2 py-1 text-sm" />
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <hr className="border-border" />
-
-            {/* Border Settings */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider flex items-center gap-2"><Square className="w-3 h-3" /> Border</h4>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" className="sr-only peer" checked={currentState.border.enabled} onChange={(e) => updateState({ border: { ...currentState.border, enabled: e.target.checked } })} />
-                  <div className="w-9 h-5 bg-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
-                </label>
-              </div>
-              
-              {currentState.border.enabled && (
-                <div className="space-y-3 bg-bg-secondary p-3 rounded-lg border border-border">
-                  <div className="flex items-center gap-3">
-                    <input type="color" value={currentState.border.color} onChange={(e) => updateState({ border: { ...currentState.border, color: e.target.value } })} className="w-6 h-6 rounded cursor-pointer border-0 p-0" />
-                    <span className="text-xs">Color</span>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-xs mb-1"><span>Width</span><span>{currentState.border.width}px</span></div>
-                    <input type="range" min="1" max="50" value={currentState.border.width} onChange={(e) => updateState({ border: { ...currentState.border, width: parseInt(e.target.value) } })} className="w-full accent-accent" />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <hr className="border-border" />
-
-            {/* Watermark Settings */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider flex items-center gap-2"><Type className="w-3 h-3" /> Watermark</h4>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" className="sr-only peer" checked={currentState.watermark.enabled} onChange={(e) => updateState({ watermark: { ...currentState.watermark, enabled: e.target.checked } })} />
-                  <div className="w-9 h-5 bg-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
-                </label>
-              </div>
-              
-              {currentState.watermark.enabled && (
-                <div className="space-y-3 bg-bg-secondary p-3 rounded-lg border border-border">
-                  <input 
-                    type="text" 
-                    value={currentState.watermark.text}
-                    onChange={(e) => updateState({ watermark: { ...currentState.watermark, text: e.target.value } })}
-                    className="w-full bg-bg-surface border border-border rounded px-3 py-2 text-sm"
-                    placeholder="Watermark text"
-                  />
-                  <div className="flex items-center gap-3">
-                    <input type="color" value={currentState.watermark.color.length === 7 ? currentState.watermark.color : '#ffffff'} onChange={(e) => updateState({ watermark: { ...currentState.watermark, color: e.target.value } })} className="w-6 h-6 rounded cursor-pointer border-0 p-0" />
-                    <span className="text-xs">Color</span>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-xs mb-1"><span>Font Size</span><span>{currentState.watermark.fontSize}px</span></div>
-                    <input type="range" min="10" max="200" value={currentState.watermark.fontSize} onChange={(e) => updateState({ watermark: { ...currentState.watermark, fontSize: parseInt(e.target.value) } })} className="w-full accent-accent" />
-                  </div>
-                  <div>
-                    <span className="text-xs text-text-muted block mb-1">Font Family</span>
-                    <select 
-                      value={currentState.watermark.fontFamily}
-                      onChange={(e) => updateState({ watermark: { ...currentState.watermark, fontFamily: e.target.value } })}
-                      className="w-full bg-bg-surface border border-border rounded px-2 py-1.5 text-sm"
-                    >
-                      <option value="Arial">Arial</option>
-                      <option value="Times New Roman">Times New Roman</option>
-                      <option value="Courier New">Courier New</option>
-                      <option value="Georgia">Georgia</option>
-                      <option value="Verdana">Verdana</option>
-                      <option value="Impact">Impact</option>
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <span className="text-xs text-text-muted block mb-1">Pos X</span>
-                      <input type="number" value={Math.round(currentState.watermark.x)} onChange={(e) => updateState({ watermark: { ...currentState.watermark, x: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded px-2 py-1 text-sm" />
-                    </div>
-                    <div>
-                      <span className="text-xs text-text-muted block mb-1">Pos Y</span>
-                      <input type="number" value={Math.round(currentState.watermark.y)} onChange={(e) => updateState({ watermark: { ...currentState.watermark, y: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded px-2 py-1 text-sm" />
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <hr className="border-border" />
-
-            {/* Export Settings */}
-            <div className="space-y-4">
-              <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider flex items-center gap-2"><Download className="w-3 h-3" /> Export Settings</h4>
-              
-              <div>
-                <span className="text-xs text-text-muted block mb-2">Format</span>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['png', 'jpeg', 'webp'] as const).map((fmt) => (
-                    <button
-                      key={fmt}
-                      onClick={() => updateState({ exportFormat: fmt })}
-                      className={`py-1.5 px-2 rounded-lg text-xs font-medium border transition-colors uppercase ${
-                        currentState.exportFormat === fmt 
-                          ? 'border-accent bg-accent/5 text-accent' 
-                          : 'border-border hover:border-accent/50 text-text-secondary'
-                      }`}
-                    >
-                      {fmt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <span className="text-xs text-text-muted block mb-2">Resolution</span>
-                <div className="grid grid-cols-4 gap-2">
-                  {(['1x', '2x', '4x', 'custom'] as const).map((res) => (
-                    <button
-                      key={res}
-                      onClick={() => updateState({ exportResolution: res })}
-                      className={`py-1.5 px-2 rounded-lg text-xs font-medium border transition-colors ${
-                        currentState.exportResolution === res 
-                          ? 'border-accent bg-accent/5 text-accent' 
-                          : 'border-border hover:border-accent/50 text-text-secondary'
-                      }`}
-                    >
-                      {res === '1x' ? 'Orig' : res === '2x' ? 'HD' : res === '4x' ? '4K' : 'Cust'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {currentState.exportResolution === 'custom' && (
-                <div>
-                  <span className="text-xs text-text-muted block mb-1">Custom Width (px)</span>
-                  <input 
-                    type="number" 
-                    value={currentState.customWidth} 
-                    onChange={(e) => updateState({ customWidth: Math.max(1, parseInt(e.target.value) || 1) })}
-                    className="w-full bg-bg-surface border border-border rounded px-3 py-2 text-sm"
-                  />
-                  <p className="text-[10px] text-text-muted mt-1">Height will be calculated automatically to maintain aspect ratio.</p>
-                </div>
-              )}
-              
-              <button 
-                onClick={() => selectedFile && handleConvertSingle(selectedFile.id)}
-                disabled={!selectedFile || isConverting}
-                className="w-full btn bp py-2 text-sm flex items-center justify-center gap-2 mt-4"
-              >
-                <Download className="w-4 h-4" /> Export Current
-              </button>
-            </div>
-
-          </div>
-        </div>
-      </div>
-      
-      <style dangerouslySetInnerHTML={{__html: `
-        .checkerboard-bg {
-          background-image: linear-gradient(45deg, #e5e5e5 25%, transparent 25%),
-            linear-gradient(-45deg, #e5e5e5 25%, transparent 25%),
-            linear-gradient(45deg, transparent 75%, #e5e5e5 75%),
-            linear-gradient(-45deg, transparent 75%, #e5e5e5 75%);
-          background-size: 20px 20px;
-          background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
-        }
-        .dark .checkerboard-bg {
-          background-image: linear-gradient(45deg, #2a2a2a 25%, transparent 25%),
-            linear-gradient(-45deg, #2a2a2a 25%, transparent 25%),
-            linear-gradient(45deg, transparent 75%, #2a2a2a 75%),
-            linear-gradient(-45deg, transparent 75%, #2a2a2a 75%);
-        }
-      `}} />
-    </div>
         );
       }}
     </ToolLayout>
-    <RelatedTools currentToolId="svg-to-png" />
     </>
   );
 }

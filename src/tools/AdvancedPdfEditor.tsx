@@ -518,69 +518,34 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
   };
 
   return (
-    <div className={`max-w-[1200px] mx-auto w-full h-full p-4 lg:p-6 flex flex-col gap-5 ${state.isDarkMode ? 'dark text-white' : 'text-gray-900'}`}>
-      {/* Top Toolbar */}
-      <div className="bg-surface border border-border rounded-xl p-3 flex flex-wrap items-center justify-between gap-4 z-20 shadow-sm shrink-0">
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={onReset}
-            className="p-2 hover:bg-bg-secondary rounded-xl transition-colors"
-          >
-            <ChevronLeft className="w-6 h-6" />
-          </button>
-          <div className="h-8 w-px bg-border mx-2" />
-          <div className="flex items-center gap-2 bg-bg-secondary px-3 py-1.5 rounded-xl">
-            <button onClick={() => setState(prev => ({ ...prev, zoom: Math.max(0.3, prev.zoom - 0.1) }))} className="p-1 hover:bg-border rounded">
-              <ZoomOut className="w-4 h-4" />
-            </button>
-            <span className="text-xs font-bold w-12 text-center">{Math.round(state.zoom * 100)}%</span>
-            <button onClick={() => setState(prev => ({ ...prev, zoom: Math.min(3, prev.zoom + 0.1) }))} className="p-1 hover:bg-border rounded">
-              <ZoomIn className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={() => setState(prev => ({ ...prev, isDarkMode: !prev.isDarkMode }))}
-            className="p-2 hover:bg-bg-secondary rounded-xl transition-colors"
-          >
-            {state.isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
-          <div className="h-8 w-px bg-border mx-2" />
-          <button onClick={exportPdf} className="btn bp px-6 py-2 rounded-xl flex items-center gap-2 font-bold shadow-lg shadow-accent/20">
-            <Download className="w-4 h-4" />
-            Export PDF
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 flex-1 min-h-0">
-        {/* Left Controls */}
-        <aside className="bg-surface border border-border rounded-2xl p-5 flex flex-col gap-6 order-2 lg:order-1 shadow-sm overflow-y-auto">
+    <div className={`tool-layout-container ${state.isDarkMode ? 'dark' : ''}`}>
+      <aside className="tool-sidebar">
+        <div className="sidebar-content custom-scrollbar p-6 space-y-6">
           {/* Editing Tools */}
-          <div>
-            <h3 className="text-xs font-black uppercase tracking-widest mb-4 text-text-muted">Editing Tools</h3>
-            <div className="flex flex-wrap items-center gap-2 bg-bg-secondary p-2 rounded-xl">
-              <button onClick={() => setState(prev => ({ ...prev, tool: 'select' }))} className={`p-2 rounded-lg transition-all ${state.tool === 'select' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`} title="Select">
+          <div className="space-y-4">
+            <h3 className="font-black text-[10px] uppercase tracking-widest flex items-center gap-2 text-text-muted">
+              <Settings2 className="w-4 h-4 text-accent" /> Editing Tools
+            </h3>
+            <div className="flex flex-wrap items-center gap-2 bg-bg-secondary p-2 rounded-xl border border-border">
+              <button onClick={() => setState(prev => ({ ...prev, tool: 'select' }))} className={`p-2 rounded-lg transition-all ${state.tool === 'select' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Select">
                 <MousePointer2 className="w-5 h-5" />
               </button>
-              <button onClick={addText} className={`p-2 rounded-lg transition-all ${state.tool === 'text' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`} title="Add Text">
+              <button onClick={addText} className={`p-2 rounded-lg transition-all ${state.tool === 'text' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Add Text">
                 <TypeIcon className="w-5 h-5" />
               </button>
-              <button onClick={() => togglePen()} className={`p-2 rounded-lg transition-all ${state.tool === 'pen' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`} title="Draw">
+              <button onClick={() => togglePen()} className={`p-2 rounded-lg transition-all ${state.tool === 'pen' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Draw">
                 <PenTool className="w-5 h-5" />
               </button>
-              <button onClick={() => togglePen(true)} className={`p-2 rounded-lg transition-all ${state.tool === 'highlight' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`} title="Highlight">
+              <button onClick={() => togglePen(true)} className={`p-2 rounded-lg transition-all ${state.tool === 'highlight' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Highlight">
                 <Highlighter className="w-5 h-5" />
               </button>
               <div className="h-6 w-px bg-border mx-1" />
               <div className="relative group">
-                <button className={`p-2 rounded-lg transition-all ${state.showSearch ? 'bg-accent text-white shadow-lg' : 'hover:bg-border'}`} title="Search & Replace">
+                <button className={`p-2 rounded-lg transition-all ${state.showSearch ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Search & Replace">
                   <Search className="w-5 h-5" />
                 </button>
                 <div className="absolute top-full left-0 mt-2 w-72 bg-surface border border-border rounded-2xl shadow-2xl p-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                  <h4 className="text-xs font-black uppercase tracking-widest mb-4">Search & Replace</h4>
+                  <h4 className="text-xs font-black uppercase tracking-widest mb-4 text-text-primary">Search & Replace</h4>
                   <div className="space-y-4">
                     <div className="fg">
                       <label className="fl">Find</label>
@@ -608,7 +573,7 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
                   </div>
                 </div>
               </div>
-              <button onClick={() => imageInputRef.current?.click()} className="p-2 rounded-lg hover:bg-border transition-all" title="Add Image">
+              <button onClick={() => imageInputRef.current?.click()} className="p-2 rounded-lg hover:bg-border text-text-muted transition-all" title="Add Image">
                 <ImageIcon className="w-5 h-5" />
               </button>
               <input type="file" ref={imageInputRef} className="hidden" accept="image/*" onChange={addImage} />
@@ -616,8 +581,10 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
           </div>
 
           {/* Pages */}
-          <div className="flex-1 flex flex-col min-h-[300px]">
-            <h3 className="text-xs font-black uppercase tracking-widest mb-4 text-text-muted">Pages</h3>
+          <div className="space-y-4 flex-1 flex flex-col min-h-[300px]">
+            <h3 className="font-black text-[10px] uppercase tracking-widest flex items-center gap-2 text-text-muted">
+              <Layers className="w-4 h-4 text-accent" /> Pages
+            </h3>
             <div className="flex-1 overflow-y-auto bg-bg-secondary/50 rounded-xl p-4 border border-border">
               <DndContext 
                 sensors={sensors}
@@ -657,10 +624,49 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
               </DndContext>
             </div>
           </div>
-        </aside>
+        </div>
 
-        {/* Right Preview (Canvas) */}
-        <main className="bg-surface border border-border rounded-2xl p-5 flex flex-col order-1 lg:order-2 shadow-sm min-h-[500px] relative overflow-hidden">
+        <div className="sidebar-actions p-4 border-t border-border bg-surface">
+          <button onClick={exportPdf} className="btn bp w-full py-4 rounded-2xl gap-2 shadow-lg shadow-accent/20 text-xs font-black uppercase tracking-widest">
+            <Download className="w-4 h-4" />
+            Export PDF
+          </button>
+        </div>
+      </aside>
+
+      <main className="tool-main-preview">
+        {/* Top Toolbar Overlay */}
+        <div className="absolute top-0 left-0 right-0 bg-surface/90 backdrop-blur-md border-b border-border p-3 flex flex-wrap items-center justify-between gap-4 z-20 shadow-sm">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={onReset}
+              className="p-2 hover:bg-bg-secondary rounded-xl transition-colors text-text-muted hover:text-text-primary"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <div className="h-6 w-px bg-border mx-1" />
+            <div className="flex items-center gap-2 bg-bg-secondary px-3 py-1.5 rounded-xl border border-border">
+              <button onClick={() => setState(prev => ({ ...prev, zoom: Math.max(0.3, prev.zoom - 0.1) }))} className="p-1 hover:bg-surface rounded text-text-muted hover:text-text-primary">
+                <ZoomOut className="w-4 h-4" />
+              </button>
+              <span className="text-[10px] font-black w-12 text-center text-text-primary">{Math.round(state.zoom * 100)}%</span>
+              <button onClick={() => setState(prev => ({ ...prev, zoom: Math.min(3, prev.zoom + 0.1) }))} className="p-1 hover:bg-surface rounded text-text-muted hover:text-text-primary">
+                <ZoomIn className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setState(prev => ({ ...prev, isDarkMode: !prev.isDarkMode }))}
+              className="p-2 hover:bg-bg-secondary rounded-xl transition-colors text-text-muted hover:text-text-primary"
+            >
+              {state.isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="preview-content-wrapper pt-20 p-4 lg:p-8">
           <div className="flex-1 w-full h-full overflow-auto bg-bg-secondary/30 rounded-xl border border-border flex items-center justify-center p-4">
             <div 
               className="shadow-2xl bg-white transition-transform duration-200"
@@ -674,15 +680,15 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
           </div>
 
           {state.isProcessing && (
-            <div className="absolute inset-0 bg-surface/50 backdrop-blur-sm flex items-center justify-center z-50 rounded-2xl">
+            <div className="absolute inset-0 bg-surface/50 backdrop-blur-sm flex items-center justify-center z-50">
               <div className="flex flex-col items-center gap-4 bg-surface p-6 rounded-2xl shadow-2xl border border-border">
                 <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
-                <p className="font-bold text-accent">Processing Magic...</p>
+                <p className="font-bold text-accent text-sm uppercase tracking-widest">Processing Magic...</p>
               </div>
             </div>
           )}
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   );
 });

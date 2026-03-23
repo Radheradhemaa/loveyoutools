@@ -274,9 +274,9 @@ export default function ImageCompressor() {
         if (!currentImage) return null;
 
         return (
-          <div className="w-full h-full flex flex-col lg:flex-row overflow-hidden bg-bg-primary">
+          <div className="w-full min-h-full lg:h-full flex flex-col lg:flex-row lg:overflow-hidden bg-bg-primary">
             {/* Left Preview - 2/3 width on desktop */}
-            <main className="flex-[2] bg-[#f5f5f5] flex flex-col overflow-hidden relative h-auto lg:h-full min-h-[300px]">
+            <main className="flex-1 lg:flex-[3] bg-[#f5f5f5] flex flex-col overflow-hidden relative min-h-[40vh] lg:min-h-0">
               <div className="p-4 bg-surface border-b border-border flex justify-between items-center z-10 shrink-0">
                 <div className="bg-bg-secondary/50 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-sm border border-border flex items-center gap-4">
                   <span className="truncate max-w-[150px] sm:max-w-[200px]" title={currentImage.file.name}>{currentImage.file.name}</span>
@@ -307,7 +307,7 @@ export default function ImageCompressor() {
                   </div>
                 ) : null}
 
-                <div className="w-full h-full flex items-center justify-center">
+                <div className="w-full h-full max-h-[60vh] lg:max-h-none flex items-center justify-center">
                   {(currentImage.finalUrl || currentImage.originalUrl) && (
                     <img 
                       src={currentImage.finalUrl || currentImage.originalUrl} 
@@ -357,7 +357,7 @@ export default function ImageCompressor() {
             </main>
 
             {/* Right Controls (Sidebar) */}
-            <aside className="w-full lg:w-1/4 bg-surface border-l border-border flex flex-col shadow-sm overflow-hidden h-auto lg:h-full">
+            <aside className="w-full lg:w-1/4 shrink-0 bg-surface border-l border-border flex flex-col shadow-sm overflow-hidden h-auto lg:h-full">
               <div className="p-6 space-y-6 overflow-y-auto scrollbar-hide flex-1">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">

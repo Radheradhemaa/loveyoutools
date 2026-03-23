@@ -12,7 +12,14 @@ interface ProcessedImage {
 
 export default function ImageTools({ toolId }: { toolId: string }) {
   const [images, setImages] = useState<ProcessedImage[]>([]);
+  const imagesRef = useRef<ProcessedImage[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // Keep ref in sync
+  useEffect(() => {
+    imagesRef.current = images;
+  }, [images]);
+  const initialFilesProcessed = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
   // Tool specific states
@@ -36,7 +43,18 @@ export default function ImageTools({ toolId }: { toolId: string }) {
   const handleFiles = (files: File | File[]) => {
     const selectedFiles = Array.isArray(files) ? files : [files];
     if (selectedFiles.length > 0) {
-      const newImages = selectedFiles.map((file: File) => {
+      const newImages: ProcessedImage[] = [];
+      
+      selectedFiles.forEach((file: File) => {
+        // Check if file already exists in state
+        const isDuplicate = images.some(img => 
+          img.file.name === file.name && 
+          img.file.size === file.size && 
+          img.file.lastModified === file.lastModified
+        );
+        
+        if (isDuplicate) return;
+
         const url = URL.createObjectURL(file);
         const imgObj: ProcessedImage = {
           file,
@@ -69,10 +87,12 @@ export default function ImageTools({ toolId }: { toolId: string }) {
           img.src = url;
         }
 
-        return imgObj;
+        newImages.push(imgObj);
       });
 
-      setImages(prev => [...prev, ...newImages]);
+      if (newImages.length > 0) {
+        setImages(prev => [...prev, ...newImages]);
+      }
     }
   };
 
@@ -236,8 +256,12 @@ export default function ImageTools({ toolId }: { toolId: string }) {
   };
 
   const downloadAll = async () => {
-    const processedImages = images.filter(img => img.output);
-    if (processedImages.length === 0) return;
+    const currentImages = imagesRef.current;
+    const processedImages = currentImages.filter(img => img.output);
+    if (processedImages.length === 0) {
+      console.warn("No processed images to download");
+      return;
+    }
 
     if (processedImages.length === 1) {
       const a = document.createElement('a');
@@ -314,8 +338,14 @@ export default function ImageTools({ toolId }: { toolId: string }) {
     >
       {({ file, onComplete, onReset }) => {
         useEffect(() => {
-          if (file) {
+          if (!file) {
+            setImages([]);
+            initialFilesProcessed.current = false;
+            return;
+          }
+          if (file && !initialFilesProcessed.current) {
             handleFiles(file);
+            initialFilesProcessed.current = true;
           }
         }, [file]);
 
@@ -444,11 +474,25 @@ export default function ImageTools({ toolId }: { toolId: string }) {
 
                   {toolId !== 'image-metadata-viewer' && (
                     <div className="flex flex-col gap-3 mt-6">
-                      <button onClick={() => { processImages(); onComplete(); }} disabled={loading || allProcessed} className="btn bp w-full gap-2">
+                      <button 
+                        onClick={async () => { 
+                          setLoading(true);
+                          try {
+                            await processImages(); 
+                            onComplete(); 
+                          } catch (error) {
+                            console.error("Processing failed:", error);
+                          } finally {
+                            setLoading(false);
+                          }
+                        }} 
+                        disabled={loading || images.length === 0} 
+                        className="btn bp w-full gap-2"
+                      >
                         {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
-                        {loading ? 'Processing...' : allProcessed ? 'All Processed' : 'Process All'}
+                        {loading ? 'Processing...' : allProcessed ? 'Reprocess All' : 'Process All'}
                       </button>
-                      <button onClick={() => { setImages([]); onReset(); }} className="btn bs2 w-full">
+                      <button onClick={() => { setImages([]); initialFilesProcessed.current = false; onReset(); }} className="btn bs2 w-full">
                         Clear All
                       </button>
                     </div>

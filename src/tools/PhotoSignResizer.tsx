@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import ReactCrop, { type Crop, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
+import ReactCrop, { type Crop, centerCrop, makeAspectCrop, PixelCrop, PercentCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { Download, RefreshCw, Settings, CheckCircle2, AlertCircle, Image as ImageIcon, Type, Maximize2, FileImage, Lock, Unlock, ZoomIn, ZoomOut } from 'lucide-react';
 import ToolLayout from '../components/tool-system/ToolLayout';
@@ -9,18 +9,21 @@ export default function PhotoSignResizer() {
   const [image, setImage] = useState<string | null>(null);
   const [crop, setCrop] = useState<Crop>();
   const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
+  const [percentCrop, setPercentCrop] = useState<PercentCrop>();
   const [targetWidth, setTargetWidth] = useState(300);
   const [targetHeight, setTargetHeight] = useState(400);
   const [unit, setUnit] = useState<'px' | 'in' | 'cm'>('px');
   const [dpi, setDpi] = useState(300);
   const [targetKB, setTargetKB] = useState(50);
   const [loading, setLoading] = useState(false);
+  const initialFilesProcessed = useRef(false);
   const [estimatedSize, setEstimatedSize] = useState<number | null>(null);
   const [result, setResult] = useState<{ url: string; previewUrl: string; size: number; width: number; height: number } | null>(null);
   const [fileName, setFileName] = useState('photo');
   const [originalFileName, setOriginalFileName] = useState('');
   const [lockAspect, setLockAspect] = useState(true);
-  const [zoom, setZoom] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024 ? 1 : 0.5);
+  const [zoom, setZoom] = useState(1);
+  const [imgDimensions, setImgDimensions] = useState<{ naturalWidth: number; naturalHeight: number; width: number; height: number } | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
 
   // Cleanup result URL on unmount or change
@@ -34,23 +37,32 @@ export default function PhotoSignResizer() {
 
   // Live size estimation
   useEffect(() => {
-    if (!image || !completedCrop || !imgRef.current) return;
+    if (!image || !percentCrop || !imgDimensions) return;
     
     const timer = setTimeout(async () => {
       const { w, h } = getTargetPx();
-      const scaleX = imgRef.current!.naturalWidth / imgRef.current!.width;
-      const scaleY = imgRef.current!.naturalHeight / imgRef.current!.height;
-      const res = await getCroppedImg(image, completedCrop, w, h, targetKB, scaleX, scaleY, true);
+      
+      // Calculate natural pixels from percentage crop
+      const naturalCrop = {
+        x: (percentCrop.x * imgDimensions.naturalWidth) / 100,
+        y: (percentCrop.y * imgDimensions.naturalHeight) / 100,
+        width: (percentCrop.width * imgDimensions.naturalWidth) / 100,
+        height: (percentCrop.height * imgDimensions.naturalHeight) / 100,
+        unit: 'px' as const
+      };
+
+      const res = await getCroppedImg(image, naturalCrop, w, h, targetKB, 1, 1, true);
       if (res) {
         setEstimatedSize(res.size);
       }
     }, 200);
 
     return () => clearTimeout(timer);
-  }, [image, completedCrop, targetWidth, targetHeight, targetKB, dpi, unit]);
+  }, [image, percentCrop, targetWidth, targetHeight, targetKB, dpi, unit, imgDimensions]);
 
   const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const { width, height } = e.currentTarget;
+    const { width, height, naturalWidth, naturalHeight } = e.currentTarget;
+    setImgDimensions({ width, height, naturalWidth, naturalHeight });
     const aspect = targetWidth / targetHeight;
     const initialCrop = centerCrop(
       makeAspectCrop(
@@ -63,6 +75,7 @@ export default function PhotoSignResizer() {
       height
     );
     setCrop(initialCrop);
+    setPercentCrop(initialCrop as PercentCrop);
     
     // Initialize completedCrop
     setCompletedCrop({
@@ -77,6 +90,12 @@ export default function PhotoSignResizer() {
   const handleFiles = (files: File[]) => {
     if (files.length > 0) {
       const file = files[0];
+      
+      // Check if it's the same file as currently loaded
+      if (image && originalFileName === file.name.split('.')[0]) {
+        return;
+      }
+
       setOriginalFileName(file.name.split('.')[0]);
       const reader = new FileReader();
       reader.addEventListener('load', () => setImage(reader.result as string));
@@ -290,33 +309,44 @@ export default function PhotoSignResizer() {
     };
   };
 
-  const handleDownload = async (onComplete?: () => void) => {
-    if (!image || !completedCrop || !imgRef.current) return;
+  const handleDownload = async (onComplete?: () => void, skipDownload = false) => {
+    if (loading) return;
+
+    if (!image || !percentCrop || !imgDimensions) return;
     setLoading(true);
     try {
       const { w, h } = getTargetPx();
-      const scaleX = imgRef.current.naturalWidth / imgRef.current.width;
-      const scaleY = imgRef.current.naturalHeight / imgRef.current.height;
       
+      // Calculate natural pixels from percentage crop
+      const naturalCrop = {
+        x: (percentCrop.x * imgDimensions.naturalWidth) / 100,
+        y: (percentCrop.y * imgDimensions.naturalHeight) / 100,
+        width: (percentCrop.width * imgDimensions.naturalWidth) / 100,
+        height: (percentCrop.height * imgDimensions.naturalHeight) / 100,
+        unit: 'px' as const
+      };
+
       const res = await getCroppedImg(
         image,
-        completedCrop,
+        naturalCrop,
         w,
         h,
         targetKB,
-        scaleX,
-        scaleY,
+        1,
+        1,
         false // High precision for final download
       );
       if (res) {
         setResult(res);
-        const link = document.createElement('a');
-        const finalKB = res.size.toFixed(0);
-        link.download = `${originalFileName || fileName}_${res.width}x${res.height}_${finalKB}KB.jpg`;
-        link.href = res.url;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        if (!skipDownload) {
+          const link = document.createElement('a');
+          const finalKB = res.size.toFixed(0);
+          link.download = `${originalFileName || fileName}_${res.width}x${res.height}_${finalKB}KB.jpg`;
+          link.href = res.url;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
         if (onComplete) onComplete();
       }
     } catch (e) {
@@ -353,7 +383,9 @@ export default function PhotoSignResizer() {
       acceptedFileTypes={['image/*']}
       multiple={false}
       faq={faqs}
-      onDownload={handleDownload}
+      onDownload={() => {
+        if (!result) handleDownload();
+      }}
       renderAfter={({ onReset }) => (
         <div className="max-w-4xl mx-auto space-y-8">
           <div className="bg-surface border border-border rounded-3xl p-8 lg:p-12 shadow-2xl text-center">
@@ -361,14 +393,16 @@ export default function PhotoSignResizer() {
               <CheckCircle2 className="w-10 h-10" />
             </div>
             <h2 className="text-3xl font-black text-text-primary mb-4">Processing Complete!</h2>
-            <p className="text-text-muted mb-8">Your resized image has been downloaded successfully.</p>
+            <p className="text-text-muted mb-8">Your resized image has been processed with high precision.</p>
             
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
               <button 
                 onClick={() => handleDownload()}
-                className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto"
+                disabled={loading}
+                className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto flex items-center justify-center gap-2"
               >
-                <Download className="w-5 h-5 mr-2" /> Download Again
+                {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                {loading ? 'Processing...' : 'Download Again'}
               </button>
               <button 
                 onClick={onReset}
@@ -378,10 +412,15 @@ export default function PhotoSignResizer() {
               </button>
             </div>
 
-            {result && (
-              <div className="bg-bg-secondary rounded-2xl p-6 lg:p-8 border border-border/50 text-left">
+            {loading || !result ? (
+              <div className="bg-bg-secondary rounded-2xl p-12 border border-border/50 flex flex-col items-center justify-center gap-4 min-h-[300px]">
+                <RefreshCw className="w-10 h-10 animate-spin text-accent" />
+                <p className="text-sm font-bold text-text-muted uppercase tracking-widest">Generating Actual Result...</p>
+              </div>
+            ) : (
+              <div className="bg-bg-secondary rounded-2xl p-6 lg:p-8 border border-border/50 text-left animate-in fade-in zoom-in-95 duration-300">
                 <h3 className="text-sm font-bold text-text-primary mb-6 flex items-center gap-2">
-                  <FileImage className="w-4 h-4 text-accent" /> Actual Result Preview
+                  <FileImage className="w-4 h-4 text-accent" /> Actual Processed Result
                 </h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
@@ -406,17 +445,26 @@ export default function PhotoSignResizer() {
                         {Number((result.width / dpi).toFixed(2))}" x {Number((result.height / dpi).toFixed(2))}"
                       </div>
                     </div>
+                    <div className="bg-accent/10 rounded-xl p-4 border border-accent/20">
+                      <p className="text-xs text-accent font-medium leading-relaxed">
+                        This preview shows the actual compressed image that was downloaded. The quality is optimized to stay under {targetKB} KB.
+                      </p>
+                    </div>
                   </div>
                   
-                  <div className="flex items-center justify-center bg-surface rounded-xl p-4 border border-border/50 min-h-[200px]">
-                    <div className="relative group/result">
+                  <div className="flex items-center justify-center bg-surface rounded-xl p-6 border border-border/50 min-h-[300px] relative overflow-hidden">
+                    {/* Subtle grid background for the preview area */}
+                    <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 0)', backgroundSize: '20px 20px' }} />
+                    
+                    <div className="relative group/result z-10">
                       <img 
-                        src={result.previewUrl} 
+                        src={result.previewUrl || result.url} 
                         alt="Result preview" 
-                        className="max-h-[300px] max-w-full object-contain rounded shadow-lg border border-border" 
+                        className="max-h-[400px] max-w-full object-contain rounded shadow-2xl border border-border bg-white" 
+                        style={{ imageRendering: 'auto' }}
                       />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/result:opacity-100 transition-opacity flex items-center justify-center rounded">
-                         <span className="text-white text-xs font-bold">Actual Processed Image</span>
+                      <div className="absolute -bottom-3 -right-3 bg-accent text-white text-[10px] font-black px-2 py-1 rounded shadow-lg uppercase tracking-tighter">
+                        Actual Result
                       </div>
                     </div>
                   </div>
@@ -429,37 +477,51 @@ export default function PhotoSignResizer() {
     >
       {({ file, state, onComplete, onReset }) => {
         useEffect(() => {
-          if (file && !image) {
+          if (!file) {
+            setImage(null);
+            initialFilesProcessed.current = false;
+            return;
+          }
+          if (file && !initialFilesProcessed.current) {
             handleFiles(Array.isArray(file) ? file : [file]);
+            initialFilesProcessed.current = true;
           }
         }, [file]);
 
         if (!image) return null;
 
         return (
-          <div className="w-full h-full flex flex-col lg:flex-row overflow-hidden bg-bg-primary">
+          <div className="w-full min-h-full lg:h-full flex flex-col lg:flex-row lg:overflow-hidden bg-bg-primary">
             {/* Left Workspace (Preview) - 3/4 width */}
-            <main className="flex-[2] lg:flex-1 bg-[#f5f5f5] flex flex-col order-1 overflow-hidden relative h-full min-h-[300px] lg:min-h-0">
-              <div className="flex-1 w-full h-full overflow-auto flex items-center justify-center p-4 lg:p-8 scrollbar-hide">
-                <div className="flex items-center justify-center min-h-min min-w-min">
+            <main className="flex-1 lg:flex-[3] bg-[#f5f5f5] flex flex-col order-1 overflow-hidden relative min-h-[40vh] lg:min-h-0">
+              <div className="flex-1 w-full h-full overflow-auto flex items-center justify-center p-4 lg:p-12 scrollbar-hide">
+                <div 
+                  className="flex items-center justify-center transition-all duration-300 ease-out"
+                  style={{ 
+                    width: `${zoom * 100}%`,
+                    minWidth: 'min(100%, 300px)',
+                    margin: 'auto'
+                  }}
+                >
                   <ReactCrop
                     crop={crop}
                     onChange={c => setCrop(c)}
-                    onComplete={c => setCompletedCrop(c)}
+                    onComplete={(c, pc) => {
+                      setCompletedCrop(c);
+                      setPercentCrop(pc);
+                    }}
                     aspect={lockAspect ? targetWidth / targetHeight : undefined}
-                    className="shadow-2xl rounded-sm bg-white"
+                    className="shadow-[0_20px_50px_rgba(0,0,0,0.2)] rounded-sm bg-white"
                   >
                     <img
                       ref={imgRef}
                       src={image}
                       alt="Crop source"
                       onLoad={onImageLoad}
+                      className="block w-full h-auto"
                       style={{ 
-                        maxHeight: `calc((100vh - 200px) * ${zoom})`, 
-                        maxWidth: `calc(100% * ${zoom})`,
-                        objectFit: 'contain'
+                        imageRendering: 'auto'
                       }}
-                      className="block w-auto h-auto transition-all duration-200"
                     />
                   </ReactCrop>
                 </div>
@@ -479,7 +541,7 @@ export default function PhotoSignResizer() {
             </main>
 
             {/* Right Sidebar (Settings) - 1/4 width */}
-            <aside className="w-full lg:w-1/4 bg-surface border-l border-border flex flex-col shadow-sm order-2 overflow-hidden h-auto lg:h-full">
+            <aside className="w-full lg:w-1/4 shrink-0 bg-surface border-l border-border flex flex-col shadow-sm order-2 overflow-hidden h-auto lg:h-full">
                 <div className="p-5 space-y-6 overflow-y-auto flex-1 scrollbar-hide">
                   <div className="space-y-4">
                     <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
@@ -566,54 +628,60 @@ export default function PhotoSignResizer() {
                   </div>
 
                   <div className="space-y-4 pt-6 border-t border-border/50">
-                    <div className="flex items-center justify-between">
-                      <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
-                        <Maximize2 className="w-5 h-5 text-accent" /> Adjust Crop
-                      </h3>
-                      <div className="flex items-center gap-2">
-                        <button 
-                          onClick={() => setZoom(Math.max(0.5, zoom - 0.1))}
-                          className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
-                          title="Zoom Out"
-                        >
-                          <ZoomOut className="w-4 h-4" />
-                        </button>
-                        <span className="text-xs font-bold w-10 text-center">{Math.round(zoom * 100)}%</span>
-                        <button 
-                          onClick={() => setZoom(Math.min(3, zoom + 0.1))}
-                          className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
-                          title="Zoom In"
-                        >
-                          <ZoomIn className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => setZoom(1)}
-                          className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
-                          title="Fit to Screen"
-                        >
-                          <RefreshCw className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => setLockAspect(!lockAspect)}
-                          className={`p-1.5 rounded-lg transition-colors ${lockAspect ? 'bg-accent/10 text-accent' : 'bg-bg-secondary text-text-muted'}`}
-                          title={lockAspect ? "Unlock Aspect Ratio" : "Lock Aspect Ratio"}
-                        >
-                          {lockAspect ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                        </button>
-                      </div>
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                      <Maximize2 className="w-5 h-5 text-accent" /> Adjust Crop
+                    </h3>
+                    <div className="flex items-center gap-1.5">
+                      <button 
+                        onClick={() => setZoom(Math.max(0.1, zoom - 0.1))}
+                        className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
+                        title="Zoom Out"
+                      >
+                        <ZoomOut className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => setZoom(Math.min(5, zoom + 0.1))}
+                        className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
+                        title="Zoom In"
+                      >
+                        <ZoomIn className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => setZoom(1)}
+                        className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
+                        title="Reset Zoom"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                      <div className="w-px h-4 bg-border mx-1" />
+                      <button 
+                        onClick={() => setLockAspect(!lockAspect)}
+                        className={`p-1.5 rounded-lg transition-colors ${lockAspect ? 'bg-accent/10 text-accent' : 'bg-bg-secondary text-text-muted'}`}
+                        title={lockAspect ? "Unlock Aspect Ratio" : "Lock Aspect Ratio"}
+                      >
+                        {lockAspect ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                      </button>
                     </div>
-                    <div className="space-y-2">
-                      <input 
-                        type="range" 
-                        min="0.5" 
-                        max="3" 
-                        step="0.1" 
-                        value={zoom} 
-                        onChange={(e) => setZoom(Number(e.target.value))}
-                        className="w-full accent-accent h-1.5"
-                      />
-                      <p className="text-xs text-text-muted">Drag the handles on the image to adjust the crop area. Use slider to zoom.</p>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex justify-between text-[10px] font-bold text-text-muted uppercase tracking-wider">
+                      <span>Zoom Level</span>
+                      <span>{Math.round(zoom * 100)}%</span>
                     </div>
+                    <input 
+                      type="range" 
+                      min="0.1" 
+                      max="5" 
+                      step="0.05" 
+                      value={zoom} 
+                      onChange={(e) => setZoom(Number(e.target.value))}
+                      className="w-full accent-accent h-1.5 cursor-pointer"
+                    />
+                    <p className="text-[10px] text-text-muted leading-relaxed italic">
+                      Tip: Use the slider to zoom the image for precise cropping. Drag the handles to adjust the area.
+                    </p>
+                  </div>
                   </div>
 
                   <div className="bg-accent/5 border border-accent/10 rounded-xl p-4 mt-6">
@@ -631,18 +699,18 @@ export default function PhotoSignResizer() {
                     <button
                       onClick={() => handleDownload(onComplete)}
                       disabled={loading}
-                      className="w-full btn bp py-3 px-6 shadow-sm flex items-center justify-center gap-2 group"
+                      className="w-full btn bp py-4 px-6 shadow-xl shadow-accent/20 flex items-center justify-center gap-3 group"
                     >
                       {loading ? (
                         <RefreshCw className="w-5 h-5 animate-spin" />
                       ) : (
                         <>
-                          <Download className="w-5 h-5 group-hover:translate-y-0.5 transition-transform" />
-                          <span className="font-bold">Download Result</span>
+                          <CheckCircle2 className="w-5 h-5 text-white" />
+                          <span className="font-black text-lg">Finish & Download</span>
                         </>
                       )}
                     </button>
-                    <p className="text-xs text-center text-text-muted font-medium">
+                    <p className="text-[10px] text-center text-text-muted font-bold uppercase tracking-widest">
                       Target: <span className="text-accent">{targetKB} KB</span> · {targetWidth}x{targetHeight}px
                     </p>
                   </div>

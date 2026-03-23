@@ -59,17 +59,19 @@ export default function PreviewPanel({ file, type }: PreviewPanelProps) {
               key="image-preview"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="relative shadow-2xl rounded-lg overflow-hidden bg-white"
+              className="relative shadow-2xl rounded-lg overflow-hidden bg-white flex items-center justify-center"
               style={{ 
                 transform: `scale(${zoom})`,
                 maxWidth: isFitToScreen ? '100%' : 'none',
-                maxHeight: isFitToScreen ? '100%' : 'none'
+                maxHeight: isFitToScreen ? '100%' : 'none',
+                width: isFitToScreen ? '100%' : 'auto',
+                height: isFitToScreen ? '100%' : 'auto'
               }}
             >
               <img 
                 src={previewUrl} 
                 alt="Preview" 
-                className="block object-contain"
+                className="block object-contain max-w-full max-h-full"
                 referrerPolicy="no-referrer"
               />
             </motion.div>

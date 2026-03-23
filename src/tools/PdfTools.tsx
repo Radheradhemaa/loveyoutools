@@ -570,7 +570,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             </div>
             
             {toolId === 'pdf-reader' && files.length > 0 && (
-              <div className="mt-6 flex-1 min-h-[600px]">
+              <div className="mt-6 flex-1 min-h-[60vh] lg:min-h-[600px]">
                 <iframe src={URL.createObjectURL(files[0])} className="w-full h-full rounded-lg border border-border" />
               </div>
             )}
