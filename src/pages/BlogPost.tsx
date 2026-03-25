@@ -30,12 +30,12 @@ export default function BlogPost() {
       "name": "LoveTools",
       "logo": {
         "@type": "ImageObject",
-        "url": `${window.location.origin}/logo.png?v=2`
+        "url": `https://loveyoutools.in/logo.png?v=2`
       }
     },
     "mainEntityOfPage": {
       "@type": "WebPage",
-      "@id": window.location.href
+      "@id": `https://loveyoutools.in/blog/${id}`
     }
   };
 

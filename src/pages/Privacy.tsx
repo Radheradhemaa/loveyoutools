@@ -20,7 +20,7 @@ export default function Privacy() {
         <p className="text-sm text-text-muted italic">Last Updated: March 13, 2026</p>
         
         <p>
-          At <strong>LoveyouTools</strong>, accessible from loveyoutools.com, one of our main priorities is the privacy of our visitors. 
+          At <strong>LoveyouTools</strong>, accessible from loveyoutools.in, one of our main priorities is the privacy of our visitors. 
           This Privacy Policy document contains types of information that is collected and recorded by LoveyouTools and how we use it.
         </p>
 

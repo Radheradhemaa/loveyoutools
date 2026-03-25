@@ -21,7 +21,7 @@ export default function Terms() {
 
         <h2 className="text-2xl font-bold text-text-primary mt-12 mb-4">1. Terms</h2>
         <p>
-          By accessing the website at loveyoutools.com, you are agreeing to be bound by these terms of service, 
+          By accessing the website at loveyoutools.in, you are agreeing to be bound by these terms of service, 
           all applicable laws and regulations, and agree that you are responsible for compliance with any applicable local laws.
         </p>
 

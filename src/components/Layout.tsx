@@ -43,8 +43,8 @@ export default function Layout() {
           "@context": "https://schema.org",
           "@type": "Organization",
           "name": "LoveyouTools",
-          "url": "https://loveyoutools.com/",
-          "logo": "https://loveyoutools.com/logo.png?v=2",
+          "url": "https://loveyoutools.in/",
+          "logo": "https://loveyoutools.in/logo.png?v=2",
           "sameAs": [
             "https://twitter.com/loveyoutools",
             "https://github.com/loveyoutools"

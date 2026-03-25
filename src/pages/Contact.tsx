@@ -35,7 +35,7 @@ export default function Contact() {
               <Mail className="w-6 h-6" />
             </div>
             <h3 className="font-bold mb-1">Email Us</h3>
-            <p className="text-sm text-text-muted">support@loveyoutools.com</p>
+            <p className="text-sm text-text-muted">support@loveyoutools.in</p>
           </div>
           <div className="bg-surface border border-border rounded-2xl p-6">
             <div className="w-12 h-12 bg-accent/10 text-accent rounded-xl flex items-center justify-center mb-4">

@@ -146,19 +146,19 @@ export default function ToolPage() {
         "@type": "ListItem",
         "position": 1,
         "name": "Home",
-        "item": window.location.origin
+        "item": "https://loveyoutools.in"
       },
       {
         "@type": "ListItem",
         "position": 2,
         "name": category?.name,
-        "item": `${window.location.origin}/#tools-grid`
+        "item": `https://loveyoutools.in/#tools-grid`
       },
       {
         "@type": "ListItem",
         "position": 3,
         "name": tool.n,
-        "item": toolUrl
+        "item": `https://loveyoutools.in/${tool.id}`
       }
     ]
   };
