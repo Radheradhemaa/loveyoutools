@@ -68,7 +68,7 @@ export default function UploadBox({ onUpload, acceptedTypes, multiple = false }:
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="w-full max-w-md mx-auto">
       <motion.div
         whileHover={{ scale: 1.01 }}
         whileTap={{ scale: 0.99 }}
@@ -78,11 +78,11 @@ export default function UploadBox({ onUpload, acceptedTypes, multiple = false }:
         onClick={() => inputRef.current?.click()}
         className={`
           relative group cursor-pointer
-          border-4 border-dashed rounded-[40px] p-12 sm:p-20
+          border-2 border-dashed rounded-3xl p-8 sm:p-10
           flex flex-col items-center justify-center text-center
           transition-all duration-500
           ${isDragging 
-            ? 'border-accent bg-accent/5 scale-[1.02] shadow-2xl shadow-accent/10' 
+            ? 'border-accent bg-accent/5 scale-[1.02] shadow-xl shadow-accent/10' 
             : 'border-border bg-surface hover:border-accent/50 hover:bg-bg-secondary/50'
           }
         `}
@@ -97,17 +97,17 @@ export default function UploadBox({ onUpload, acceptedTypes, multiple = false }:
         />
 
         <div className={`
-          w-24 h-24 rounded-3xl mb-8 flex items-center justify-center
+          w-16 h-16 rounded-2xl mb-4 flex items-center justify-center
           transition-all duration-500 transform group-hover:scale-110 group-hover:rotate-3
           ${isDragging ? 'bg-accent text-white rotate-6' : 'bg-bg-secondary text-accent'}
         `}>
-          <Upload className="w-12 h-12" />
+          <Upload className="w-8 h-8" />
         </div>
 
-        <h3 className="text-2xl sm:text-3xl font-black text-text-primary mb-4 tracking-tight">
+        <h3 className="text-xl sm:text-2xl font-black text-text-primary mb-2 tracking-tight">
           {isDragging ? 'Drop it here!' : 'Select or Drop Files'}
         </h3>
-        <p className="text-text-muted text-lg max-w-sm mx-auto leading-relaxed">
+        <p className="text-text-muted text-sm max-w-xs mx-auto leading-relaxed">
           <span className="hidden sm:inline">
             {multiple 
               ? 'Upload one or more files to get started' 
@@ -122,16 +122,16 @@ export default function UploadBox({ onUpload, acceptedTypes, multiple = false }:
           </span>
         </p>
 
-        <div className="mt-10 flex items-center gap-3 px-6 py-3 bg-bg-secondary rounded-full border border-border group-hover:border-accent/30 transition-colors">
-          <File className="w-5 h-5 text-accent" />
-          <span className="text-sm font-bold text-text-secondary">
+        <div className="mt-6 flex items-center gap-2 px-4 py-2 bg-bg-secondary rounded-full border border-border group-hover:border-accent/30 transition-colors">
+          <File className="w-4 h-4 text-accent" />
+          <span className="text-xs font-bold text-text-secondary">
             {acceptedTypes ? `Supports: ${acceptedTypes.join(', ').toUpperCase()}` : 'All files supported'}
           </span>
         </div>
 
         {/* Decorative elements */}
-        <div className="absolute top-8 left-8 w-2 h-2 rounded-full bg-accent/20" />
-        <div className="absolute bottom-8 right-8 w-2 h-2 rounded-full bg-accent/20" />
+        <div className="absolute top-4 left-4 w-1.5 h-1.5 rounded-full bg-accent/20" />
+        <div className="absolute bottom-4 right-4 w-1.5 h-1.5 rounded-full bg-accent/20" />
       </motion.div>
 
       <AnimatePresence>

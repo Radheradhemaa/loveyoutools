@@ -505,6 +505,7 @@ export default function PhotoSignResizer() {
                     }}
                     aspect={lockAspect ? targetWidth / targetHeight : undefined}
                     className="shadow-[0_20px_50px_rgba(0,0,0,0.2)] rounded-sm bg-white"
+                    style={{ zoom: zoom }}
                   >
                     <img
                       ref={imgRef}
@@ -512,13 +513,12 @@ export default function PhotoSignResizer() {
                       alt="Crop source"
                       onLoad={onImageLoad}
                       style={{ 
-                        maxWidth: `${zoom * 100}%`, 
-                        maxHeight: `${zoom * 70}vh`,
+                        maxWidth: '100%', 
+                        maxHeight: '70vh',
                         width: 'auto',
                         height: 'auto',
                         display: 'block', 
-                        imageRendering: 'auto',
-                        transition: 'max-width 0.1s ease-out, max-height 0.1s ease-out'
+                        imageRendering: 'high-quality',
                       }}
                     />
                   </ReactCrop>

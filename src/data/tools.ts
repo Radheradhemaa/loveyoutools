@@ -112,8 +112,7 @@ export const tools = [
   // SOCIAL MEDIA TOOLS (bg: #ffedd5)
   { id: 'youtube-tag-generator', c: 'social', n: 'YouTube Tag Generator', d: 'Generate high-ranking tags for your YouTube videos.', i: '▶️', b: '#ffedd5', popular: true },
   { id: 'youtube-thumbnail-downloader', c: 'social', n: 'YouTube Thumbnail Downloader', d: 'Download high-quality thumbnails from any YouTube video.', i: '🖼️', b: '#ffedd5', popular: true },
-  { id: 'instagram-dp-downloader', c: 'social', n: 'Instagram DP Downloader', d: 'View and download Instagram profile pictures in full size.', i: '📸', b: '#ffedd5' },
-  { id: 'reel-video-downloader', c: 'social', n: 'Reel/Video Downloader', d: 'Download Instagram Reels, Videos, and YouTube Shorts.', i: '📥', b: '#ffedd5', popular: true },
+  { id: 'instagram-image-downloader', c: 'social', n: 'Instagram Image Downloader', d: 'Download Instagram images directly from CDN links.', i: '📸', b: '#ffedd5' },
   { id: 'hashtag-generator', c: 'social', n: 'Hashtag Generator', d: 'Generate trending and relevant hashtags.', i: '#️⃣', b: '#ffedd5', popular: true },
   { id: 'caption-generator', c: 'social', n: 'Caption Generator', d: 'Generate engaging social media captions.', i: '✍️', b: '#ffedd5', popular: true },
   { id: 'tweet-length-checker', c: 'social', n: 'Tweet Length Checker', d: 'Check tweet character limit and optimize for engagement.', i: '🐦', b: '#ffedd5' },

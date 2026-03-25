@@ -114,8 +114,9 @@ export default function PassportPhotoMaker() {
   const [crop, setCrop] = useState<CropType>();
   const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
   const [completedPercentCrop, setCompletedPercentCrop] = useState<CropType>();
+  const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number } | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const [zoom, setZoom] = useState(0.8); // Default zoom slightly out for "compact" feel
+  const [zoom, setZoom] = useState(1); // Default zoom at 100%
   
   // Settings States
   const [selectedPreset, setSelectedPreset] = useState(PRESETS[1]); // Default 35x45
@@ -343,6 +344,7 @@ export default function PassportPhotoMaker() {
   // --- 1. Load Image & Initialize Crop ---
   const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const { width, height } = e.currentTarget;
+    setImgDimensions({ width, height });
     const aspect = selectedPreset.id !== 'free' ? selectedPreset.width / selectedPreset.height : undefined;
     
     let initialCrop;
@@ -438,7 +440,7 @@ export default function PassportPhotoMaker() {
     setHistory([croppedDataUrl]); // Initialize history with the original cropped image
     setHistoryIndex(0);
     setStep('edit');
-    setZoom(0.8); // Reset to default zoom
+    setZoom(1); // Reset to default zoom
   };
 
   // --- 3. Background Removal ---
@@ -797,8 +799,9 @@ export default function PassportPhotoMaker() {
             alt="Single Print" 
             className="object-contain shadow-2xl border border-gray-200 transition-all duration-300 mx-auto" 
             style={{ 
-              height: `${zoom * 70}vh`,
-              maxWidth: `${zoom * 100}%`,
+              zoom: zoom,
+              height: `70vh`,
+              maxWidth: `100%`,
               imageRendering: 'high-quality' 
             }}
           />
@@ -826,8 +829,9 @@ export default function PassportPhotoMaker() {
         <div 
           className="bg-white shadow-2xl relative transition-all duration-300 mx-auto" 
           style={{ 
-            height: `${zoom * 70}vh`,
-            maxWidth: `${zoom * 100}%`,
+            zoom: zoom,
+            height: `70vh`,
+            maxWidth: `100%`,
             aspectRatio: `${sheetWidthMm} / ${sheetHeightMm}`,
           }}
         >
@@ -1261,7 +1265,7 @@ export default function PassportPhotoMaker() {
                   </span>
                   
                   <button 
-                    onClick={() => setZoom(0.8)} 
+                    onClick={() => setZoom(1)} 
                     className="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors" 
                     title="Reset Zoom"
                   >
@@ -1275,41 +1279,42 @@ export default function PassportPhotoMaker() {
                 <div className="min-h-full flex items-center justify-center m-auto w-max min-w-full">
                   
                   {step === 'crop' && imageSrc && (
-                      <ReactCrop
-                        crop={crop}
-                        onChange={(_, percentCrop) => setCrop(percentCrop)}
-                        onComplete={(c, pc) => {
-                          setCompletedCrop(c);
-                          setCompletedPercentCrop(pc);
+                    <ReactCrop
+                      crop={crop}
+                      onChange={(_, percentCrop) => setCrop(percentCrop)}
+                      onComplete={(c, pc) => {
+                        setCompletedCrop(c);
+                        setCompletedPercentCrop(pc);
+                      }}
+                      aspect={selectedPreset.id !== 'free' ? selectedPreset.width / selectedPreset.height : undefined}
+                      className="shadow-2xl rounded-sm bg-white border border-gray-300"
+                      style={{ zoom: zoom }}
+                    >
+                      <img 
+                        ref={imgRef}
+                        src={imageSrc} 
+                        alt="Upload" 
+                        onLoad={onImageLoad}
+                        style={{ 
+                          maxWidth: '100%', 
+                          maxHeight: '70vh',
+                          width: 'auto',
+                          height: 'auto',
+                          display: 'block', 
+                          imageRendering: 'high-quality',
                         }}
-                        aspect={selectedPreset.id !== 'free' ? selectedPreset.width / selectedPreset.height : undefined}
-                        className="shadow-2xl rounded-sm bg-white border border-gray-300"
-                      >
-                        <img 
-                          ref={imgRef}
-                          src={imageSrc} 
-                          alt="Upload" 
-                          onLoad={onImageLoad}
-                          style={{ 
-                            maxWidth: `${zoom * 100}%`, 
-                            maxHeight: `${zoom * 70}vh`,
-                            width: 'auto',
-                            height: 'auto',
-                            display: 'block', 
-                            imageRendering: 'auto',
-                            transition: 'max-width 0.1s ease-out, max-height 0.1s ease-out'
-                          }}
-                        />
-                      </ReactCrop>
+                      />
+                    </ReactCrop>
                   )}
 
                   {step === 'edit' && (
                     <div 
                       className="relative shadow-2xl rounded-sm overflow-hidden bg-white"
                       style={{
+                        zoom: zoom,
                         aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : (completedCrop ? `${completedCrop.width} / ${completedCrop.height}` : 'auto'),
-                        height: `${zoom * 70}vh`,
-                        maxWidth: `${zoom * 100}%`,
+                        height: `70vh`,
+                        maxWidth: `100%`,
                         transition: 'all 0.1s ease-out'
                       }}
                     >

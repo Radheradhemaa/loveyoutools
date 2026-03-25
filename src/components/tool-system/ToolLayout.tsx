@@ -91,13 +91,13 @@ export default function ToolLayout({
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="max-w-4xl mx-auto px-4 py-12 w-full"
+            className="max-w-4xl mx-auto px-4 py-8 w-full"
           >
-            <div className="text-center mb-12">
-              <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-text-primary mb-4">
+            <div className="text-center mb-8">
+              <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-text-primary mb-3">
                 {title}
               </h1>
-              <p className="text-xl text-text-muted max-w-2xl mx-auto">
+              <p className="text-lg text-text-muted max-w-2xl mx-auto">
                 {description}
               </p>
             </div>
@@ -141,7 +141,7 @@ export default function ToolLayout({
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="max-w-4xl mx-auto px-4 py-12 w-full text-center"
+            className="max-w-4xl mx-auto px-4 py-8 w-full text-center"
           >
             {renderAfter ? <RenderPropWrapper render={renderAfter} onDownload={onDownload} onReset={handleReset} /> : (
               <div className="bg-surface border border-border rounded-3xl p-12 shadow-2xl mb-12">
