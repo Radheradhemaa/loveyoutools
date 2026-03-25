@@ -494,15 +494,8 @@ export default function PhotoSignResizer() {
           <div className="w-full min-h-full lg:h-full flex flex-col lg:flex-row lg:overflow-hidden bg-bg-primary">
             {/* Left Workspace (Preview) - 3/4 width */}
             <main className="flex-1 lg:flex-[3] bg-[#f5f5f5] flex flex-col order-1 overflow-hidden relative min-h-[40vh] lg:min-h-0">
-              <div className="flex-1 w-full h-full overflow-auto flex items-center justify-center p-4 lg:p-12 scrollbar-hide">
-                <div 
-                  className="flex items-center justify-center transition-all duration-300 ease-out"
-                  style={{ 
-                    width: `${zoom * 100}%`,
-                    minWidth: 'min(100%, 300px)',
-                    margin: 'auto'
-                  }}
-                >
+              <div className="flex-1 w-full h-full overflow-auto p-4 lg:p-12 scrollbar-hide">
+                <div className="min-h-full flex items-center justify-center m-auto w-max min-w-full">
                   <ReactCrop
                     crop={crop}
                     onChange={c => setCrop(c)}
@@ -518,9 +511,14 @@ export default function PhotoSignResizer() {
                       src={image}
                       alt="Crop source"
                       onLoad={onImageLoad}
-                      className="block w-full h-auto"
                       style={{ 
-                        imageRendering: 'auto'
+                        maxWidth: `${zoom * 100}%`, 
+                        maxHeight: `${zoom * 70}vh`,
+                        width: 'auto',
+                        height: 'auto',
+                        display: 'block', 
+                        imageRendering: 'auto',
+                        transition: 'max-width 0.1s ease-out, max-height 0.1s ease-out'
                       }}
                     />
                   </ReactCrop>

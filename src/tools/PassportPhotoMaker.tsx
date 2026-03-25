@@ -791,12 +791,16 @@ export default function PassportPhotoMaker() {
     if (!finalImageSrc) return null;
     if (paperSize.id === 'single') {
       return (
-        <div className="w-full h-full flex items-center justify-center p-4">
+        <div className="p-4">
           <img 
             src={finalImageSrc} 
             alt="Single Print" 
-            className="max-h-full max-w-full object-contain shadow-2xl border border-gray-200" 
-            style={{ imageRendering: 'high-quality' }}
+            className="object-contain shadow-2xl border border-gray-200 transition-all duration-300 mx-auto" 
+            style={{ 
+              height: `${zoom * 70}vh`,
+              maxWidth: `${zoom * 100}%`,
+              imageRendering: 'high-quality' 
+            }}
           />
         </div>
       );
@@ -818,11 +822,12 @@ export default function PassportPhotoMaker() {
     const startYMm = (sheetHeightMm - (rows * photoHeightMm + (rows - 1) * marginMm)) / 2;
 
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center overflow-auto p-4 bg-gray-100">
+      <div className="p-4">
         <div 
           className="bg-white shadow-2xl relative transition-all duration-300 mx-auto" 
           style={{ 
-            width: 'min(500px, 95%)', // Fixed base width for preview, parent handles scaling
+            height: `${zoom * 70}vh`,
+            maxWidth: `${zoom * 100}%`,
             aspectRatio: `${sheetWidthMm} / ${sheetHeightMm}`,
           }}
         >
@@ -1266,15 +1271,8 @@ export default function PassportPhotoMaker() {
               </div>
 
               {/* Preview Container - Darker background for focus */}
-              <div className="flex-1 w-full overflow-auto flex items-center justify-center p-4 pb-8 min-h-0 bg-gray-200/50">
-                <div 
-                  style={{ 
-                    transform: `scale(${zoom})`, 
-                    transformOrigin: 'center', 
-                    transition: 'transform 0.1s ease-out' 
-                  }} 
-                  className="flex items-center justify-center max-h-full p-8"
-                >
+              <div className="flex-1 w-full overflow-auto p-4 pb-8 min-h-0 bg-gray-200/50">
+                <div className="min-h-full flex items-center justify-center m-auto w-max min-w-full">
                   
                   {step === 'crop' && imageSrc && (
                       <ReactCrop
@@ -1292,18 +1290,27 @@ export default function PassportPhotoMaker() {
                           src={imageSrc} 
                           alt="Upload" 
                           onLoad={onImageLoad}
-                          className="max-h-[70vh] w-auto"
-                          style={{ maxWidth: '100%', objectFit: 'contain', display: 'block', imageRendering: 'auto' }}
+                          style={{ 
+                            maxWidth: `${zoom * 100}%`, 
+                            maxHeight: `${zoom * 70}vh`,
+                            width: 'auto',
+                            height: 'auto',
+                            display: 'block', 
+                            imageRendering: 'auto',
+                            transition: 'max-width 0.1s ease-out, max-height 0.1s ease-out'
+                          }}
                         />
                       </ReactCrop>
                   )}
 
                   {step === 'edit' && (
                     <div 
-                      className="relative shadow-2xl rounded-sm overflow-hidden bg-white max-h-[50vh] lg:max-h-[70vh]"
+                      className="relative shadow-2xl rounded-sm overflow-hidden bg-white"
                       style={{
                         aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : (completedCrop ? `${completedCrop.width} / ${completedCrop.height}` : 'auto'),
-                        maxWidth: '100%'
+                        height: `${zoom * 70}vh`,
+                        maxWidth: `${zoom * 100}%`,
+                        transition: 'all 0.1s ease-out'
                       }}
                     >
                       {isManualMode ? (
