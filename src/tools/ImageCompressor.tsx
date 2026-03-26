@@ -239,7 +239,7 @@ export default function ImageCompressor() {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     setIsProcessingBatch(false);
@@ -266,6 +266,11 @@ export default function ImageCompressor() {
     >
       {({ file, onComplete, onReset }) => {
         useEffect(() => {
+          if (!file) {
+            setImages([]);
+            setCurrentIndex(0);
+            return;
+          }
           if (file) {
             handleFiles(file);
           }

@@ -188,23 +188,7 @@ export default function SocialTools({ toolId }: { toolId: string }) {
     setLoading(false);
   };
 
-  const downloadImage = async (url: string, filename: string) => {
-    try {
-      const response = await fetch(url);
-      const blob = await response.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(blobUrl);
-    } catch (err) {
-      // Fallback if fetch fails (CORS)
-      window.open(url, '_blank');
-    }
-  };
+
 
   // --- Renderers ---
 
@@ -237,9 +221,15 @@ export default function SocialTools({ toolId }: { toolId: string }) {
             <div key={idx} className="space-y-3">
               <div className="flex justify-between items-center">
                 <span className="font-bold text-text-primary bg-bg-secondary px-3 py-1 rounded-full text-sm">{thumb.label}</span>
-                <button onClick={() => downloadImage(thumb.url, `thumbnail-${thumb.res}.jpg`)} className="btn bs gap-2 text-sm py-1.5">
+                <a 
+                  href={thumb.url} 
+                  download={`thumbnail-${thumb.res}.jpg`} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="btn bs gap-2 text-sm py-1.5 inline-flex items-center justify-center"
+                >
                   <Download className="w-4 h-4" /> Download
-                </button>
+                </a>
               </div>
               <div className="relative rounded-xl overflow-hidden border border-border bg-bg-secondary aspect-video flex items-center justify-center">
                 <img 
@@ -287,9 +277,15 @@ export default function SocialTools({ toolId }: { toolId: string }) {
             <h3 className="text-lg font-bold flex items-center gap-2">
               <ImageIcon className="w-5 h-5 text-accent" /> Image Preview
             </h3>
-            <button onClick={() => downloadImage(igImage, 'instagram-image.jpg')} className="btn bp gap-2">
+            <a 
+              href={igImage} 
+              download="instagram-image.jpg" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="btn bp gap-2 inline-flex items-center justify-center"
+            >
               <Download className="w-4 h-4" /> Download Image
-            </button>
+            </a>
           </div>
           <div className="relative rounded-xl overflow-hidden border border-border bg-bg-secondary flex items-center justify-center min-h-[300px]">
             <img src={igImage} alt="Instagram" className="max-w-full max-h-[600px] object-contain" referrerPolicy="no-referrer" />

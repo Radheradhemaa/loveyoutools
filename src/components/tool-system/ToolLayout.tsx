@@ -22,8 +22,10 @@ interface ToolLayoutProps {
   }) => React.ReactNode;
   renderPreview?: (file: File | File[] | null) => React.ReactNode;
   renderToolbar?: (props: { fileName: string; onBack: () => void; onComplete: () => void }) => React.ReactNode;
-  renderAfter?: (props: { onDownload: () => void; onReset: () => void }) => React.ReactNode;
+  renderAfter?: (props: { onDownload?: () => void; downloadUrl?: string; downloadFileName?: string; onReset: () => void }) => React.ReactNode;
   onDownload?: () => void;
+  downloadUrl?: string;
+  downloadFileName?: string;
   faq?: { q: string; a: string }[];
 }
 
@@ -45,6 +47,8 @@ export default function ToolLayout({
   renderToolbar,
   renderAfter,
   onDownload,
+  downloadUrl,
+  downloadFileName,
   faq
 }: ToolLayoutProps) {
   const [state, setState] = useState<ToolState>('BEFORE');
@@ -68,10 +72,7 @@ export default function ToolLayout({
   const handleComplete = () => {
     setState('AFTER');
     if (onDownload) {
-      // Small delay to allow the animation to start
-      setTimeout(() => {
-        onDownload();
-      }, 500);
+      onDownload();
     }
   };
 
@@ -143,7 +144,7 @@ export default function ToolLayout({
             exit={{ opacity: 0, scale: 0.95 }}
             className="max-w-4xl mx-auto px-4 py-8 w-full text-center"
           >
-            {renderAfter ? <RenderPropWrapper render={renderAfter} onDownload={onDownload} onReset={handleReset} /> : (
+            {renderAfter ? <RenderPropWrapper render={renderAfter} onDownload={onDownload} downloadUrl={downloadUrl} downloadFileName={downloadFileName} onReset={handleReset} /> : (
               <div className="bg-surface border border-border rounded-3xl p-12 shadow-2xl mb-12">
                 <div className="w-20 h-20 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-6">
                   <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -154,12 +155,22 @@ export default function ToolLayout({
                 <p className="text-text-muted mb-8">Your file is ready for download.</p>
                 
                 <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                  <button 
-                    onClick={onDownload}
-                    className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto"
-                  >
-                    Download File
-                  </button>
+                  {downloadUrl ? (
+                    <a 
+                      href={downloadUrl}
+                      download={downloadFileName || 'download'}
+                      className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto inline-flex items-center justify-center"
+                    >
+                      Download File
+                    </a>
+                  ) : (
+                    <button 
+                      onClick={onDownload}
+                      className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto"
+                    >
+                      Download File
+                    </button>
+                  )}
                   <button 
                     onClick={handleReset}
                     className="btn bs px-12 py-4 rounded-2xl text-lg font-bold w-full sm:w-auto"

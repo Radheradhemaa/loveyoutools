@@ -255,6 +255,18 @@ export default function ImageTools({ toolId }: { toolId: string }) {
     setLoading(false);
   };
 
+  const dataURLtoBlob = (dataurl: string) => {
+    const arr = dataurl.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  };
+
   const downloadAll = async () => {
     const currentImages = imagesRef.current;
     const processedImages = currentImages.filter(img => img.output);
@@ -264,13 +276,16 @@ export default function ImageTools({ toolId }: { toolId: string }) {
     }
 
     if (processedImages.length === 1) {
+      const blob = dataURLtoBlob(processedImages[0].output!);
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = processedImages[0].output!;
+      a.href = blobUrl;
       const ext = (toolId === 'image-converter' ? format : processedImages[0].file.type || 'image/jpeg').split('/')[1];
       a.download = `processed_${processedImages[0].file.name.split('.')[0]}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
       return;
     }
 
@@ -291,7 +306,7 @@ export default function ImageTools({ toolId }: { toolId: string }) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const allProcessed = images.length > 0 && images.every(img => img.output);

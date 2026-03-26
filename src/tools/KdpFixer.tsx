@@ -43,6 +43,8 @@ export default function KdpFixer() {
   const [paperType, setPaperType] = useState<'white' | 'cream' | 'color'>('white');
   const [coverTemplate, setCoverTemplate] = useState<any>(null);
 
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [downloadName, setDownloadName] = useState<string>('');
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -217,13 +219,16 @@ export default function KdpFixer() {
       const pdfBytes = await pdfDoc.save();
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
+      const fileName = `kdp_interior_${trimSize.width || customWidth}x${trimSize.height || customHeight}_fixed.pdf`;
+      setDownloadUrl(url);
+      setDownloadName(fileName);
+      
       const link = document.createElement('a');
       link.href = url;
-      link.download = `kdp_interior_${trimSize.width || customWidth}x${trimSize.height || customHeight}_fixed.pdf`;
+      link.download = fileName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      URL.revokeObjectURL(url);
     } catch (error: any) {
       const errorStr = typeof error === 'string' ? error : (error?.message || '');
       const isPasswordError = error?.name === 'PasswordException' || 
@@ -248,9 +253,20 @@ export default function KdpFixer() {
       toolId="kdp-fixer"
       acceptedFileTypes={['.pdf', 'image/jpeg', 'image/png']}
       onDownload={fixAndDownload}
+      downloadUrl={downloadUrl || undefined}
+      downloadFileName={downloadName}
     >
       {({ file: uploadedFile, state: toolState, onReset }) => {
         useEffect(() => {
+          if (!uploadedFile) {
+            setFile(null);
+            setPages([]);
+            setProgress(0);
+            setIssues([]);
+            setDownloadUrl(null);
+            setDownloadName('');
+            return;
+          }
           if (uploadedFile && !file) {
             handleFileUpload({ target: { files: [uploadedFile as File] } } as any);
           }

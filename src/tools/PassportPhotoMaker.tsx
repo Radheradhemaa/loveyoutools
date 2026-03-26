@@ -109,6 +109,7 @@ export default function PassportPhotoMaker() {
   const [croppedImageSrc, setCroppedImageSrc] = useState<string | null>(null);
   const [bgRemovedImageSrc, setBgRemovedImageSrc] = useState<string | null>(null);
   const [finalImageSrc, setFinalImageSrc] = useState<string | null>(null);
+  const [printImageElement, setPrintImageElement] = useState<HTMLImageElement | null>(null);
   
   // Crop States
   const [crop, setCrop] = useState<CropType>();
@@ -699,9 +700,19 @@ export default function PassportPhotoMaker() {
     return () => { isMounted = false; };
   }, [croppedImageSrc, bgRemovedImageSrc, bgColor, customColor, appliedAdjustments, hasBorder]);
 
+  useEffect(() => {
+    if (!finalImageSrc) {
+      setPrintImageElement(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => setPrintImageElement(img);
+    img.src = finalImageSrc;
+  }, [finalImageSrc]);
+
   // --- 5. Generate Print Layout ---
   const handleDownload = () => {
-    if (!finalImageSrc) return;
+    if (!finalImageSrc || !printImageElement) return;
     
     if (paperSize.id === 'single') {
       if (selectedPreset.id === 'free') {
@@ -722,27 +733,32 @@ export default function PassportPhotoMaker() {
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
         
-        const img = new Image();
-        img.onload = () => {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          ctx.drawImage(img, 0, 0, photoWidth, photoHeight);
-          canvas.toBlob((blob) => {
-            if (!blob) {
-              alert("Failed to generate download. Please try again.");
-              return;
-            }
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `passport-photo-${Date.now()}.png`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-          }, 'image/png', 1.0);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(printImageElement, 0, 0, photoWidth, photoHeight);
+        
+        const dataURLtoBlob = (dataurl: string) => {
+          const arr = dataurl.split(',');
+          const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+          const bstr = atob(arr[1]);
+          let n = bstr.length;
+          const u8arr = new Uint8Array(n);
+          while (n--) {
+            u8arr[n] = bstr.charCodeAt(n);
+          }
+          return new Blob([u8arr], { type: mime });
         };
-        img.src = finalImageSrc;
+
+        const dataUrl = canvas.toDataURL('image/png', 1.0);
+        const blob = dataURLtoBlob(dataUrl);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `passport-photo-${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
         return;
       }
     }
@@ -765,61 +781,65 @@ export default function PassportPhotoMaker() {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, sheetWidth, sheetHeight);
     
-    const img = new Image();
-    img.onload = () => {
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      
-      const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
-      const photoWidth = Math.round((targetPreset.width / 25.4) * dpi);
-      const photoHeight = Math.round((targetPreset.height / 25.4) * dpi);
-      const margin = Math.round((5 / 25.4) * dpi); // 5mm margin between photos
-      
-      const cols = Math.floor((sheetWidth - margin) / (photoWidth + margin));
-      const rows = Math.floor((sheetHeight - margin) / (photoHeight + margin));
-      
-      if (cols <= 0 || rows <= 0) {
-        alert("Paper size is too small for even one photo.");
-        return;
-      }
-      
-      // Center the grid on the paper
-      const startX = (sheetWidth - (cols * photoWidth + (cols - 1) * margin)) / 2;
-      const startY = (sheetHeight - (rows * photoHeight + (rows - 1) * margin)) / 2;
-      
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          const x = startX + c * (photoWidth + margin);
-          const y = startY + r * (photoHeight + margin);
-          
-          ctx.drawImage(img, x, y, photoWidth, photoHeight);
-          
-          if (hasCutLines) {
-            ctx.strokeStyle = '#cccccc';
-            ctx.lineWidth = Math.max(1, Math.round(dpi / 150));
-            ctx.setLineDash([Math.round(dpi/10), Math.round(dpi/10)]);
-            ctx.strokeRect(x - margin/2, y - margin/2, photoWidth + margin, photoHeight + margin);
-            ctx.setLineDash([]);
-          }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    
+    const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
+    const photoWidth = Math.round((targetPreset.width / 25.4) * dpi);
+    const photoHeight = Math.round((targetPreset.height / 25.4) * dpi);
+    const margin = Math.round((5 / 25.4) * dpi); // 5mm margin between photos
+    
+    const cols = Math.floor((sheetWidth - margin) / (photoWidth + margin));
+    const rows = Math.floor((sheetHeight - margin) / (photoHeight + margin));
+    
+    if (cols <= 0 || rows <= 0) {
+      alert("Paper size is too small for even one photo.");
+      return;
+    }
+    
+    // Center the grid on the paper
+    const startX = (sheetWidth - (cols * photoWidth + (cols - 1) * margin)) / 2;
+    const startY = (sheetHeight - (rows * photoHeight + (rows - 1) * margin)) / 2;
+    
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x = startX + c * (photoWidth + margin);
+        const y = startY + r * (photoHeight + margin);
+        
+        ctx.drawImage(printImageElement, x, y, photoWidth, photoHeight);
+        
+        if (hasCutLines) {
+          ctx.strokeStyle = '#cccccc';
+          ctx.lineWidth = Math.max(1, Math.round(dpi / 150));
+          ctx.setLineDash([Math.round(dpi/10), Math.round(dpi/10)]);
+          ctx.strokeRect(x - margin/2, y - margin/2, photoWidth + margin, photoHeight + margin);
+          ctx.setLineDash([]);
         }
       }
-      
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          alert("Failed to generate download. Please try again.");
-          return;
-        }
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `passport-print-${paperSize.name.replace(/\s+/g, '-')}.jpg`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-      }, 'image/jpeg', 1.0);
+    }
+    
+    const dataURLtoBlob = (dataurl: string) => {
+      const arr = dataurl.split(',');
+      const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      return new Blob([u8arr], { type: mime });
     };
-    img.src = finalImageSrc;
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 1.0);
+    const blob = dataURLtoBlob(dataUrl);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `passport-print-${paperSize.name.replace(/\s+/g, '-')}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   // --- Render Helpers ---

@@ -98,17 +98,32 @@ export default function ImageCropper() {
     }
   }, [completedCrop, images, currentIndex]);
 
+  const dataURLtoBlob = (dataurl: string) => {
+    const arr = dataurl.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  };
+
   const downloadAll = async () => {
     const processedImages = images.filter(img => img.output);
     if (processedImages.length === 0) return;
 
     if (processedImages.length === 1) {
+      const blob = dataURLtoBlob(processedImages[0].output!);
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = processedImages[0].output!;
+      a.href = blobUrl;
       a.download = `cropped_${processedImages[0].file.name}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
       return;
     }
 
@@ -128,7 +143,7 @@ export default function ImageCropper() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const removeImage = (index: number) => {

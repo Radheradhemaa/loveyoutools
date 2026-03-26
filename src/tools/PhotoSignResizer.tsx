@@ -384,7 +384,17 @@ export default function PhotoSignResizer() {
       multiple={false}
       faq={faqs}
       onDownload={() => {
-        if (!result) handleDownload();
+        if (result) {
+          const link = document.createElement('a');
+          const finalKB = result.size.toFixed(0);
+          link.download = `resized_${result.width}x${result.height}_${finalKB}KB.jpg`;
+          link.href = result.url;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        } else {
+          handleDownload();
+        }
       }}
       renderAfter={({ onReset }) => (
         <div className="max-w-4xl mx-auto space-y-8">
@@ -396,14 +406,25 @@ export default function PhotoSignResizer() {
             <p className="text-text-muted mb-8">Your resized image has been processed with high precision.</p>
             
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
-              <button 
-                onClick={() => handleDownload()}
-                disabled={loading}
-                className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto flex items-center justify-center gap-2"
-              >
-                {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
-                {loading ? 'Processing...' : 'Download Again'}
-              </button>
+              {result ? (
+                <a 
+                  href={result.url}
+                  download={`${originalFileName || fileName}_${result.width}x${result.height}_${result.size.toFixed(0)}KB.jpg`}
+                  className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto flex items-center justify-center gap-2"
+                >
+                  <Download className="w-5 h-5" />
+                  Download Again
+                </a>
+              ) : (
+                <button 
+                  onClick={() => handleDownload()}
+                  disabled={loading}
+                  className="btn bp px-12 py-4 rounded-2xl text-lg font-bold shadow-xl shadow-accent/20 w-full sm:w-auto flex items-center justify-center gap-2"
+                >
+                  {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                  {loading ? 'Processing...' : 'Download Again'}
+                </button>
+              )}
               <button 
                 onClick={onReset}
                 className="btn bs px-12 py-4 rounded-2xl text-lg font-bold w-full sm:w-auto"

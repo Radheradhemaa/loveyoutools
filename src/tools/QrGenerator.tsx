@@ -42,7 +42,7 @@ export default function QrGenerator() {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(svgUrl);
+      setTimeout(() => URL.revokeObjectURL(svgUrl), 1000);
     }
   };
 
