@@ -122,6 +122,7 @@ export default function PassportPhotoMaker() {
   const [selectedPreset, setSelectedPreset] = useState(PRESETS[1]); // Default 35x45
   const [bgColor, setBgColor] = useState(COLORS[0].value);
   const [customColor, setCustomColor] = useState('#ffffff');
+  const [dpi, setDpi] = useState(300);
   
   // Adjustments
   const [brightness, setBrightness] = useState(100);
@@ -703,13 +704,47 @@ export default function PassportPhotoMaker() {
     if (!finalImageSrc) return;
     
     if (paperSize.id === 'single') {
-      const link = document.createElement('a');
-      link.href = finalImageSrc;
-      link.download = `passport-photo-${Date.now()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      return;
+      if (selectedPreset.id === 'free') {
+        const link = document.createElement('a');
+        link.href = finalImageSrc;
+        link.download = `passport-photo-${Date.now()}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return;
+      } else {
+        const photoWidth = Math.round((selectedPreset.width / 25.4) * dpi);
+        const photoHeight = Math.round((selectedPreset.height / 25.4) * dpi);
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = photoWidth;
+        canvas.height = photoHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        
+        const img = new Image();
+        img.onload = () => {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, photoWidth, photoHeight);
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              alert("Failed to generate download. Please try again.");
+              return;
+            }
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `passport-photo-${Date.now()}.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+          }, 'image/png', 1.0);
+        };
+        img.src = finalImageSrc;
+        return;
+      }
     }
 
     // Generate A4/Grid
@@ -717,7 +752,6 @@ export default function PassportPhotoMaker() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     
-    const dpi = 300;
     const sheetWidthMm = paperSize.id === 'custom' ? customPaper.width : paperSize.width;
     const sheetHeightMm = paperSize.id === 'custom' ? customPaper.height : paperSize.height;
     
@@ -1171,6 +1205,28 @@ export default function PassportPhotoMaker() {
 
                     <div className="pt-4 border-t border-gray-100 space-y-3">
                       <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Options</h3>
+                      
+                      <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl">
+                        <div className="flex justify-between text-sm font-bold text-gray-700 mb-2">
+                          <span>Print Resolution (DPI)</span>
+                          <span>{dpi} DPI</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="72" 
+                          max="600" 
+                          step="1"
+                          value={dpi} 
+                          onChange={(e) => setDpi(Number(e.target.value))}
+                          className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                        />
+                        <div className="flex justify-between text-[10px] text-gray-500 mt-1">
+                          <span>Web (72)</span>
+                          <span>Print (300)</span>
+                          <span>High (600)</span>
+                        </div>
+                      </div>
+
                       <label className="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors">
                         <span className="text-sm font-bold text-gray-700">Add Photo Border</span>
                         <input type="checkbox" checked={hasBorder} onChange={(e) => setHasBorder(e.target.checked)} className="accent-[#e8501a] w-4 h-4" />
