@@ -82,8 +82,8 @@ export default function Home() {
         </h1>
 
         <div className="flex flex-wrap justify-center gap-6 text-sm font-medium text-text-muted mb-4">
-          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 80+ Tools</div>
-          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 9 Categories</div>
+          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 100+ Tools</div>
+          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 8 Categories</div>
           <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 0 Signup Required</div>
           <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 100% Free</div>
         </div>

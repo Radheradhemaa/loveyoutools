@@ -32,6 +32,7 @@ const ImageColorPicker = lazy(() => import('../tools/ImageColorPicker'));
 const GifMaker = lazy(() => import('../tools/GifMaker'));
 const SvgToPngConverter = lazy(() => import('../tools/SvgToPngConverter'));
 const DynamicPreviewer = lazy(() => import('../components/DynamicPreviewer'));
+const KeyboardShortcutGuide = lazy(() => import('../tools/KeyboardShortcutGuide'));
 
 const ToolLoader = () => (
   <div className="flex flex-col items-center justify-center py-20 animate-pulse">
@@ -100,6 +101,7 @@ export default function ToolPage() {
     if (tool.id === 'gif-maker') return <GifMaker />;
     if (tool.id === 'svg-to-png') return <SvgToPngConverter />;
     if (tool.id === 'dynamic-previewer') return <DynamicPreviewer />;
+    if (tool.id === 'keyboard-shortcut-guide') return <KeyboardShortcutGuide />;
 
     // Category handlers
     if (tool.c === 'text') return <TextTools toolId={tool.id} />;

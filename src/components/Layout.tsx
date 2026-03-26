@@ -85,7 +85,7 @@ export default function Layout() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted w-5 h-5" />
                 <input
                   type="text"
-                  placeholder="Search 80+ tools..."
+                  placeholder="Search 100+ tools..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-bg-secondary/50 hover:bg-bg-secondary border border-border rounded-full py-2.5 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:bg-surface transition-all shadow-sm"
@@ -147,7 +147,7 @@ export default function Layout() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted w-5 h-5" />
               <input
                 type="text"
-                placeholder="Search 80+ tools..."
+                placeholder="Search 100+ tools..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full bg-bg-secondary/50 border border-border rounded-xl py-3 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:bg-surface transition-all shadow-sm"
