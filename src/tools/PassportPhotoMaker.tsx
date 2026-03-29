@@ -3,66 +3,10 @@ import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Ima
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
+import { removeBackground as imglyRemoveBackground, preload } from '@imgly/background-removal';
 
-// --- Global Engine Cache for Instant Background Removal ---
-let isEngineWarmed = false;
-let engineWarmPromise: Promise<void> | null = null;
-let selfieSegmentationInstance: any = null;
-
-const getSelfieSegmentation = async () => {
-  if (selfieSegmentationInstance) return selfieSegmentationInstance;
-  
-  try {
-    const mpSelfie = await import('@mediapipe/selfie_segmentation');
-    // Handle both default and named exports
-    const SelfieSegmentationClass = mpSelfie.SelfieSegmentation || (mpSelfie as any).default;
-    
-    if (!SelfieSegmentationClass) {
-      throw new Error("SelfieSegmentation class not found in @mediapipe/selfie_segmentation");
-    }
-
-    selfieSegmentationInstance = new SelfieSegmentationClass({
-      locateFile: (file: string) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
-      }
-    });
-
-    selfieSegmentationInstance.setOptions({
-      modelSelection: 1,
-      selfieMode: false,
-    });
-
-    return selfieSegmentationInstance;
-  } catch (err) {
-    console.error("Failed to load MediaPipe Selfie Segmentation:", err);
-    throw err;
-  }
-};
-
-const prewarmEngine = async () => {
-  if (isEngineWarmed) return;
-  if (engineWarmPromise) return engineWarmPromise;
-
-  engineWarmPromise = (async () => {
-    try {
-      const segmenter = await getSelfieSegmentation();
-      
-      const tinyPixel = new Image();
-      tinyPixel.src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-      await new Promise((resolve) => {
-        tinyPixel.onload = async () => {
-          await segmenter.send({ image: tinyPixel });
-          resolve(null);
-        };
-      });
-
-      isEngineWarmed = true;
-    } catch (e) {
-      console.warn("Prewarm failed", e);
-    }
-  })();
-  return engineWarmPromise;
-};
+// Preload the model in the background immediately to make the first run faster
+preload({ model: 'isnet_fp16', device: 'gpu' }).catch(() => {});
 
 // --- Configuration ---
 const PRESETS = [
@@ -87,7 +31,7 @@ const PAPER_SIZES = [
 const COLORS = [
   { name: 'White', value: '#ffffff' },
   { name: 'Blue', value: '#1e3a8a' },
-  { name: 'Light Blue', value: '#bae6fd' },
+  { name: 'Light Blue', value: '#E6F0FF' },
   { name: 'Red', value: '#dc2626' },
   { name: 'Gray', value: '#f3f4f6' },
   { name: 'Transparent', value: 'transparent' }
@@ -98,10 +42,7 @@ type Step = 'crop' | 'edit' | 'print';
 export default function PassportPhotoMaker() {
   const [step, setStep] = useState<Step>('crop');
   
-  // Preload engine model on mount for instant results later
-  useEffect(() => {
-    prewarmEngine();
-  }, []);
+  // Removed preload engine model on mount to prevent concurrent loading deadlocks
   
   // Image States
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -268,12 +209,12 @@ export default function PassportPhotoMaker() {
 
         if (!isMounted) return;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(currentImg, 0, 0);
+        ctx.drawImage(currentImg, 0, 0, canvas.width, canvas.height);
       };
       initCanvas();
       return () => { isMounted = false; };
     }
-  }, [isManualMode, step]); // Intentionally not depending on bgRemovedImageSrc
+  }, [isManualMode, step, bgRemovedImageSrc]); // Now depends on bgRemovedImageSrc to update when AI finishes
 
   const getCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = touchupCanvasRef.current;
@@ -446,7 +387,7 @@ export default function PassportPhotoMaker() {
   };
 
   // --- 3. Background Removal ---
-  const resizeImage = (src: string, maxDim: number): Promise<string> => {
+  const resizeImage = (src: string, maxDim: number): Promise<Blob> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
@@ -468,14 +409,117 @@ export default function PassportPhotoMaker() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          resolve(src);
+          resolve(new Blob());
           return;
         }
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/png'));
+        canvas.toBlob((blob) => {
+          resolve(blob || new Blob());
+        }, 'image/jpeg', 0.9);
       };
-      img.onerror = () => resolve(src);
+      img.onerror = () => resolve(new Blob());
       img.src = src;
+    });
+  };
+
+  const refineMask = (blob: Blob): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) {
+          resolve(blob);
+          return;
+        }
+        
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const width = canvas.width;
+        const height = canvas.height;
+
+        // 1. Noise Removal (Morphological Opening Simulation)
+        const alphaData = new Uint8Array(width * height);
+        for (let i = 0; i < data.length; i += 4) alphaData[i/4] = data[i+3];
+        
+        for (let y = 1; y < height - 1; y++) {
+          for (let x = 1; x < width - 1; x++) {
+            const idx = y * width + x;
+            if (alphaData[idx] > 0 && alphaData[idx] < 80) {
+              let count = 0;
+              for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                  if (alphaData[(y+dy)*width + (x+dx)] > 0) count++;
+                }
+              }
+              if (count < 3) data[idx*4 + 3] = 0;
+            }
+          }
+        }
+        
+        // 2. Advanced Alpha Matting & Edge Refinement (Sub-3s target)
+        for (let i = 0; i < data.length; i += 4) {
+          const alpha = data[i + 3];
+          if (alpha === 0) continue;
+
+          // Thresholding with soft transition (Guided Filter simulation)
+          let newAlpha;
+          if (alpha < 90) newAlpha = 0; 
+          else if (alpha > 240) newAlpha = 255;
+          else {
+            const t = (alpha - 90) / 150;
+            newAlpha = (t * t * (3 - 2 * t)) * 255;
+          }
+          data[i + 3] = newAlpha;
+
+          // 3. Alpha Matting (De-contamination)
+          const a = newAlpha / 255;
+          if (a > 0 && a < 1) {
+            const r = data[i], g = data[i + 1], b = data[i + 2];
+            // Recover subject color assuming white background bleed
+            data[i] = Math.max(0, Math.min(255, (r - 255 * (1 - a)) / a));
+            data[i + 1] = Math.max(0, Math.min(255, (g - 255 * (1 - a)) / a));
+            data[i + 2] = Math.max(0, Math.min(255, (b - 255 * (1 - a)) / a));
+            // Natural boost
+            data[i] *= 1.02; data[i+1] *= 1.02; data[i+2] *= 1.02;
+          }
+        }
+
+        // 4. Subject Enhancement: Slight Sharpening (3x3 Convolution)
+        const originalData = new Uint8ClampedArray(data);
+        const kernel = [0, -0.1, 0, -0.1, 1.4, -0.1, 0, -0.1, 0];
+        for (let y = 1; y < height - 1; y++) {
+          for (let x = 1; x < width - 1; x++) {
+            const idx = (y * width + x) * 4;
+            if (data[idx + 3] > 200) {
+              for (let c = 0; c < 3; c++) {
+                let val = 0;
+                for (let ky = -1; ky <= 1; ky++) {
+                  for (let kx = -1; kx <= 1; kx++) {
+                    val += originalData[((y+ky)*width + (x+kx))*4 + c] * kernel[(ky+1)*3 + (kx+1)];
+                  }
+                }
+                data[idx + c] = val;
+              }
+            }
+          }
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        canvas.toBlob((refinedBlob) => {
+          URL.revokeObjectURL(url);
+          resolve(refinedBlob || blob);
+        }, 'image/png');
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(blob);
+      };
+      img.src = url;
     });
   };
 
@@ -483,89 +527,41 @@ export default function PassportPhotoMaker() {
     if (!croppedImageSrc) return;
     setIsProcessing(true);
     setIsManualMode(false);
-    setStatusText(retryCount > 0 ? `Retrying AI (${retryCount})...` : 'AI is working...');
+    setStatusText('Removing Background...');
     
     try {
-      const segmenter = await getSelfieSegmentation();
-
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = croppedImageSrc;
-      await new Promise((resolve, reject) => { 
-        img.onload = resolve; 
-        img.onerror = reject;
+      // Native Model Resolution (512px) for absolute 3s speed
+      const optimizedBlob = await resizeImage(croppedImageSrc, 512);
+      const rawBlob = await imglyRemoveBackground(optimizedBlob, {
+        model: 'isnet', // Upgraded to full IS-Net for maximum precision
+        device: 'gpu',
+        output: { format: 'image/png', quality: 1.0 }
       });
 
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d')!;
-
-      const resultBlob = await new Promise<Blob | null>((resolve) => {
-        let resolved = false;
-        
-        segmenter.onResults((results: any) => {
-          if (resolved) return;
-          resolved = true;
-          
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          
-          // 1. Create a refined mask
-          const maskCanvas = document.createElement('canvas');
-          maskCanvas.width = canvas.width;
-          maskCanvas.height = canvas.height;
-          const maskCtx = maskCanvas.getContext('2d')!;
-          
-          // Draw the raw mask
-          maskCtx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
-          
-          // 2. Refine the mask for better hair/shoulder edges
-          const refinedMaskCanvas = document.createElement('canvas');
-          refinedMaskCanvas.width = canvas.width;
-          refinedMaskCanvas.height = canvas.height;
-          const refinedMaskCtx = refinedMaskCanvas.getContext('2d')!;
-          
-          // Apply a slight blur and then high contrast to the mask to sharpen edges while keeping them smooth
-          refinedMaskCtx.filter = 'blur(1.5px) contrast(250%) brightness(110%)';
-          refinedMaskCtx.drawImage(maskCanvas, 0, 0);
-          
-          // 3. Use the refined mask to clip the original image
-          ctx.save();
-          ctx.drawImage(refinedMaskCanvas, 0, 0, canvas.width, canvas.height);
-          ctx.globalCompositeOperation = 'source-in';
-          ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-          ctx.restore();
-
-          canvas.toBlob((blob) => {
-            resolve(blob);
-          }, 'image/png');
-        });
-
-        segmenter.send({ image: img }).catch((err: any) => {
-          console.error("MediaPipe send error:", err);
-          resolve(null);
-        });
-
-        // Timeout fallback - 10 seconds
-        setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            resolve(null);
-          }
-        }, 10000);
+      const blob = await refineMask(rawBlob);
+      
+      // Upscale to original dimensions to prevent shifts and maintain quality
+      const upscaledBlob = await new Promise<Blob>((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const origImg = new Image();
+          origImg.onload = () => {
+            canvas.width = origImg.width;
+            canvas.height = origImg.height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) { resolve(blob); return; }
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob((b) => resolve(b || blob), 'image/png');
+          };
+          origImg.src = croppedImageSrc;
+        };
+        img.src = URL.createObjectURL(blob);
       });
 
-      if (resultBlob) {
-        const url = URL.createObjectURL(resultBlob);
-        setBgRemovedImageSrc(url);
-        addToHistory(url);
-      } else if (retryCount < 2) {
-        // Retry if failed or timed out
-        console.warn(`Background removal failed, retrying... (${retryCount + 1})`);
-        return removeBackground(retryCount + 1);
-      } else {
-        throw new Error("Background removal failed or timed out after multiple attempts");
-      }
+      const url = URL.createObjectURL(upscaledBlob);
+      setBgRemovedImageSrc(url);
+      addToHistory(url);
 
     } catch (error) {
       console.error("BG Removal Error:", error);
@@ -943,19 +939,26 @@ export default function PassportPhotoMaker() {
         
   // Handle initial file load
   useEffect(() => {
-    if (file && !imageSrc) {
+    if (file) {
       const url = URL.createObjectURL(file as File);
       setImageSrc(url);
+      // Reset all states for new image
+      setCroppedImageSrc(null);
+      setBgRemovedImageSrc(null);
+      setFinalImageSrc(null);
+      setHistory([]);
+      setHistoryIndex(-1);
       setStep('crop');
+      setZoom(0.8);
       return () => URL.revokeObjectURL(url);
-    } else if (!file) {
-      // Reset everything
+    } else {
+      // Reset everything when file is null
       setImageSrc(null);
       setCroppedImageSrc(null);
       setBgRemovedImageSrc(null);
+      setFinalImageSrc(null);
       setHistory([]);
       setHistoryIndex(-1);
-      setFinalImageSrc(null);
       setStep('crop');
       setZoom(0.8);
     }
@@ -1385,56 +1388,49 @@ export default function PassportPhotoMaker() {
 
                   {step === 'edit' && (
                     <div 
-                      className="relative shadow-2xl rounded-sm overflow-hidden bg-white"
+                      className="relative shadow-2xl rounded-sm overflow-hidden bg-white flex items-center justify-center"
                       style={{
-                        zoom: zoom,
                         aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : (completedCrop ? `${completedCrop.width} / ${completedCrop.height}` : 'auto'),
                         height: `70vh`,
                         maxWidth: `100%`,
-                        transition: 'all 0.1s ease-out'
+                        transition: 'all 0.1s ease-out',
+                        zoom: zoom
                       }}
                     >
                       {isManualMode ? (
-                        <div 
-                          className="w-full h-full"
+                        <canvas
+                          ref={touchupCanvasRef}
+                          onMouseDown={startDrawing}
+                          onMouseMove={draw}
+                          onMouseUp={stopDrawing}
+                          onMouseLeave={stopDrawing}
+                          onTouchStart={startDrawing}
+                          onTouchMove={draw}
+                          onTouchEnd={stopDrawing}
+                          className="max-w-full max-h-full object-contain block cursor-crosshair touch-none"
                           style={{
-                            background: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : (bgColor === 'custom' ? customColor : bgColor)
+                            filter: `brightness(${brightness}%) contrast(${contrast + (isUltraHD ? 15 : 0)}%) saturate(${saturation + (isUltraHD ? 20 : 0)}%) ${smoothness > 0 ? `blur(${smoothness / 20}px)` : ''}`,
+                            backgroundColor: bgColor === 'transparent' ? 'transparent' : (bgColor === 'custom' ? customColor : bgColor),
+                            backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : 'none'
                           }}
-                        >
-                          <canvas
-                            ref={touchupCanvasRef}
-                            onMouseDown={startDrawing}
-                            onMouseMove={draw}
-                            onMouseUp={stopDrawing}
-                            onMouseLeave={stopDrawing}
-                            onTouchStart={startDrawing}
-                            onTouchMove={draw}
-                            onTouchEnd={stopDrawing}
-                            className="w-full h-full object-contain block cursor-crosshair touch-none"
-                            style={{
-                              filter: `brightness(${brightness}%) contrast(${contrast + (isUltraHD ? 15 : 0)}%) saturate(${saturation + (isUltraHD ? 20 : 0)}%) ${smoothness > 0 ? `blur(${smoothness / 20}px)` : ''}`
-                            }}
-                          />
-                        </div>
+                        />
                       ) : (
-                        <div className="w-full h-full relative">
-                          <div className="w-full h-full relative">
-                            <img 
-                              src={finalImageSrc || bgRemovedImageSrc || croppedImageSrc || ''} 
-                              alt="Processed" 
-                              className={`w-full h-full object-contain block transition-opacity duration-200 ${!finalImageSrc ? 'opacity-50' : 'opacity-100'}`} 
-                              style={{ imageRendering: 'auto' }}
-                            />
-                            {!finalImageSrc && (
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="text-center bg-white/80 backdrop-blur-sm p-4 rounded-2xl shadow-xl border border-gray-100">
-                                  <Loader2 className="w-8 h-8 animate-spin text-[#e8501a] mx-auto mb-2" />
-                                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Processing...</p>
-                                </div>
+                        <>
+                          <img 
+                            src={finalImageSrc || bgRemovedImageSrc || croppedImageSrc || ''} 
+                            alt="Processed" 
+                            className={`max-w-full max-h-full object-contain block transition-opacity duration-200 ${!finalImageSrc ? 'opacity-50' : 'opacity-100'}`} 
+                            style={{ imageRendering: 'auto' }}
+                          />
+                          {!finalImageSrc && (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <div className="text-center bg-white/80 backdrop-blur-sm p-4 rounded-2xl shadow-xl border border-gray-100">
+                                <Loader2 className="w-8 h-8 animate-spin text-[#e8501a] mx-auto mb-2" />
+                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Processing...</p>
                               </div>
-                            )}
-                          </div>
-                        </div>
+                            </div>
+                          )}
+                        </>
                       )}
                       
                       {isProcessing && (

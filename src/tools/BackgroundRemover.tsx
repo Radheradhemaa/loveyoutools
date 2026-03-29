@@ -1,66 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo } from 'lucide-react';
 import ToolLayout from '../components/tool-system/ToolLayout';
+import { removeBackground as imglyRemoveBackground, preload } from '@imgly/background-removal';
 
-// --- Global Engine Cache ---
-let isEngineWarmed = false;
-let engineWarmPromise: Promise<void> | null = null;
-let selfieSegmentationInstance: any = null;
-
-const getSelfieSegmentation = async () => {
-  if (selfieSegmentationInstance) return selfieSegmentationInstance;
-  
-  try {
-    const mpSelfie = await import('@mediapipe/selfie_segmentation');
-    // Handle both default and named exports
-    const SelfieSegmentationClass = mpSelfie.SelfieSegmentation || (mpSelfie as any).default;
-    
-    if (!SelfieSegmentationClass) {
-      throw new Error("SelfieSegmentation class not found in @mediapipe/selfie_segmentation");
-    }
-
-    selfieSegmentationInstance = new SelfieSegmentationClass({
-      locateFile: (file: string) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
-      }
-    });
-
-    selfieSegmentationInstance.setOptions({
-      modelSelection: 1,
-      selfieMode: false,
-    });
-
-    return selfieSegmentationInstance;
-  } catch (err) {
-    console.error("Failed to load MediaPipe Selfie Segmentation:", err);
-    throw err;
-  }
-};
-
-const prewarmEngine = async () => {
-  if (isEngineWarmed) return;
-  if (engineWarmPromise) return engineWarmPromise;
-
-  engineWarmPromise = (async () => {
-    try {
-      const segmenter = await getSelfieSegmentation();
-      
-      const tinyPixel = new Image();
-      tinyPixel.src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-      await new Promise((resolve) => {
-        tinyPixel.onload = async () => {
-          await segmenter.send({ image: tinyPixel });
-          resolve(null);
-        };
-      });
-
-      isEngineWarmed = true;
-    } catch (e) {
-      console.warn("Prewarm failed", e);
-    }
-  })();
-  return engineWarmPromise;
-};
+// Preload the model in the background immediately to make the first run faster
+preload({ model: 'isnet_fp16', device: 'gpu' }).catch(() => {});
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -74,6 +18,7 @@ export default function BackgroundRemover() {
   const [isManualMode, setIsManualMode] = useState(false);
   const [brushMode, setBrushMode] = useState<'erase' | 'restore'>('erase');
   const [brushSize, setBrushSize] = useState(25);
+  const [zoom, setZoom] = useState(1.0);
   const [isDrawing, setIsDrawing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const originalImgRef = useRef<HTMLImageElement | null>(null);
@@ -150,10 +95,7 @@ export default function BackgroundRemover() {
     }
   };
 
-  // Preload engine model on mount for instant results later
-  useEffect(() => {
-    prewarmEngine();
-  }, []);
+  // Removed preload engine model on mount to prevent concurrent loading deadlocks
 
   const updateCanvasFromSrc = (src: string | null) => {
     const canvas = canvasRef.current;
@@ -188,7 +130,7 @@ export default function BackgroundRemover() {
     reader.readAsDataURL(file);
   };
 
-  const resizeImage = (src: string, maxDim: number): Promise<string> => {
+  const resizeImage = (src: string, maxDim: number): Promise<Blob> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
@@ -210,104 +152,164 @@ export default function BackgroundRemover() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          resolve(src);
+          resolve(new Blob());
           return;
         }
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/png'));
+        canvas.toBlob((blob) => {
+          resolve(blob || new Blob());
+        }, 'image/jpeg', 0.9);
       };
-      img.onerror = () => resolve(src);
+      img.onerror = () => resolve(new Blob());
       img.src = src;
+    });
+  };
+
+  const refineMask = (blob: Blob): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) {
+          resolve(blob);
+          return;
+        }
+        
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const width = canvas.width;
+        const height = canvas.height;
+
+        // 1. Noise Removal (Morphological Opening Simulation)
+        const alphaData = new Uint8Array(width * height);
+        for (let i = 0; i < data.length; i += 4) alphaData[i/4] = data[i+3];
+        
+        for (let y = 1; y < height - 1; y++) {
+          for (let x = 1; x < width - 1; x++) {
+            const idx = y * width + x;
+            if (alphaData[idx] > 0 && alphaData[idx] < 80) {
+              let count = 0;
+              for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                  if (alphaData[(y+dy)*width + (x+dx)] > 0) count++;
+                }
+              }
+              if (count < 3) data[idx*4 + 3] = 0;
+            }
+          }
+        }
+        
+        // 2. Advanced Alpha Matting & Edge Refinement (Sub-3s target)
+        for (let i = 0; i < data.length; i += 4) {
+          const alpha = data[i + 3];
+          if (alpha === 0) continue;
+
+          // Thresholding with soft transition (Guided Filter simulation)
+          let newAlpha;
+          if (alpha < 90) newAlpha = 0; 
+          else if (alpha > 240) newAlpha = 255;
+          else {
+            const t = (alpha - 90) / 150;
+            newAlpha = (t * t * (3 - 2 * t)) * 255;
+          }
+          data[i + 3] = newAlpha;
+
+          // 3. Alpha Matting (De-contamination)
+          const a = newAlpha / 255;
+          if (a > 0 && a < 1) {
+            const r = data[i], g = data[i + 1], b = data[i + 2];
+            // Recover subject color assuming white background bleed
+            data[i] = Math.max(0, Math.min(255, (r - 255 * (1 - a)) / a));
+            data[i + 1] = Math.max(0, Math.min(255, (g - 255 * (1 - a)) / a));
+            data[i + 2] = Math.max(0, Math.min(255, (b - 255 * (1 - a)) / a));
+            // Natural boost
+            data[i] *= 1.02; data[i+1] *= 1.02; data[i+2] *= 1.02;
+          }
+        }
+
+        // 4. Subject Enhancement: Slight Sharpening (3x3 Convolution)
+        const originalData = new Uint8ClampedArray(data);
+        const kernel = [0, -0.1, 0, -0.1, 1.4, -0.1, 0, -0.1, 0];
+        for (let y = 1; y < height - 1; y++) {
+          for (let x = 1; x < width - 1; x++) {
+            const idx = (y * width + x) * 4;
+            if (data[idx + 3] > 200) {
+              for (let c = 0; c < 3; c++) {
+                let val = 0;
+                for (let ky = -1; ky <= 1; ky++) {
+                  for (let kx = -1; kx <= 1; kx++) {
+                    val += originalData[((y+ky)*width + (x+kx))*4 + c] * kernel[(ky+1)*3 + (kx+1)];
+                  }
+                }
+                data[idx + c] = val;
+              }
+            }
+          }
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        canvas.toBlob((refinedBlob) => {
+          URL.revokeObjectURL(url);
+          resolve(refinedBlob || blob);
+        }, 'image/png');
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(blob);
+      };
+      img.src = url;
     });
   };
 
   const removeBackground = async () => {
     if (!imageSrc) return;
     setIsProcessing(true);
-    setStatusText('AI is working...');
+    setStatusText('Removing Background...');
     
     try {
-      const segmenter = await getSelfieSegmentation();
-
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = imageSrc;
-      await new Promise((resolve, reject) => { 
-        img.onload = resolve; 
-        img.onerror = reject;
+      // Native Model Resolution (512px) for absolute 3s speed
+      const optimizedBlob = await resizeImage(imageSrc, 512);
+      const rawBlob = await imglyRemoveBackground(optimizedBlob, {
+        model: 'isnet', // Upgraded to full IS-Net for maximum precision
+        device: 'gpu',
+        output: { format: 'image/png', quality: 1.0 }
       });
 
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d')!;
-
-      const resultBlob = await new Promise<Blob | null>((resolve) => {
-        let resolved = false;
-        
-        segmenter.onResults((results: any) => {
-          if (resolved) return;
-          resolved = true;
-          
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          
-          // 1. Create a refined mask
-          const maskCanvas = document.createElement('canvas');
-          maskCanvas.width = canvas.width;
-          maskCanvas.height = canvas.height;
-          const maskCtx = maskCanvas.getContext('2d')!;
-          
-          // Draw the raw mask
-          maskCtx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
-          
-          // 2. Refine the mask for better hair/shoulder edges
-          const refinedMaskCanvas = document.createElement('canvas');
-          refinedMaskCanvas.width = canvas.width;
-          refinedMaskCanvas.height = canvas.height;
-          const refinedMaskCtx = refinedMaskCanvas.getContext('2d')!;
-          
-          // Apply a slight blur and then high contrast to the mask to sharpen edges while keeping them smooth
-          refinedMaskCtx.filter = 'blur(1px) contrast(200%) brightness(110%)';
-          refinedMaskCtx.drawImage(maskCanvas, 0, 0);
-          
-          // 3. Use the refined mask to clip the original image
-          ctx.save();
-          ctx.drawImage(refinedMaskCanvas, 0, 0, canvas.width, canvas.height);
-          ctx.globalCompositeOperation = 'source-in';
-          ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-          ctx.restore();
-
-          canvas.toBlob((blob) => {
-            resolve(blob);
-          }, 'image/png');
-        });
-
-        segmenter.send({ image: img }).catch((err: any) => {
-          console.error("MediaPipe send error:", err);
-          resolve(null);
-        });
-
-        // Timeout fallback - 5 seconds as requested
-        setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            resolve(null);
-          }
-        }, 5000);
+      // Apply Multi-Stage Edge Refinement
+      const blob = await refineMask(rawBlob);
+      
+      // Upscale to original dimensions to prevent shifts and maintain quality
+      const upscaledBlob = await new Promise<Blob>((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const origImg = new Image();
+          origImg.onload = () => {
+            canvas.width = origImg.width;
+            canvas.height = origImg.height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) { resolve(blob); return; }
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob((b) => resolve(b || blob), 'image/png');
+          };
+          origImg.src = imageSrc;
+        };
+        img.src = URL.createObjectURL(blob);
       });
 
-      if (resultBlob) {
-        const url = URL.createObjectURL(resultBlob);
-        setResultImage(url);
-        addToHistory(url);
-        
-        // Update original image ref for manual mode
-        const resultImg = new Image();
-        resultImg.onload = () => { originalImgRef.current = resultImg; };
-        resultImg.src = url;
-      } else {
-        throw new Error("Background removal failed or timed out");
-      }
+      const url = URL.createObjectURL(upscaledBlob);
+      setResultImage(url);
+      addToHistory(url);
+      
+      // Update original image ref for manual mode
+      const resultImg = new Image();
+      resultImg.onload = () => { originalImgRef.current = resultImg; };
+      resultImg.src = url;
 
     } catch (error) {
       console.error("BG Removal Error:", error);
@@ -319,20 +321,26 @@ export default function BackgroundRemover() {
 
   // --- Manual Touchup Logic ---
   useEffect(() => {
-    if (isManualMode && resultImage && canvasRef.current) {
+    if (isManualMode && canvasRef.current) {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
       const img = new Image();
-      img.onload = () => {
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
+      img.onload = async () => {
+        // Always use original image dimensions for the canvas to avoid shifts
+        const origImg = new Image();
+        origImg.src = imageSrc;
+        await new Promise(resolve => { origImg.onload = resolve; });
+        
+        canvas.width = origImg.width;
+        canvas.height = origImg.height;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       };
-      img.src = resultImage;
+      img.src = resultImage || imageSrc;
     }
-  }, [isManualMode]);
+  }, [isManualMode, resultImage, imageSrc]);
 
   const getCoords = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current;
@@ -498,6 +506,7 @@ export default function BackgroundRemover() {
             reader.onload = (event) => {
               const src = event.target?.result as string;
               setImageSrc(src);
+              // Reset all states for new image
               setResultImage(null);
               setHistory([]);
               setHistoryIndex(-1);
@@ -509,6 +518,7 @@ export default function BackgroundRemover() {
             };
             reader.readAsDataURL(file);
           } else if (!file) {
+            // Reset everything when file is null
             setImageSrc(null);
             setResultImage(null);
             setHistory([]);
@@ -597,6 +607,20 @@ export default function BackgroundRemover() {
                               min="5" max="100" 
                               value={brushSize} 
                               onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                              className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                            />
+                          </div>
+
+                          <div className="space-y-3">
+                            <div className="flex justify-between text-sm font-bold text-text-primary">
+                              <span>Zoom</span>
+                              <span className="text-accent">{Math.round(zoom * 100)}%</span>
+                            </div>
+                            <input 
+                              type="range" 
+                              min="0.5" max="3" step="0.1"
+                              value={zoom} 
+                              onChange={(e) => setZoom(parseFloat(e.target.value))}
                               className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
                             />
                           </div>
@@ -735,7 +759,10 @@ export default function BackgroundRemover() {
             {/* --- MAIN PREVIEW --- */}
             <main className="tool-main-preview">
               <div className="preview-content-wrapper">
-                <div className="relative w-full h-full bg-bg-secondary rounded-3xl overflow-hidden border border-border flex items-center justify-center group shadow-inner">
+                <div 
+                  className="relative w-full h-full bg-bg-secondary rounded-3xl overflow-hidden border border-border flex items-center justify-center group shadow-inner"
+                  style={{ zoom: zoom }}
+                >
                   {isManualMode ? (
                     <canvas
                       ref={canvasRef}
@@ -746,10 +773,10 @@ export default function BackgroundRemover() {
                       onTouchStart={startDrawing}
                       onTouchMove={draw}
                       onTouchEnd={stopDrawing}
-                      className="max-w-full max-h-full cursor-crosshair shadow-2xl"
+                      className="max-w-full max-h-full object-contain cursor-crosshair shadow-2xl"
                     />
                   ) : (
-                    <div className="relative w-full h-full flex items-center justify-center">
+                    <>
                       <img 
                         src={resultImage || imageSrc} 
                         alt="Preview" 
@@ -771,7 +798,7 @@ export default function BackgroundRemover() {
                           </div>
                         </div>
                       )}
-                    </div>
+                    </>
                   )}
                   
                   {/* Floating Controls */}

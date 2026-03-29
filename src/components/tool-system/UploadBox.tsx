@@ -50,6 +50,9 @@ export default function UploadBox({ onUpload, acceptedTypes, multiple = false }:
 
     setError(null);
     onUpload(multiple ? selectedFiles : selectedFiles[0]);
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
