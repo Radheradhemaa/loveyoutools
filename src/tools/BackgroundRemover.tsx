@@ -165,64 +165,54 @@ export default function BackgroundRemover() {
     });
   };
 
-  const refineMask = (blob: Blob): Promise<Blob> => {
-    return new Promise((resolve) => {
-      const url = URL.createObjectURL(blob);
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        if (!ctx) {
-          resolve(blob);
-          return;
+  const refineMask = async (blob: Blob): Promise<Blob> => {
+    try {
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return blob;
+      
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+
+      // Optimized Single Pass for Edge Refinement & Alpha Matting
+      for (let i = 0; i < data.length; i += 4) {
+        const alpha = data[i + 3];
+        if (alpha === 0) continue;
+
+        // 1. Thresholding with soft transition (Faster than multiple passes)
+        let newAlpha;
+        if (alpha < 85) newAlpha = 0; 
+        else if (alpha > 245) newAlpha = 255;
+        else {
+          const t = (alpha - 85) / 160;
+          newAlpha = (t * t * (3 - 2 * t)) * 255;
         }
-        
-        ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-        const width = canvas.width;
-        const height = canvas.height;
+        data[i + 3] = newAlpha;
 
-        // Optimized Single Pass for Edge Refinement & Alpha Matting
-        for (let i = 0; i < data.length; i += 4) {
-          const alpha = data[i + 3];
-          if (alpha === 0) continue;
-
-          // 1. Thresholding with soft transition (Faster than multiple passes)
-          let newAlpha;
-          if (alpha < 85) newAlpha = 0; 
-          else if (alpha > 245) newAlpha = 255;
-          else {
-            const t = (alpha - 85) / 160;
-            newAlpha = (t * t * (3 - 2 * t)) * 255;
-          }
-          data[i + 3] = newAlpha;
-
-          // 2. Color Recovery (De-contamination)
-          const a = newAlpha / 255;
-          if (a > 0 && a < 1) {
-            const r = data[i], g = data[i + 1], b = data[i + 2];
-            // Recover subject color assuming white background bleed
-            data[i] = Math.max(0, Math.min(255, (r - 255 * (1 - a)) / a));
-            data[i + 1] = Math.max(0, Math.min(255, (g - 255 * (1 - a)) / a));
-            data[i + 2] = Math.max(0, Math.min(255, (b - 255 * (1 - a)) / a));
-          }
+        // 2. Color Recovery (De-contamination)
+        const a = newAlpha / 255;
+        if (a > 0 && a < 1) {
+          const r = data[i], g = data[i + 1], b = data[i + 2];
+          // Recover subject color assuming white background bleed
+          data[i] = Math.max(0, Math.min(255, (r - 255 * (1 - a)) / a));
+          data[i + 1] = Math.max(0, Math.min(255, (g - 255 * (1 - a)) / a));
+          data[i + 2] = Math.max(0, Math.min(255, (b - 255 * (1 - a)) / a));
         }
-        
-        ctx.putImageData(imageData, 0, 0);
-        canvas.toBlob((refinedBlob) => {
-          URL.revokeObjectURL(url);
-          resolve(refinedBlob || blob);
-        }, 'image/png');
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        resolve(blob);
-      };
-      img.src = url;
-    });
+      }
+      
+      ctx.putImageData(imageData, 0, 0);
+      return new Promise((resolve) => {
+        canvas.toBlob((refinedBlob) => resolve(refinedBlob || blob), 'image/png');
+      });
+    } catch (e) {
+      return blob;
+    }
   };
 
   const removeBackground = async (retryCount = 0) => {
@@ -231,8 +221,8 @@ export default function BackgroundRemover() {
     setStatusText('Removing Background...');
     
     try {
-      // Reduced resolution (400px) for sub-3s speed on most devices
-      const optimizedBlob = await resizeImage(imageSrc, 400);
+      // Reduced resolution (320px) for sub-3s speed on most devices
+      const optimizedBlob = await resizeImage(imageSrc, 320);
       
       // Use isnet_fp16 as primary for speed and stability, explicitly prefer GPU
       const modelToUse = retryCount === 0 ? 'isnet_fp16' : 'isnet';
@@ -251,24 +241,26 @@ export default function BackgroundRemover() {
       const blob = await refineMask(rawBlob);
       
       // Faster upscaling using the original image directly
-      const upscaledBlob = await new Promise<Blob>((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
+      const upscaledBlob = await new Promise<Blob>(async (resolve) => {
+        try {
+          const maskBitmap = await createImageBitmap(blob);
           const origImg = new Image();
           origImg.onload = () => {
+            const canvas = document.createElement('canvas');
             canvas.width = origImg.width;
             canvas.height = origImg.height;
             const ctx = canvas.getContext('2d', { alpha: true });
             if (!ctx) { resolve(blob); return; }
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            ctx.drawImage(maskBitmap, 0, 0, canvas.width, canvas.height);
+            maskBitmap.close();
             canvas.toBlob((b) => resolve(b || blob), 'image/png');
           };
           origImg.src = imageSrc;
-        };
-        img.src = URL.createObjectURL(blob);
+        } catch (e) {
+          resolve(blob);
+        }
       });
 
       const url = URL.createObjectURL(upscaledBlob);
