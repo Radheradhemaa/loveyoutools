@@ -10,7 +10,21 @@ export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [timer, setTimer] = useState(0);
   const [statusText, setStatusText] = useState('');
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isProcessing) {
+      setTimer(0);
+      interval = setInterval(() => {
+        setTimer((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setTimer(0);
+    }
+    return () => clearInterval(interval);
+  }, [isProcessing]);
   const [bgColor, setBgColor] = useState('transparent');
   const [customColor, setCustomColor] = useState('#ffffff');
   
@@ -758,9 +772,14 @@ export default function BackgroundRemover() {
                       {isProcessing && (
                         <div className="preview-loading-overlay">
                           <div className="flex flex-col items-center text-center">
-                            <Loader2 className="w-12 h-12 animate-spin mb-4 text-accent" />
+                            <div className="relative mb-6">
+                              <Loader2 className="w-16 h-16 animate-spin text-accent" />
+                              <div className="absolute inset-0 flex items-center justify-center font-bold text-white text-lg">
+                                {timer}s
+                              </div>
+                            </div>
                             <p className="font-bold text-xl mb-2 text-white">{statusText}</p>
-                            <p className="text-sm text-white/70">This usually takes a few seconds...</p>
+                            <p className="text-sm text-white/70">Optimizing for speed (Target: 3s)</p>
                           </div>
                         </div>
                       )}

@@ -164,7 +164,21 @@ export default function PassportPhotoMaker() {
   
   // Processing State
   const [isProcessing, setIsProcessing] = useState(false);
+  const [timer, setTimer] = useState(0);
   const [statusText, setStatusText] = useState('');
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isProcessing) {
+      setTimer(0);
+      interval = setInterval(() => {
+        setTimer((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setTimer(0);
+    }
+    return () => clearInterval(interval);
+  }, [isProcessing]);
 
   // Manual Touchup State
   const [isManualMode, setIsManualMode] = useState(false);
@@ -1401,8 +1415,14 @@ export default function PassportPhotoMaker() {
                       
                       {isProcessing && (
                         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-50 text-white p-6">
-                          <Loader2 className="w-10 h-10 animate-spin mb-4 text-[#e8501a]" />
+                          <div className="relative mb-4">
+                            <Loader2 className="w-12 h-12 animate-spin text-[#e8501a]" />
+                            <div className="absolute inset-0 flex items-center justify-center font-bold text-white text-xs">
+                              {timer}s
+                            </div>
+                          </div>
                           <div className="text-sm font-bold text-center">{statusText}</div>
+                          <div className="text-[10px] text-white/60 mt-1">Target: 3s</div>
                         </div>
                       )}
                     </div>
