@@ -489,15 +489,16 @@ export default function PassportPhotoMaker() {
     setStatusText('Removing Background...');
     
     try {
-      // Native Model Resolution (512px) for absolute 3s speed
-      const optimizedBlob = await resizeImage(croppedImageSrc, 512);
+      // Reduced resolution (400px) for sub-3s speed on most devices
+      const optimizedBlob = await resizeImage(croppedImageSrc, 400);
       
-      // Use isnet_fp16 as primary for speed and stability, fallback to isnet if needed
+      // Use isnet_fp16 as primary for speed and stability, explicitly prefer GPU
       const modelToUse = retryCount === 0 ? 'isnet_fp16' : 'isnet';
       
       const rawBlob = await imglyRemoveBackground(optimizedBlob, {
         model: modelToUse,
-        output: { format: 'image/png', quality: 1.0 },
+        device: 'gpu',
+        output: { format: 'image/png', quality: 0.8 },
         progress: (step, progress) => {
           const stepName = step.includes('fetch') ? 'Loading' : step.includes('compute') ? 'Processing' : 'Finalizing';
           setStatusText(`${stepName}: ${Math.round(progress * 100)}%`);
@@ -506,7 +507,7 @@ export default function PassportPhotoMaker() {
 
       const blob = await refineMask(rawBlob);
       
-      // Upscale to original dimensions to prevent shifts and maintain quality
+      // Faster upscaling using the original image directly
       const upscaledBlob = await new Promise<Blob>((resolve) => {
         const img = new Image();
         img.onload = () => {
@@ -515,8 +516,10 @@ export default function PassportPhotoMaker() {
           origImg.onload = () => {
             canvas.width = origImg.width;
             canvas.height = origImg.height;
-            const ctx = canvas.getContext('2d');
+            const ctx = canvas.getContext('2d', { alpha: true });
             if (!ctx) { resolve(blob); return; }
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             canvas.toBlob((b) => resolve(b || blob), 'image/png');
           };
