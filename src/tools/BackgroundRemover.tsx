@@ -185,41 +185,22 @@ export default function BackgroundRemover() {
         const width = canvas.width;
         const height = canvas.height;
 
-        // 1. Noise Removal (Morphological Opening Simulation)
-        const alphaData = new Uint8Array(width * height);
-        for (let i = 0; i < data.length; i += 4) alphaData[i/4] = data[i+3];
-        
-        for (let y = 1; y < height - 1; y++) {
-          for (let x = 1; x < width - 1; x++) {
-            const idx = y * width + x;
-            if (alphaData[idx] > 0 && alphaData[idx] < 80) {
-              let count = 0;
-              for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
-                  if (alphaData[(y+dy)*width + (x+dx)] > 0) count++;
-                }
-              }
-              if (count < 3) data[idx*4 + 3] = 0;
-            }
-          }
-        }
-        
-        // 2. Advanced Alpha Matting & Edge Refinement (Sub-3s target)
+        // Optimized Single Pass for Edge Refinement & Alpha Matting
         for (let i = 0; i < data.length; i += 4) {
           const alpha = data[i + 3];
           if (alpha === 0) continue;
 
-          // Thresholding with soft transition (Guided Filter simulation)
+          // 1. Thresholding with soft transition (Faster than multiple passes)
           let newAlpha;
-          if (alpha < 90) newAlpha = 0; 
-          else if (alpha > 240) newAlpha = 255;
+          if (alpha < 85) newAlpha = 0; 
+          else if (alpha > 245) newAlpha = 255;
           else {
-            const t = (alpha - 90) / 150;
+            const t = (alpha - 85) / 160;
             newAlpha = (t * t * (3 - 2 * t)) * 255;
           }
           data[i + 3] = newAlpha;
 
-          // 3. Alpha Matting (De-contamination)
+          // 2. Color Recovery (De-contamination)
           const a = newAlpha / 255;
           if (a > 0 && a < 1) {
             const r = data[i], g = data[i + 1], b = data[i + 2];
@@ -227,28 +208,6 @@ export default function BackgroundRemover() {
             data[i] = Math.max(0, Math.min(255, (r - 255 * (1 - a)) / a));
             data[i + 1] = Math.max(0, Math.min(255, (g - 255 * (1 - a)) / a));
             data[i + 2] = Math.max(0, Math.min(255, (b - 255 * (1 - a)) / a));
-            // Natural boost
-            data[i] *= 1.02; data[i+1] *= 1.02; data[i+2] *= 1.02;
-          }
-        }
-
-        // 4. Subject Enhancement: Slight Sharpening (3x3 Convolution)
-        const originalData = new Uint8ClampedArray(data);
-        const kernel = [0, -0.1, 0, -0.1, 1.4, -0.1, 0, -0.1, 0];
-        for (let y = 1; y < height - 1; y++) {
-          for (let x = 1; x < width - 1; x++) {
-            const idx = (y * width + x) * 4;
-            if (data[idx + 3] > 200) {
-              for (let c = 0; c < 3; c++) {
-                let val = 0;
-                for (let ky = -1; ky <= 1; ky++) {
-                  for (let kx = -1; kx <= 1; kx++) {
-                    val += originalData[((y+ky)*width + (x+kx))*4 + c] * kernel[(ky+1)*3 + (kx+1)];
-                  }
-                }
-                data[idx + c] = val;
-              }
-            }
           }
         }
         
@@ -266,7 +225,7 @@ export default function BackgroundRemover() {
     });
   };
 
-  const removeBackground = async () => {
+  const removeBackground = async (retryCount = 0) => {
     if (!imageSrc) return;
     setIsProcessing(true);
     setStatusText('Removing Background...');
@@ -274,10 +233,17 @@ export default function BackgroundRemover() {
     try {
       // Native Model Resolution (512px) for absolute 3s speed
       const optimizedBlob = await resizeImage(imageSrc, 512);
+      
+      // Use isnet_fp16 as primary for speed and stability, fallback to isnet if needed
+      const modelToUse = retryCount === 0 ? 'isnet_fp16' : 'isnet';
+      
       const rawBlob = await imglyRemoveBackground(optimizedBlob, {
-        model: 'isnet', // Upgraded to full IS-Net for maximum precision
-        device: 'gpu',
-        output: { format: 'image/png', quality: 1.0 }
+        model: modelToUse,
+        output: { format: 'image/png', quality: 1.0 },
+        progress: (step, progress) => {
+          const stepName = step.includes('fetch') ? 'Loading' : step.includes('compute') ? 'Processing' : 'Finalizing';
+          setStatusText(`${stepName}: ${Math.round(progress * 100)}%`);
+        }
       });
 
       // Apply Multi-Stage Edge Refinement
@@ -313,7 +279,12 @@ export default function BackgroundRemover() {
 
     } catch (error) {
       console.error("BG Removal Error:", error);
-      alert("Background removal failed. Please try a different image.");
+      if (retryCount === 0) {
+        console.log("Retrying with full IS-Net model...");
+        removeBackground(1);
+        return;
+      }
+      alert("AI background removal failed. You can use 'Manual Touchup' to remove the background manually.");
     } finally {
       setIsProcessing(false);
     }
