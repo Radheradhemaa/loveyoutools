@@ -10,18 +10,26 @@ export default function BackgroundRemover() {
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [statusText, setStatusText] = useState('');
+  const [mode, setMode] = useState<'fast' | 'smart' | 'hd'>('fast');
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isProcessing) {
-      setTimer(0);
+      setTimer(1);
       setProcessingError(null);
+      // Start counting immediately
       interval = setInterval(() => {
-        setTimer((prev) => Number((prev + 0.1).toFixed(1)));
-      }, 100);
+        setTimer((prev) => {
+          const cap = mode === 'fast' ? 3 : mode === 'smart' ? 6 : 10;
+          if (prev >= cap) return cap;
+          return prev + 1;
+        });
+      }, 1000);
+    } else {
+      setTimer(0);
     }
     return () => clearInterval(interval);
-  }, [isProcessing]);
+  }, [isProcessing, mode]);
   const [bgColor, setBgColor] = useState('transparent');
   const [customColor, setCustomColor] = useState('#ffffff');
   
@@ -190,9 +198,17 @@ export default function BackgroundRemover() {
     const startTime = Date.now();
     
     try {
-      const rawBlob = await hybridRemoveBackground(imageSrc, 'hd', (status) => {
-        setStatusText(status);
-      });
+      // Add a global timeout for the whole process
+      const rawBlob = await Promise.race([
+        hybridRemoveBackground(imageSrc, mode, async (status, intermediateBlob) => {
+          setStatusText(status);
+          if (intermediateBlob) {
+            const url = URL.createObjectURL(intermediateBlob);
+            setResultImage(url);
+          }
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 45000))
+      ]);
 
       const url = URL.createObjectURL(rawBlob);
       setResultImage(url);
@@ -396,7 +412,7 @@ export default function BackgroundRemover() {
   return (
     <ToolLayout
       title="AI Background Remover"
-      description="Remove image backgrounds instantly with professional precision using MediaPipe AI."
+      description="Remove image backgrounds instantly with professional precision using High-Accuracy AI."
       toolId="background-remover"
       acceptedFileTypes={['image/*']}
     >
@@ -456,13 +472,13 @@ export default function BackgroundRemover() {
               <div className="sidebar-content">
                 <div className="space-y-6">
                   {!resultImage ? (
-                    <div className="space-y-4">
-                      <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
-                        <Wand2 className="w-5 h-5 text-accent" /> AI Processing
-                      </h3>
-                      
-                      <button 
-                        onClick={removeBackground}
+                      <div className="space-y-4">
+                        <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                          <Wand2 className="w-5 h-5 text-accent" /> AI Processing
+                        </h3>
+                        
+                        <button 
+                          onClick={removeBackground}
                         disabled={isProcessing}
                         className={`w-full btn py-4 rounded-2xl gap-2 text-lg shadow-lg ${processingError ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/20' : 'bp shadow-accent/20'}`}
                       >
@@ -724,25 +740,26 @@ export default function BackgroundRemover() {
                           <div className="flex flex-col items-center text-center max-w-xs w-full px-6">
                             <div className="relative mb-8">
                               <div className="w-24 h-24 rounded-full border-4 border-white/10 border-t-accent animate-spin" />
-                              <div className="absolute inset-0 flex items-center justify-center font-mono font-bold text-white text-xl">
-                                {timer.toFixed(1)}s
+                              <div className="absolute inset-0 flex items-center justify-center font-mono font-bold text-white text-2xl">
+                                {timer}s
                               </div>
                             </div>
                             
                             <div className="w-full h-1.5 bg-white/10 rounded-full mb-4 overflow-hidden">
                               <div 
-                                className="h-full bg-accent transition-all duration-500 ease-out"
+                                className="h-full bg-accent transition-all duration-300 ease-out"
                                 style={{ 
-                                  width: statusText.includes('Analyzing') ? '20%' : 
-                                         statusText.includes('Extracting') ? '50%' : 
-                                         statusText.includes('Refining') ? '80%' : 
-                                         statusText.includes('Finalizing') ? '95%' : '10%'
+                                  width: statusText.includes('Optimizing') ? '10%' : 
+                                         statusText.includes('MediaPipe') ? '30%' : 
+                                         statusText.includes('U²-Net') ? '65%' : 
+                                         statusText.includes('Fusion') ? '85%' : 
+                                         statusText.includes('Finalizing') ? '95%' : '5%'
                                 }}
                               />
                             </div>
 
-                            <p className="font-bold text-2xl mb-2 text-white tracking-tight">{statusText}</p>
-                            <p className="text-sm text-white/60 font-medium">ISNet FP16 Optimized Engine</p>
+                            <p className="font-bold text-2xl mb-2 text-white tracking-tight animate-pulse">{statusText}</p>
+                            <p className="text-sm text-white/60 font-medium">Hybrid AI + OpenCV Engine</p>
                           </div>
                         </div>
                       )}

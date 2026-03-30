@@ -166,19 +166,24 @@ export default function PassportPhotoMaker() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [timer, setTimer] = useState(0);
   const [statusText, setStatusText] = useState('');
+  const [mode, setMode] = useState<'fast' | 'smart' | 'hd'>('fast');
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isProcessing) {
-      setTimer(0);
+      setTimer(1);
       interval = setInterval(() => {
-        setTimer((prev) => prev + 1);
+        setTimer((prev) => {
+          const cap = mode === 'fast' ? 3 : mode === 'smart' ? 6 : 10;
+          if (prev >= cap) return cap;
+          return prev + 1;
+        });
       }, 1000);
     } else {
       setTimer(0);
     }
     return () => clearInterval(interval);
-  }, [isProcessing]);
+  }, [isProcessing, mode]);
 
   // Manual Touchup State
   const [isManualMode, setIsManualMode] = useState(false);
@@ -477,9 +482,17 @@ export default function PassportPhotoMaker() {
     setStatusText('Removing Background...');
     
     try {
-      const rawBlob = await hybridRemoveBackground(croppedImageSrc, 'hd', (status) => {
-        setStatusText(status);
-      });
+      // Add a global timeout for the whole process
+      const rawBlob = await Promise.race([
+        hybridRemoveBackground(croppedImageSrc, mode, async (status, intermediateBlob) => {
+          setStatusText(status);
+          if (intermediateBlob) {
+            const url = URL.createObjectURL(intermediateBlob);
+            setBgRemovedImageSrc(url);
+          }
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 45000))
+      ]);
 
       const url = URL.createObjectURL(rawBlob);
       setBgRemovedImageSrc(url);
@@ -1390,13 +1403,25 @@ export default function PassportPhotoMaker() {
                       {isProcessing && (
                         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-50 text-white p-6">
                           <div className="relative mb-4">
-                            <Loader2 className="w-12 h-12 animate-spin text-[#e8501a]" />
+                            <div className="w-12 h-12 rounded-full border-2 border-white/10 border-t-[#e8501a] animate-spin" />
                             <div className="absolute inset-0 flex items-center justify-center font-bold text-white text-xs">
                               {timer}s
                             </div>
                           </div>
+                          <div className="w-full max-w-[120px] h-1 bg-white/10 rounded-full mb-3 overflow-hidden">
+                            <div 
+                              className="h-full bg-[#e8501a] transition-all duration-300 ease-out"
+                              style={{ 
+                                width: statusText.includes('Optimizing') ? '10%' : 
+                                       statusText.includes('MediaPipe') ? '30%' : 
+                                       statusText.includes('U²-Net') ? '65%' : 
+                                       statusText.includes('Fusion') ? '85%' : 
+                                       statusText.includes('Finalizing') ? '95%' : '5%'
+                              }}
+                            />
+                          </div>
                           <div className="text-sm font-bold text-center">{statusText}</div>
-                          <div className="text-[10px] text-white/60 mt-1">Target: 5s</div>
+                          <div className="text-[10px] text-white/60 mt-1">Hybrid AI Engine</div>
                         </div>
                       )}
                     </div>
