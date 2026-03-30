@@ -1,10 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo } from 'lucide-react';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as imglyRemoveBackground, preload } from '@imgly/background-removal';
-
-// Preload the model in the background immediately to make the first run faster
-preload({ model: 'isnet_fp16', device: 'gpu' }).catch(() => {});
+import { hybridRemoveBackground } from '../lib/bgRemoval';
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -37,6 +34,7 @@ export default function BackgroundRemover() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const originalImgRef = useRef<HTMLImageElement | null>(null);
   const lastPosRef = useRef<{x: number, y: number} | null>(null);
+  const isDrawingUpdateRef = useRef(false);
 
   // History for Undo
   const [history, setHistory] = useState<string[]>([]);
@@ -91,10 +89,12 @@ export default function BackgroundRemover() {
     if (historyIndex > 0) {
       const prevIndex = historyIndex - 1;
       setHistoryIndex(prevIndex);
+      isDrawingUpdateRef.current = false;
       setResultImage(history[prevIndex]);
       updateCanvasFromSrc(history[prevIndex]);
     } else if (historyIndex === 0) {
       setHistoryIndex(-1);
+      isDrawingUpdateRef.current = false;
       setResultImage(null);
       updateCanvasFromSrc(null);
     }
@@ -104,6 +104,7 @@ export default function BackgroundRemover() {
     if (historyIndex < history.length - 1) {
       const nextIndex = historyIndex + 1;
       setHistoryIndex(nextIndex);
+      isDrawingUpdateRef.current = false;
       setResultImage(history[nextIndex]);
       updateCanvasFromSrc(history[nextIndex]);
     }
@@ -172,112 +173,24 @@ export default function BackgroundRemover() {
         ctx.drawImage(img, 0, 0, width, height);
         canvas.toBlob((blob) => {
           resolve(blob || new Blob());
-        }, 'image/jpeg', 0.9);
+        }, 'image/jpeg', 0.8);
       };
       img.onerror = () => resolve(new Blob());
       img.src = src;
     });
   };
 
-  const refineMask = async (blob: Blob): Promise<Blob> => {
-    try {
-      const bitmap = await createImageBitmap(blob);
-      const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return blob;
-      
-      ctx.drawImage(bitmap, 0, 0);
-      bitmap.close();
-      
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
-
-      // Optimized Single Pass for Edge Refinement & Alpha Matting
-      for (let i = 0; i < data.length; i += 4) {
-        const alpha = data[i + 3];
-        if (alpha === 0) continue;
-
-        // 1. Thresholding with soft transition (Faster than multiple passes)
-        let newAlpha;
-        if (alpha < 85) newAlpha = 0; 
-        else if (alpha > 245) newAlpha = 255;
-        else {
-          const t = (alpha - 85) / 160;
-          newAlpha = (t * t * (3 - 2 * t)) * 255;
-        }
-        data[i + 3] = newAlpha;
-
-        // 2. Color Recovery (De-contamination)
-        const a = newAlpha / 255;
-        if (a > 0 && a < 1) {
-          const r = data[i], g = data[i + 1], b = data[i + 2];
-          // Recover subject color assuming white background bleed
-          data[i] = Math.max(0, Math.min(255, (r - 255 * (1 - a)) / a));
-          data[i + 1] = Math.max(0, Math.min(255, (g - 255 * (1 - a)) / a));
-          data[i + 2] = Math.max(0, Math.min(255, (b - 255 * (1 - a)) / a));
-        }
-      }
-      
-      ctx.putImageData(imageData, 0, 0);
-      return new Promise((resolve) => {
-        canvas.toBlob((refinedBlob) => resolve(refinedBlob || blob), 'image/png');
-      });
-    } catch (e) {
-      return blob;
-    }
-  };
-
-  const removeBackground = async (retryCount = 0) => {
+  const removeBackground = async () => {
     if (!imageSrc) return;
     setIsProcessing(true);
     setStatusText('Removing Background...');
     
     try {
-      // Reduced resolution (320px) for sub-3s speed on most devices
-      const optimizedBlob = await resizeImage(imageSrc, 320);
-      
-      // Use isnet_fp16 as primary for speed and stability, explicitly prefer GPU
-      const modelToUse = retryCount === 0 ? 'isnet_fp16' : 'isnet';
-      
-      const rawBlob = await imglyRemoveBackground(optimizedBlob, {
-        model: modelToUse,
-        device: 'gpu',
-        output: { format: 'image/png', quality: 0.8 },
-        progress: (step, progress) => {
-          const stepName = step.includes('fetch') ? 'Loading' : step.includes('compute') ? 'Processing' : 'Finalizing';
-          setStatusText(`${stepName}: ${Math.round(progress * 100)}%`);
-        }
+      const rawBlob = await hybridRemoveBackground(imageSrc, 'hd', (status) => {
+        setStatusText(status);
       });
 
-      // Apply Multi-Stage Edge Refinement
-      const blob = await refineMask(rawBlob);
-      
-      // Faster upscaling using the original image directly
-      const upscaledBlob = await new Promise<Blob>(async (resolve) => {
-        try {
-          const maskBitmap = await createImageBitmap(blob);
-          const origImg = new Image();
-          origImg.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = origImg.width;
-            canvas.height = origImg.height;
-            const ctx = canvas.getContext('2d', { alpha: true });
-            if (!ctx) { resolve(blob); return; }
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(maskBitmap, 0, 0, canvas.width, canvas.height);
-            maskBitmap.close();
-            canvas.toBlob((b) => resolve(b || blob), 'image/png');
-          };
-          origImg.src = imageSrc;
-        } catch (e) {
-          resolve(blob);
-        }
-      });
-
-      const url = URL.createObjectURL(upscaledBlob);
+      const url = URL.createObjectURL(rawBlob);
       setResultImage(url);
       addToHistory(url);
       
@@ -288,11 +201,6 @@ export default function BackgroundRemover() {
 
     } catch (error) {
       console.error("BG Removal Error:", error);
-      if (retryCount === 0) {
-        console.log("Retrying with full IS-Net model...");
-        removeBackground(1);
-        return;
-      }
       alert("AI background removal failed. You can use 'Manual Touchup' to remove the background manually.");
     } finally {
       setIsProcessing(false);
@@ -302,6 +210,11 @@ export default function BackgroundRemover() {
   // --- Manual Touchup Logic ---
   useEffect(() => {
     if (isManualMode && canvasRef.current) {
+      if (isDrawingUpdateRef.current) {
+        isDrawingUpdateRef.current = false;
+        return;
+      }
+      
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
@@ -310,7 +223,7 @@ export default function BackgroundRemover() {
       img.onload = async () => {
         // Always use original image dimensions for the canvas to avoid shifts
         const origImg = new Image();
-        origImg.src = imageSrc;
+        origImg.src = imageSrc || '';
         await new Promise(resolve => { origImg.onload = resolve; });
         
         canvas.width = origImg.width;
@@ -318,7 +231,7 @@ export default function BackgroundRemover() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       };
-      img.src = resultImage || imageSrc;
+      img.src = resultImage || imageSrc || '';
     }
   }, [isManualMode, resultImage, imageSrc]);
 
@@ -377,6 +290,7 @@ export default function BackgroundRemover() {
     if (isDrawing && canvasRef.current) {
       setIsDrawing(false);
       const result = canvasRef.current.toDataURL('image/png');
+      isDrawingUpdateRef.current = true;
       setResultImage(result);
       addToHistory(result);
     }
@@ -536,6 +450,7 @@ export default function BackgroundRemover() {
                       <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
                         <Wand2 className="w-5 h-5 text-accent" /> AI Processing
                       </h3>
+                      
                       <button 
                         onClick={removeBackground}
                         disabled={isProcessing}
@@ -779,7 +694,7 @@ export default function BackgroundRemover() {
                               </div>
                             </div>
                             <p className="font-bold text-xl mb-2 text-white">{statusText}</p>
-                            <p className="text-sm text-white/70">Optimizing for speed (Target: 3s)</p>
+                            <p className="text-sm text-white/70">Optimizing for speed (Target: 5s)</p>
                           </div>
                         </div>
                       )}

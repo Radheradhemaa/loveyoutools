@@ -3,10 +3,7 @@ import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Ima
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as imglyRemoveBackground, preload } from '@imgly/background-removal';
-
-// Preload the model in the background immediately to make the first run faster
-preload({ model: 'isnet_fp16', device: 'gpu' }).catch(() => {});
+import { hybridRemoveBackground } from '../lib/bgRemoval';
 
 // --- Configuration ---
 const PRESETS = [
@@ -136,6 +133,7 @@ export default function PassportPhotoMaker() {
       const prevIndex = historyIndex - 1;
       setHistoryIndex(prevIndex);
       const prevSrc = history[prevIndex];
+      isDrawingUpdateRef.current = false;
       // If we're back to the first item, it's the original cropped image
       setBgRemovedImageSrc(prevIndex === 0 ? null : prevSrc);
       updateCanvasFromSrc(prevSrc);
@@ -149,6 +147,7 @@ export default function PassportPhotoMaker() {
       const nextIndex = historyIndex + 1;
       setHistoryIndex(nextIndex);
       const nextSrc = history[nextIndex];
+      isDrawingUpdateRef.current = false;
       setBgRemovedImageSrc(nextSrc);
       updateCanvasFromSrc(nextSrc);
       // Clear final image to force re-render of adjustments
@@ -188,10 +187,16 @@ export default function PassportPhotoMaker() {
   const touchupCanvasRef = useRef<HTMLCanvasElement>(null);
   const originalPatternRef = useRef<CanvasPattern | null>(null);
   const lastPosRef = useRef<{x: number, y: number} | null>(null);
+  const isDrawingUpdateRef = useRef(false);
 
   // --- Manual Touchup Logic ---
   useEffect(() => {
     if (isManualMode && step === 'edit') {
+      if (isDrawingUpdateRef.current) {
+        isDrawingUpdateRef.current = false;
+        return;
+      }
+      
       let isMounted = true;
       const initCanvas = async () => {
         const canvas = touchupCanvasRef.current;
@@ -293,6 +298,7 @@ export default function PassportPhotoMaker() {
       setIsDrawing(false);
       lastPosRef.current = null;
       const result = touchupCanvasRef.current.toDataURL('image/png', 1.0);
+      isDrawingUpdateRef.current = true;
       setBgRemovedImageSrc(result);
       addToHistory(result);
     }
@@ -429,122 +435,30 @@ export default function PassportPhotoMaker() {
         ctx.drawImage(img, 0, 0, width, height);
         canvas.toBlob((blob) => {
           resolve(blob || new Blob());
-        }, 'image/jpeg', 0.9);
+        }, 'image/jpeg', 0.8);
       };
       img.onerror = () => resolve(new Blob());
       img.src = src;
     });
   };
 
-  const refineMask = async (blob: Blob): Promise<Blob> => {
-    try {
-      const bitmap = await createImageBitmap(blob);
-      const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return blob;
-      
-      ctx.drawImage(bitmap, 0, 0);
-      bitmap.close();
-      
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imageData.data;
-
-      // Optimized Single Pass for Edge Refinement & Alpha Matting
-      for (let i = 0; i < data.length; i += 4) {
-        const alpha = data[i + 3];
-        if (alpha === 0) continue;
-
-        // 1. Thresholding with soft transition (Faster than multiple passes)
-        let newAlpha;
-        if (alpha < 85) newAlpha = 0; 
-        else if (alpha > 245) newAlpha = 255;
-        else {
-          const t = (alpha - 85) / 160;
-          newAlpha = (t * t * (3 - 2 * t)) * 255;
-        }
-        data[i + 3] = newAlpha;
-
-        // 2. Color Recovery (De-contamination)
-        const a = newAlpha / 255;
-        if (a > 0 && a < 1) {
-          const r = data[i], g = data[i + 1], b = data[i + 2];
-          // Recover subject color assuming white background bleed
-          data[i] = Math.max(0, Math.min(255, (r - 255 * (1 - a)) / a));
-          data[i + 1] = Math.max(0, Math.min(255, (g - 255 * (1 - a)) / a));
-          data[i + 2] = Math.max(0, Math.min(255, (b - 255 * (1 - a)) / a));
-        }
-      }
-      
-      ctx.putImageData(imageData, 0, 0);
-      return new Promise((resolve) => {
-        canvas.toBlob((refinedBlob) => resolve(refinedBlob || blob), 'image/png');
-      });
-    } catch (e) {
-      return blob;
-    }
-  };
-
-  const removeBackground = async (retryCount = 0) => {
+  const removeBackground = async () => {
     if (!croppedImageSrc) return;
     setIsProcessing(true);
     setIsManualMode(false);
     setStatusText('Removing Background...');
     
     try {
-      // Reduced resolution (320px) for sub-3s speed on most devices
-      const optimizedBlob = await resizeImage(croppedImageSrc, 320);
-      
-      // Use isnet_fp16 as primary for speed and stability, explicitly prefer GPU
-      const modelToUse = retryCount === 0 ? 'isnet_fp16' : 'isnet';
-      
-      const rawBlob = await imglyRemoveBackground(optimizedBlob, {
-        model: modelToUse,
-        device: 'gpu',
-        output: { format: 'image/png', quality: 0.8 },
-        progress: (step, progress) => {
-          const stepName = step.includes('fetch') ? 'Loading' : step.includes('compute') ? 'Processing' : 'Finalizing';
-          setStatusText(`${stepName}: ${Math.round(progress * 100)}%`);
-        }
+      const rawBlob = await hybridRemoveBackground(croppedImageSrc, 'hd', (status) => {
+        setStatusText(status);
       });
 
-      const blob = await refineMask(rawBlob);
-      
-      // Faster upscaling using the original image directly
-      const upscaledBlob = await new Promise<Blob>(async (resolve) => {
-        try {
-          const maskBitmap = await createImageBitmap(blob);
-          const origImg = new Image();
-          origImg.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = origImg.width;
-            canvas.height = origImg.height;
-            const ctx = canvas.getContext('2d', { alpha: true });
-            if (!ctx) { resolve(blob); return; }
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(maskBitmap, 0, 0, canvas.width, canvas.height);
-            maskBitmap.close();
-            canvas.toBlob((b) => resolve(b || blob), 'image/png');
-          };
-          origImg.src = croppedImageSrc;
-        } catch (e) {
-          resolve(blob);
-        }
-      });
-
-      const url = URL.createObjectURL(upscaledBlob);
+      const url = URL.createObjectURL(rawBlob);
       setBgRemovedImageSrc(url);
       addToHistory(url);
 
     } catch (error) {
       console.error("BG Removal Error:", error);
-      if (retryCount === 0) {
-        console.log("Retrying with full IS-Net model...");
-        removeBackground(1);
-        return;
-      }
       alert("AI background removal failed. You can use 'Manual Touchup' to remove the background manually.");
     } finally {
       setIsProcessing(false);
@@ -1422,7 +1336,7 @@ export default function PassportPhotoMaker() {
                             </div>
                           </div>
                           <div className="text-sm font-bold text-center">{statusText}</div>
-                          <div className="text-[10px] text-white/60 mt-1">Target: 3s</div>
+                          <div className="text-[10px] text-white/60 mt-1">Target: 5s</div>
                         </div>
                       )}
                     </div>
