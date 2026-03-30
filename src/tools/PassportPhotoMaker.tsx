@@ -47,6 +47,7 @@ export default function PassportPhotoMaker() {
   const [croppedImageSrc, setCroppedImageSrc] = useState<string | null>(null);
   const [bgRemovedImageSrc, setBgRemovedImageSrc] = useState<string | null>(null);
   const [finalImageSrc, setFinalImageSrc] = useState<string | null>(null);
+  const [isProcessingFilters, setIsProcessingFilters] = useState(false);
   const [printImageElement, setPrintImageElement] = useState<HTMLImageElement | null>(null);
   
   // Crop States
@@ -375,10 +376,27 @@ export default function PassportPhotoMaker() {
     const cropWidth = (completedPercentCrop.width * naturalWidth) / 100;
     const cropHeight = (completedPercentCrop.height * naturalHeight) / 100;
 
-    canvas.width = Math.round(cropWidth);
-    canvas.height = Math.round(cropHeight);
+    // Limit cropped image resolution to 1200px for performance
+    const MAX_CROP_DIM = 1200;
+    let targetWidth = Math.round(cropWidth);
+    let targetHeight = Math.round(cropHeight);
     
-    const ctx = canvas.getContext('2d');
+    if (targetWidth > targetHeight) {
+      if (targetWidth > MAX_CROP_DIM) {
+        targetHeight = Math.round((targetHeight * MAX_CROP_DIM) / targetWidth);
+        targetWidth = MAX_CROP_DIM;
+      }
+    } else {
+      if (targetHeight > MAX_CROP_DIM) {
+        targetWidth = Math.round((targetWidth * MAX_CROP_DIM) / targetHeight);
+        targetHeight = MAX_CROP_DIM;
+      }
+    }
+
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    
+    const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return;
 
     ctx.imageSmoothingEnabled = true;
@@ -392,18 +410,22 @@ export default function PassportPhotoMaker() {
       cropHeight,
       0,
       0,
-      canvas.width,
-      canvas.height
+      targetWidth,
+      targetHeight
     );
 
-    const croppedDataUrl = canvas.toDataURL('image/png', 1.0);
-    setCroppedImageSrc(croppedDataUrl);
-    setBgRemovedImageSrc(null); // Reset BG removal if recropped
-    setFinalImageSrc(null); // Clear final image to show loader while processing
-    setHistory([croppedDataUrl]); // Initialize history with the original cropped image
-    setHistoryIndex(0);
-    setStep('edit');
-    setZoom(1); // Reset to default zoom
+    // Use toBlob for better performance
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const croppedUrl = URL.createObjectURL(blob);
+      setCroppedImageSrc(croppedUrl);
+      setBgRemovedImageSrc(null);
+      setFinalImageSrc(null);
+      setHistory([croppedUrl]);
+      setHistoryIndex(0);
+      setStep('edit');
+      setZoom(1);
+    }, 'image/png');
   };
 
   // --- 3. Background Removal ---
@@ -478,113 +500,140 @@ export default function PassportPhotoMaker() {
     img.crossOrigin = "anonymous";
     img.onload = () => {
       if (!isMounted) return;
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      // Draw Background
-      if (bgColor !== 'transparent') {
-        ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
-
-      // Apply Filters
-      let b = appliedAdjustments.brightness;
-      let c = appliedAdjustments.contrast;
-      let s = appliedAdjustments.saturation;
+      setIsProcessingFilters(true);
       
-      if (appliedAdjustments.isUltraHD) {
-        c += 15; // Increased boost
-        s += 20; // Increased boost
-      }
-      
-      let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
-      
-      if (appliedAdjustments.smoothness > 0) {
-        // Skin smoothing: subtle blur
-        filterString += ` blur(${appliedAdjustments.smoothness / 100}px)`;
-      }
-
-      if (appliedAdjustments.beautyFace > 0) {
-        // Beauty face: subtle blur + brightness boost + contrast reduction + saturation boost
-        const beautyBlur = appliedAdjustments.beautyFace / 80;
-        const beautyBright = 100 + (appliedAdjustments.beautyFace / 15);
-        const beautyContrast = 100 - (appliedAdjustments.beautyFace / 20);
-        const beautySaturate = 100 + (appliedAdjustments.beautyFace / 20);
-        filterString += ` blur(${beautyBlur}px) brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
-      }
-
-      if (appliedAdjustments.edgeSoftness > 0) {
-        // Edge adjustment: drop-shadow + very subtle blur for feathering
-        const edgeBlur = appliedAdjustments.edgeSoftness / 50;
-        filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
-      }
-      
-      ctx.filter = filterString;
-      
-      // Draw Image
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, 0, 0);
-      ctx.filter = 'none'; // Reset
-
-      // Apply Sharpness (Highly Optimized Convolution)
-      const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
-      if (finalSharpness > 0) {
-        const amount = finalSharpness / 100; // More balanced sharpening
-        const a = amount;
-        const b_val = 1 + 4 * a;
+      // Use requestAnimationFrame to avoid blocking the UI thread immediately after AI finishes
+      requestAnimationFrame(() => {
+        if (!isMounted) return;
         
-        const sw = canvas.width;
-        const sh = canvas.height;
-        const imageData = ctx.getImageData(0, 0, sw, sh);
-        const pixels = imageData.data;
-        const output = ctx.createImageData(sw, sh);
-        const dst = output.data;
-
-        // Highly optimized convolution loop (unrolled 3x3)
-        for (let i = 0; i < pixels.length; i += 4) {
-          const x = (i / 4) % sw;
-          const y = Math.floor((i / 4) / sw);
-          
-          // Skip edges for simplicity in the tight loop
-          if (x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
-            dst[i] = pixels[i];
-            dst[i+1] = pixels[i+1];
-            dst[i+2] = pixels[i+2];
-            dst[i+3] = pixels[i+3];
-            continue;
-          }
-
-          const iUp = i - sw * 4;
-          const iDown = i + sw * 4;
-          const iLeft = i - 4;
-          const iRight = i + 4;
-
-          // Apply kernel: [0, -a, 0], [-a, 1+4a, -a], [0, -a, 0]
-          dst[i]     = pixels[i] * b_val - (pixels[iUp] + pixels[iDown] + pixels[iLeft] + pixels[iRight]) * a;
-          dst[i + 1] = pixels[i + 1] * b_val - (pixels[iUp + 1] + pixels[iDown + 1] + pixels[iLeft + 1] + pixels[iRight + 1]) * a;
-          dst[i + 2] = pixels[i + 2] * b_val - (pixels[iUp + 2] + pixels[iDown + 2] + pixels[iLeft + 2] + pixels[iRight + 2]) * a;
-          dst[i + 3] = pixels[i + 3];
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d', { alpha: true });
+        if (!ctx) {
+          setIsProcessingFilters(false);
+          return;
         }
-        ctx.putImageData(output, 0, 0);
-      }
 
-      // Add Border if requested
-      if (hasBorder) {
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = Math.max(2, Math.round(canvas.width / 200));
-        ctx.strokeRect(0, 0, canvas.width, canvas.height);
-      }
+        // Draw Background
+        if (bgColor !== 'transparent') {
+          ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
 
-      if (isMounted) {
-        setFinalImageSrc(canvas.toDataURL('image/png', 1.0));
-      }
+        // Apply Filters
+        let b = appliedAdjustments.brightness;
+        let c = appliedAdjustments.contrast;
+        let s = appliedAdjustments.saturation;
+        
+        if (appliedAdjustments.isUltraHD) {
+          c += 15;
+          s += 20;
+        }
+        
+        let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
+        
+        if (appliedAdjustments.smoothness > 0) {
+          filterString += ` blur(${appliedAdjustments.smoothness / 100}px)`;
+        }
+
+        if (appliedAdjustments.beautyFace > 0) {
+          const beautyBlur = appliedAdjustments.beautyFace / 80;
+          const beautyBright = 100 + (appliedAdjustments.beautyFace / 15);
+          const beautyContrast = 100 - (appliedAdjustments.beautyFace / 20);
+          const beautySaturate = 100 + (appliedAdjustments.beautyFace / 20);
+          filterString += ` blur(${beautyBlur}px) brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
+        }
+
+        if (appliedAdjustments.edgeSoftness > 0) {
+          const edgeBlur = appliedAdjustments.edgeSoftness / 50;
+          filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
+        }
+        
+        ctx.filter = filterString;
+        
+        // Draw Image
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0);
+        ctx.filter = 'none';
+
+        // Apply Sharpness (Optimized)
+        const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
+        
+        if (finalSharpness > 40) {
+          const amount = finalSharpness / 100;
+          const a = amount;
+          const b_val = 1 + 4 * a;
+          
+          const sw = canvas.width;
+          const sh = canvas.height;
+          const imageData = ctx.getImageData(0, 0, sw, sh);
+          const pixels = new Uint32Array(imageData.data.buffer);
+          const output = ctx.createImageData(sw, sh);
+          const dst = new Uint32Array(output.data.buffer);
+
+          for (let y = 1; y < sh - 1; y++) {
+            const offset = y * sw;
+            for (let x = 1; x < sw - 1; x++) {
+              const i = offset + x;
+              const iUp = i - sw;
+              const iDown = i + sw;
+              const iLeft = i - 1;
+              const iRight = i + 1;
+
+              // Unpack RGBA for sharpening
+              const p = pixels[i];
+              const pUp = pixels[iUp];
+              const pDown = pixels[iDown];
+              const pLeft = pixels[iLeft];
+              const pRight = pixels[iRight];
+
+              const r = ((p & 0xff) * b_val - ((pUp & 0xff) + (pDown & 0xff) + (pLeft & 0xff) + (pRight & 0xff)) * a);
+              const g = (((p >> 8) & 0xff) * b_val - (((pUp >> 8) & 0xff) + ((pDown >> 8) & 0xff) + ((pLeft >> 8) & 0xff) + ((pRight >> 8) & 0xff)) * a);
+              const b_comp = (((p >> 16) & 0xff) * b_val - (((pUp >> 16) & 0xff) + ((pDown >> 16) & 0xff) + ((pLeft >> 16) & 0xff) + ((pRight >> 16) & 0xff)) * a);
+              const alpha = (p >> 24) & 0xff;
+
+              dst[i] = (r < 0 ? 0 : r > 255 ? 255 : r) |
+                       ((g < 0 ? 0 : g > 255 ? 255 : g) << 8) |
+                       ((b_comp < 0 ? 0 : b_comp > 255 ? 255 : b_comp) << 16) |
+                       (alpha << 24);
+            }
+          }
+          ctx.putImageData(output, 0, 0);
+        } else if (finalSharpness > 0) {
+          // Fast sharpening fallback using contrast/brightness
+          // We need to draw the image onto the canvas with the filter
+          // Since the image is already drawn, we can use a temporary canvas or just apply it to the source
+          ctx.filter = `contrast(${100 + finalSharpness / 2}%) brightness(${100 + finalSharpness / 10}%)`;
+          ctx.drawImage(img, 0, 0);
+          ctx.filter = 'none';
+        }
+
+        // Add Border if requested
+        if (hasBorder) {
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = Math.max(2, Math.round(canvas.width / 200));
+          ctx.strokeRect(0, 0, canvas.width, canvas.height);
+        }
+        
+        if (isMounted) {
+          // Use toBlob + createObjectURL for better performance on high-res images
+          canvas.toBlob((blob) => {
+            if (blob && isMounted) {
+              const url = URL.createObjectURL(blob);
+              setFinalImageSrc(url);
+            }
+            setIsProcessingFilters(false);
+          }, 'image/png');
+        } else {
+          setIsProcessingFilters(false);
+        }
+      });
     };
     img.onerror = () => {
-      if (isMounted) setFinalImageSrc(sourceImage); // Fallback to source if processing fails
+      if (isMounted) setFinalImageSrc(sourceImage);
+      setIsProcessingFilters(false);
     };
     img.src = sourceImage;
     return () => { isMounted = false; };
@@ -1282,13 +1331,15 @@ export default function PassportPhotoMaker() {
 
                   {step === 'edit' && (
                     <div 
-                      className="relative shadow-2xl rounded-sm overflow-hidden bg-white flex items-center justify-center"
+                      className="relative shadow-2xl rounded-sm overflow-hidden flex items-center justify-center"
                       style={{
                         aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : (completedCrop ? `${completedCrop.width} / ${completedCrop.height}` : 'auto'),
                         height: `70vh`,
                         maxWidth: `100%`,
                         transition: 'all 0.1s ease-out',
-                        zoom: zoom
+                        zoom: zoom,
+                        backgroundColor: bgColor === 'transparent' ? 'transparent' : (bgColor === 'custom' ? customColor : bgColor),
+                        backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : 'none'
                       }}
                     >
                       {isManualMode ? (
@@ -1313,14 +1364,16 @@ export default function PassportPhotoMaker() {
                           <img 
                             src={finalImageSrc || bgRemovedImageSrc || croppedImageSrc || ''} 
                             alt="Processed" 
-                            className={`max-w-full max-h-full object-contain block transition-opacity duration-200 ${!finalImageSrc ? 'opacity-50' : 'opacity-100'}`} 
+                            className={`max-w-full max-h-full object-contain block transition-opacity duration-200 ${(isProcessingFilters || !finalImageSrc) ? 'opacity-50' : 'opacity-100'}`} 
                             style={{ imageRendering: 'auto' }}
                           />
-                          {!finalImageSrc && (
+                          {(isProcessingFilters || !finalImageSrc) && (
                             <div className="absolute inset-0 flex items-center justify-center">
                               <div className="text-center bg-white/80 backdrop-blur-sm p-4 rounded-2xl shadow-xl border border-gray-100">
                                 <Loader2 className="w-8 h-8 animate-spin text-[#e8501a] mx-auto mb-2" />
-                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Processing...</p>
+                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                                  {isProcessingFilters ? 'Applying Filters...' : 'Processing...'}
+                                </p>
                               </div>
                             </div>
                           )}

@@ -2,11 +2,10 @@ import { removeBackground as imglyRemoveBackground, preload } from '@imgly/backg
 
 // Preload models for the hybrid strategy
 preload({ model: 'isnet_fp16', device: 'gpu', proxyToWorker: true }).catch(() => {});
-preload({ model: 'u2netp', device: 'gpu', proxyToWorker: true }).catch(() => {});
 
 /**
  * Advanced Hybrid Background Removal Engine
- * Focus: Zero Halo, Perfect Hair Edges, No Shadow
+ * Optimized for speed and zero-halo quality.
  */
 export const hybridRemoveBackground = async (
   imageSrc: string,
@@ -25,28 +24,29 @@ export const hybridRemoveBackground = async (
       img.src = imageSrc;
     });
 
-    // 2. Prepare optimized working canvas (Max 1280px for balance of speed/detail)
-    const MAX_DIM = 1280;
+    // 2. Prepare optimized working canvas (Max 1024px for AI Pass - faster)
+    const AI_MAX_DIM = 1024;
     let workW = origImg.width;
     let workH = origImg.height;
-    if (workW > workH && workW > MAX_DIM) {
-      workH = Math.round((workH * MAX_DIM) / workW);
-      workW = MAX_DIM;
-    } else if (workH > MAX_DIM) {
-      workW = Math.round((workW * MAX_DIM) / workH);
-      workH = MAX_DIM;
+    if (workW > workH && workW > AI_MAX_DIM) {
+      workH = Math.round((workH * AI_MAX_DIM) / workW);
+      workW = AI_MAX_DIM;
+    } else if (workH > AI_MAX_DIM) {
+      workW = Math.round((workW * AI_MAX_DIM) / workH);
+      workH = AI_MAX_DIM;
     }
 
     const workCanvas = document.createElement('canvas');
     workCanvas.width = workW;
     workCanvas.height = workH;
-    const workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
+    const workCtx = workCanvas.getContext('2d', { alpha: false });
     if (!workCtx) throw new Error("Canvas context failed");
     workCtx.drawImage(origImg, 0, 0, workW, workH);
-    const workBlob = await new Promise<Blob>(res => workCanvas.toBlob(b => res(b!), 'image/jpeg', 0.95));
+    
+    // Use toBlob with lower quality for AI pass to speed up transfer
+    const workBlob = await new Promise<Blob>(res => workCanvas.toBlob(b => res(b!), 'image/jpeg', 0.8));
 
-    // 3. Step 1 & 3: Hybrid AI Pass (ISNet + U2Net logic)
-    // We use ISNet_FP16 as the primary high-detail engine
+    // 3. AI Pass
     onProgress('Extracting Subject...');
     const maskBlob = await imglyRemoveBackground(workBlob, {
       model: 'isnet_fp16', 
@@ -59,80 +59,74 @@ export const hybridRemoveBackground = async (
       }
     });
 
-    // 4. Post-Processing Pipeline (Steps 4, 5, 6)
-    onProgress('Anti-Halo Processing...');
+    // 4. Fast Post-Processing Pipeline (Optimized for zero-halo)
+    onProgress('Refining Edges...');
     const maskImg = await createImageBitmap(maskBlob);
     
-    // Create a high-res processing canvas
-    const procCanvas = document.createElement('canvas');
-    procCanvas.width = origImg.width;
-    procCanvas.height = origImg.height;
-    const procCtx = procCanvas.getContext('2d');
-    if (!procCtx) throw new Error("Canvas context failed");
-
-    // --- STEP 4 & 6: Color Decontamination & Background Spill Removal ---
-    // We create a "color bleed" layer to replace background spill with subject colors
-    const colorBleedCanvas = document.createElement('canvas');
-    colorBleedCanvas.width = origImg.width;
-    colorBleedCanvas.height = origImg.height;
-    const cbCtx = colorBleedCanvas.getContext('2d');
-    if (cbCtx) {
-      // Draw original subject
-      cbCtx.drawImage(origImg, 0, 0);
-      cbCtx.globalCompositeOperation = 'destination-in';
-      cbCtx.drawImage(maskImg, 0, 0, origImg.width, origImg.height);
-      
-      // Create the bleed: Blur the subject slightly to expand its colors into the edge regions
-      const bleedLayer = document.createElement('canvas');
-      bleedLayer.width = origImg.width;
-      bleedLayer.height = origImg.height;
-      const blCtx = bleedLayer.getContext('2d');
-      if (blCtx) {
-        blCtx.filter = 'blur(4px)'; // Expand colors by ~4px
-        blCtx.drawImage(colorBleedCanvas, 0, 0);
-        
-        // Draw original subject back on top of the bleed
-        blCtx.filter = 'none';
-        blCtx.drawImage(colorBleedCanvas, 0, 0);
-        
-        // Now 'bleedLayer' has subject colors extending into the halo zone
-      }
-      
-      // --- STEP 4: Erosion (0.5-1px inward shrink) ---
-      // We draw the mask slightly smaller to "eat" the outer glow
-      procCtx.save();
-      procCtx.filter = 'blur(0.5px)'; // Soften for sub-pixel erosion
-      procCtx.drawImage(maskImg, 0, 0, origImg.width, origImg.height);
-      procCtx.globalCompositeOperation = 'source-in';
-      
-      // Draw the color-decontaminated subject
-      procCtx.drawImage(bleedLayer, 0, 0);
-      procCtx.restore();
-    } else {
-      // Fallback if bleed fails
-      procCtx.drawImage(origImg, 0, 0);
-      procCtx.globalCompositeOperation = 'destination-in';
-      procCtx.drawImage(maskImg, 0, 0, origImg.width, origImg.height);
-    }
-
-    // --- STEP 5: Final Feather & Smooth ---
-    // Apply a very subtle global smoothing to the alpha channel
-    const finalCanvas = document.createElement('canvas');
-    finalCanvas.width = origImg.width;
-    finalCanvas.height = origImg.height;
-    const finalCtx = finalCanvas.getContext('2d');
-    if (!finalCtx) throw new Error("Canvas context failed");
+    // Use OffscreenCanvas if available for better performance
+    const useOffscreen = typeof OffscreenCanvas !== 'undefined';
+    const finalCanvas = useOffscreen 
+      ? new OffscreenCanvas(origImg.width, origImg.height) 
+      : document.createElement('canvas');
     
-    finalCtx.imageSmoothingEnabled = true;
-    finalCtx.imageSmoothingQuality = 'high';
-    finalCtx.drawImage(procCanvas, 0, 0);
+    if (!useOffscreen) {
+      finalCanvas.width = origImg.width;
+      finalCanvas.height = origImg.height;
+    }
+    
+    const finalCtx = finalCanvas.getContext('2d', { alpha: true });
+    if (!finalCtx) throw new Error("Canvas context failed");
 
-    return new Promise<Blob>((resolve, reject) => {
-      finalCanvas.toBlob((blob) => {
-        if (blob) resolve(blob);
-        else reject(new Error("Blob creation failed"));
-      }, 'image/png');
+    // --- Advanced Anti-Halo & Color Decontamination ---
+    
+    // Step A: Draw the mask first (scaled to full res)
+    finalCtx.drawImage(maskImg, 0, 0, origImg.width, origImg.height);
+    
+    // Step B: Draw the original image only where the mask is (Source-In)
+    finalCtx.globalCompositeOperation = 'source-in';
+    finalCtx.drawImage(origImg, 0, 0);
+    
+    // Step C: Color Decontamination (Color Bleed)
+    // We create a "bleed" layer by blurring the subject and drawing it behind itself.
+    // This replaces background color spill with subject color spill.
+    const bleedCanvas = useOffscreen 
+      ? new OffscreenCanvas(origImg.width, origImg.height) 
+      : document.createElement('canvas');
+    if (!useOffscreen) {
+      bleedCanvas.width = origImg.width;
+      bleedCanvas.height = origImg.height;
+    }
+    const bleedCtx = bleedCanvas.getContext('2d');
+    if (bleedCtx) {
+      bleedCtx.filter = 'blur(4px)'; // Expand subject colors
+      bleedCtx.drawImage(finalCanvas as any, 0, 0);
+      
+      finalCtx.globalCompositeOperation = 'destination-over';
+      finalCtx.drawImage(bleedCanvas as any, 0, 0);
+    }
+    
+    // Step D: Final Mask Clip & Erosion (Anti-Halo)
+    // Re-apply the mask with a slight blur to create soft, natural edges and remove outer glow.
+    finalCtx.globalCompositeOperation = 'destination-in';
+    finalCtx.filter = 'blur(0.5px)'; // Sub-pixel erosion + smoothing
+    finalCtx.drawImage(maskImg, 0, 0, origImg.width, origImg.height);
+    finalCtx.filter = 'none';
+
+    onProgress('Finalizing...');
+    
+    // Use toBlob on the canvas (OffscreenCanvas.convertToBlob or HTMLCanvasElement.toBlob)
+    const resultBlob = await new Promise<Blob>((resolve, reject) => {
+      if (useOffscreen && (finalCanvas as any).convertToBlob) {
+        (finalCanvas as any).convertToBlob({ type: 'image/png' }).then(resolve).catch(reject);
+      } else {
+        (finalCanvas as HTMLCanvasElement).toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("Blob creation failed"));
+        }, 'image/png');
+      }
     });
+
+    return resultBlob;
 
   } catch (error) {
     console.error("Advanced Hybrid BG Removal failed:", error);
