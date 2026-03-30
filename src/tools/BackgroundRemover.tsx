@@ -464,15 +464,34 @@ export default function BackgroundRemover() {
                       <button 
                         onClick={removeBackground}
                         disabled={isProcessing}
-                        className="w-full btn bp py-4 rounded-2xl gap-2 text-lg shadow-lg shadow-accent/20"
+                        className={`w-full btn py-4 rounded-2xl gap-2 text-lg shadow-lg ${processingError ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/20' : 'bp shadow-accent/20'}`}
                       >
-                        {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                        {processingError ? 'Try Again' : 'Remove Background'}
+                        {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : processingError ? <RefreshCw className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+                        {processingError ? 'Retry AI Removal' : 'Remove Background'}
                       </button>
                       {processingError && (
-                        <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 text-xs font-medium animate-in fade-in slide-in-from-top-2">
-                          <p className="font-bold mb-1">Processing Error</p>
-                          <p>{processingError}</p>
+                        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-sm font-medium animate-in fade-in slide-in-from-top-2">
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 bg-red-500/20 rounded-lg shrink-0">
+                              <X className="w-4 h-4" />
+                            </div>
+                            <div className="space-y-1">
+                              <p className="font-bold">AI Processing Failed</p>
+                              <p className="text-xs opacity-80 leading-relaxed">{processingError}</p>
+                            </div>
+                          </div>
+                          <div className="mt-4 pt-4 border-t border-red-500/10">
+                            <p className="text-[10px] text-text-muted mb-2">Alternatively, you can remove the background manually:</p>
+                            <button 
+                              onClick={() => {
+                                setProcessingError(null);
+                                setIsManualMode(true);
+                              }}
+                              className="w-full py-2 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-bold transition-colors"
+                            >
+                              Open Manual Touchup
+                            </button>
+                          </div>
                         </div>
                       )}
                       <p className="text-xs text-text-muted text-center">

@@ -69,13 +69,25 @@ export const hybridRemoveBackground = async (
     // 3. AI Pass using ISNet (Full)
     onProgress('Extracting Subject (AI)...');
     
-    const maskBlob = await imglyRemoveBackground(workBlob, {
-      model: 'isnet',
-      proxyToWorker: true,
-      output: { format: 'image/png' }
-    });
+    let maskBlob: Blob;
+    try {
+      maskBlob = await imglyRemoveBackground(workBlob, {
+        model: 'isnet',
+        proxyToWorker: true,
+        output: { format: 'image/png' }
+      });
+    } catch (err: any) {
+      console.error("imglyRemoveBackground failed:", err);
+      if (err?.message?.includes('fetch')) {
+        throw new Error("Failed to download AI models. Please check your internet connection.");
+      }
+      if (err?.message?.includes('WebAssembly')) {
+        throw new Error("Your browser does not support WebAssembly, which is required for AI processing.");
+      }
+      throw new Error(`AI processing failed: ${err?.message || 'Unknown error'}`);
+    }
 
-    if (!maskBlob) throw new Error("AI model failed to process");
+    if (!maskBlob) throw new Error("AI model failed to produce a result.");
 
     // 4. Ultra-Precision Mask Processing
     onProgress('Refining Edges...');
