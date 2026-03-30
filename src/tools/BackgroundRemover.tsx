@@ -7,6 +7,7 @@ export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingError, setProcessingError] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [statusText, setStatusText] = useState('');
 
@@ -14,11 +15,10 @@ export default function BackgroundRemover() {
     let interval: NodeJS.Timeout;
     if (isProcessing) {
       setTimer(0);
+      setProcessingError(null);
       interval = setInterval(() => {
         setTimer((prev) => Number((prev + 0.1).toFixed(1)));
       }, 100);
-    } else {
-      setTimer(0);
     }
     return () => clearInterval(interval);
   }, [isProcessing]);
@@ -183,6 +183,7 @@ export default function BackgroundRemover() {
   const removeBackground = async () => {
     if (!imageSrc) return;
     setIsProcessing(true);
+    setProcessingError(null);
     setTimer(0);
     setStatusText('Initializing AI...');
     
@@ -207,7 +208,8 @@ export default function BackgroundRemover() {
 
     } catch (error) {
       console.error("BG Removal Error:", error);
-      alert("AI background removal failed. You can use 'Manual Touchup' to remove the background manually.");
+      const errorMessage = error instanceof Error ? error.message : "AI background removal failed.";
+      setProcessingError(errorMessage);
     } finally {
       setIsProcessing(false);
     }
@@ -408,6 +410,7 @@ export default function BackgroundRemover() {
               setImageSrc(src);
               // Reset all states for new image
               setResultImage(null);
+              setProcessingError(null);
               setHistory([]);
               setHistoryIndex(-1);
               setIsManualMode(false);
@@ -421,6 +424,7 @@ export default function BackgroundRemover() {
             // Reset everything when file is null
             setImageSrc(null);
             setResultImage(null);
+            setProcessingError(null);
             setHistory([]);
             setHistoryIndex(-1);
             setIsManualMode(false);
@@ -463,8 +467,14 @@ export default function BackgroundRemover() {
                         className="w-full btn bp py-4 rounded-2xl gap-2 text-lg shadow-lg shadow-accent/20"
                       >
                         {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
-                        Remove Background
+                        {processingError ? 'Try Again' : 'Remove Background'}
                       </button>
+                      {processingError && (
+                        <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 text-xs font-medium animate-in fade-in slide-in-from-top-2">
+                          <p className="font-bold mb-1">Processing Error</p>
+                          <p>{processingError}</p>
+                        </div>
+                      )}
                       <p className="text-xs text-text-muted text-center">
                         Our AI will analyze your image and remove the background with high precision.
                       </p>
