@@ -209,10 +209,13 @@ export default function PassportPhotoMaker() {
         origImg.crossOrigin = "anonymous";
         await new Promise((resolve) => {
           origImg.onload = resolve;
+          origImg.onerror = resolve; // Continue even on error to avoid hanging
           origImg.src = croppedImageSrc;
         });
 
         if (!isMounted) return;
+        if (!origImg.complete || origImg.naturalWidth === 0) return;
+
         canvas.width = origImg.width;
         canvas.height = origImg.height;
 
@@ -224,10 +227,13 @@ export default function PassportPhotoMaker() {
         currentImg.crossOrigin = "anonymous";
         await new Promise((resolve) => {
           currentImg.onload = resolve;
+          currentImg.onerror = resolve;
           currentImg.src = currentImgSrc;
         });
 
         if (!isMounted) return;
+        if (!currentImg.complete || currentImg.naturalWidth === 0) return;
+        
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(currentImg, 0, 0, canvas.width, canvas.height);
       };
@@ -589,15 +595,16 @@ export default function PassportPhotoMaker() {
               const pLeft = pixels[iLeft];
               const pRight = pixels[iRight];
 
-              const r = ((p & 0xff) * b_val - ((pUp & 0xff) + (pDown & 0xff) + (pLeft & 0xff) + (pRight & 0xff)) * a);
-              const g = (((p >> 8) & 0xff) * b_val - (((pUp >> 8) & 0xff) + ((pDown >> 8) & 0xff) + ((pLeft >> 8) & 0xff) + ((pRight >> 8) & 0xff)) * a);
+              const r_val = ((p & 0xff) * b_val - ((pUp & 0xff) + (pDown & 0xff) + (pLeft & 0xff) + (pRight & 0xff)) * a);
+              const g_val = (((p >> 8) & 0xff) * b_val - (((pUp >> 8) & 0xff) + ((pDown >> 8) & 0xff) + ((pLeft >> 8) & 0xff) + ((pRight >> 8) & 0xff)) * a);
               const b_comp = (((p >> 16) & 0xff) * b_val - (((pUp >> 16) & 0xff) + ((pDown >> 16) & 0xff) + ((pLeft >> 16) & 0xff) + ((pRight >> 16) & 0xff)) * a);
               const alpha = (p >> 24) & 0xff;
 
-              dst[i] = (r < 0 ? 0 : r > 255 ? 255 : r) |
-                       ((g < 0 ? 0 : g > 255 ? 255 : g) << 8) |
-                       ((b_comp < 0 ? 0 : b_comp > 255 ? 255 : b_comp) << 16) |
-                       (alpha << 24);
+              const finalR = r_val < 0 ? 0 : r_val > 255 ? 255 : (r_val | 0);
+              const finalG = g_val < 0 ? 0 : g_val > 255 ? 255 : (g_val | 0);
+              const finalB = b_comp < 0 ? 0 : b_comp > 255 ? 255 : (b_comp | 0);
+
+              dst[i] = finalR | (finalG << 8) | (finalB << 16) | (alpha << 24);
             }
           }
           ctx.putImageData(output, 0, 0);

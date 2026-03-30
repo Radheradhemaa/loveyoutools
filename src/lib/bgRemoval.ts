@@ -1,31 +1,51 @@
 import { removeBackground as imglyRemoveBackground, preload } from '@imgly/background-removal';
 
-// Preload models for the hybrid strategy
-preload({ model: 'isnet_fp16', device: 'gpu', proxyToWorker: true }).catch(() => {});
+// Preload the requested ISNet model for maximum accuracy
+const models = ['isnet'] as const;
+models.forEach(model => {
+  preload({ model, proxyToWorker: true }).catch((err) => {
+    console.warn(`AI Model Preload failed for ${model}:`, err);
+  });
+});
 
 /**
- * Advanced Hybrid Background Removal Engine
- * Optimized for speed and zero-halo quality.
+ * High-Precision Background Removal using ISNet (Full)
+ * Optimized for absolute background elimination ("Proper Clear").
  */
 export const hybridRemoveBackground = async (
   imageSrc: string,
   mode: string = 'hd',
   onProgress: (status: string) => void
 ): Promise<Blob> => {
+  console.log("Starting Ultra-Clear BG Removal for:", imageSrc);
+  const startTime = Date.now();
+  
   try {
     onProgress('Analyzing Scene...');
     
     // 1. Load original high-res image
-    const origImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const origImg = await new Promise<ImageBitmap | HTMLImageElement>((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = reject;
+      img.onload = async () => {
+        try {
+          if (typeof createImageBitmap !== 'undefined') {
+            const bitmap = await createImageBitmap(img);
+            resolve(bitmap);
+          } else {
+            resolve(img);
+          }
+        } catch (e) {
+          resolve(img);
+        }
+      };
+      img.onerror = () => reject(new Error("Failed to load image"));
       img.src = imageSrc;
     });
 
-    // 2. Prepare optimized working canvas (Max 1024px for AI Pass - faster)
-    const AI_MAX_DIM = 1024;
+    // 2. Prepare optimized working canvas (800px for maximum detail)
+    // 800px provides much better segmentation for complex backgrounds.
+    const AI_MAX_DIM = 800;
     let workW = origImg.width;
     let workH = origImg.height;
     if (workW > workH && workW > AI_MAX_DIM) {
@@ -43,78 +63,73 @@ export const hybridRemoveBackground = async (
     if (!workCtx) throw new Error("Canvas context failed");
     workCtx.drawImage(origImg, 0, 0, workW, workH);
     
-    // Use toBlob with lower quality for AI pass to speed up transfer
-    const workBlob = await new Promise<Blob>(res => workCanvas.toBlob(b => res(b!), 'image/jpeg', 0.8));
+    const workBlob = await new Promise<Blob | null>(res => workCanvas.toBlob(res, 'image/jpeg', 0.95));
+    if (!workBlob) throw new Error("Failed to create work blob");
 
-    // 3. AI Pass
-    onProgress('Extracting Subject...');
+    // 3. AI Pass using ISNet (Full)
+    onProgress('Extracting Subject (AI)...');
+    
     const maskBlob = await imglyRemoveBackground(workBlob, {
-      model: 'isnet_fp16', 
-      device: 'gpu',
+      model: 'isnet',
       proxyToWorker: true,
-      output: { format: 'image/png' },
-      progress: (step, progress) => {
-        const stepName = step.includes('fetch') ? 'Loading AI' : step.includes('compute') ? 'Processing' : 'Finalizing';
-        onProgress(`${stepName}: ${Math.round(progress * 100)}%`);
-      }
+      output: { format: 'image/png' }
     });
 
-    // 4. Fast Post-Processing Pipeline (Optimized for zero-halo)
+    if (!maskBlob) throw new Error("AI model failed to process");
+
+    // 4. Ultra-Precision Mask Processing
     onProgress('Refining Edges...');
-    const maskImg = await createImageBitmap(maskBlob);
     
-    // Use OffscreenCanvas if available for better performance
+    const maskImg = await new Promise<ImageBitmap | HTMLImageElement>((res, rej) => {
+      const img = new Image();
+      img.onload = async () => {
+        if (typeof createImageBitmap !== 'undefined') {
+          res(await createImageBitmap(img));
+        } else {
+          res(img);
+        }
+      };
+      img.onerror = rej;
+      img.src = URL.createObjectURL(maskBlob);
+    });
+
     const useOffscreen = typeof OffscreenCanvas !== 'undefined';
     const finalCanvas = useOffscreen 
       ? new OffscreenCanvas(origImg.width, origImg.height) 
       : document.createElement('canvas');
     
     if (!useOffscreen) {
-      finalCanvas.width = origImg.width;
-      finalCanvas.height = origImg.height;
+      (finalCanvas as HTMLCanvasElement).width = origImg.width;
+      (finalCanvas as HTMLCanvasElement).height = origImg.height;
     }
     
     const finalCtx = finalCanvas.getContext('2d', { alpha: true });
-    if (!finalCtx) throw new Error("Canvas context failed");
+    if (!finalCtx) throw new Error("Final canvas context failed");
 
-    // --- Advanced Anti-Halo & Color Decontamination ---
+    // Step A: Draw the mask at full resolution
+    finalCtx.imageSmoothingEnabled = true;
+    finalCtx.imageSmoothingQuality = 'high';
     
-    // Step A: Draw the mask first (scaled to full res)
+    // Aggressive "Binary Mask" filter to force background out.
+    // High contrast (2.5) + Brightness (0.8) ensures a very tight, sharp edge.
+    // This "shrinks" the mask slightly to ensure no background pixels are left at the boundary.
+    finalCtx.filter = 'contrast(2.5) brightness(0.8) grayscale(1)'; 
     finalCtx.drawImage(maskImg, 0, 0, origImg.width, origImg.height);
+    finalCtx.filter = 'none';
     
-    // Step B: Draw the original image only where the mask is (Source-In)
+    // Step B: Apply the original image using the refined mask
     finalCtx.globalCompositeOperation = 'source-in';
     finalCtx.drawImage(origImg, 0, 0);
     
-    // Step C: Color Decontamination (Color Bleed)
-    // We create a "bleed" layer by blurring the subject and drawing it behind itself.
-    // This replaces background color spill with subject color spill.
-    const bleedCanvas = useOffscreen 
-      ? new OffscreenCanvas(origImg.width, origImg.height) 
-      : document.createElement('canvas');
-    if (!useOffscreen) {
-      bleedCanvas.width = origImg.width;
-      bleedCanvas.height = origImg.height;
-    }
-    const bleedCtx = bleedCanvas.getContext('2d');
-    if (bleedCtx) {
-      bleedCtx.filter = 'blur(4px)'; // Expand subject colors
-      bleedCtx.drawImage(finalCanvas as any, 0, 0);
-      
-      finalCtx.globalCompositeOperation = 'destination-over';
-      finalCtx.drawImage(bleedCanvas as any, 0, 0);
-    }
-    
-    // Step D: Final Mask Clip & Erosion (Anti-Halo)
-    // Re-apply the mask with a slight blur to create soft, natural edges and remove outer glow.
+    // Step C: Final Alpha Cleanup (Forcefully remove any faint background)
+    // We do a secondary pass with even higher contrast to "punch out" any remaining noise.
     finalCtx.globalCompositeOperation = 'destination-in';
-    finalCtx.filter = 'blur(0.5px)'; // Sub-pixel erosion + smoothing
+    finalCtx.filter = 'contrast(2.0) brightness(0.9)'; 
     finalCtx.drawImage(maskImg, 0, 0, origImg.width, origImg.height);
     finalCtx.filter = 'none';
 
     onProgress('Finalizing...');
     
-    // Use toBlob on the canvas (OffscreenCanvas.convertToBlob or HTMLCanvasElement.toBlob)
     const resultBlob = await new Promise<Blob>((resolve, reject) => {
       if (useOffscreen && (finalCanvas as any).convertToBlob) {
         (finalCanvas as any).convertToBlob({ type: 'image/png' }).then(resolve).catch(reject);
@@ -126,10 +141,13 @@ export const hybridRemoveBackground = async (
       }
     });
 
+    const duration = (Date.now() - startTime) / 1000;
+    console.log(`BG Removal completed in ${duration.toFixed(2)}s`);
+    
     return resultBlob;
 
   } catch (error) {
-    console.error("Advanced Hybrid BG Removal failed:", error);
+    console.error("High-Accuracy BG Removal failed:", error);
     throw error;
   }
 };

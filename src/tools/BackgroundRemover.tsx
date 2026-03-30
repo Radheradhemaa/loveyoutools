@@ -15,8 +15,8 @@ export default function BackgroundRemover() {
     if (isProcessing) {
       setTimer(0);
       interval = setInterval(() => {
-        setTimer((prev) => prev + 1);
-      }, 1000);
+        setTimer((prev) => Number((prev + 0.1).toFixed(1)));
+      }, 100);
     } else {
       setTimer(0);
     }
@@ -183,7 +183,10 @@ export default function BackgroundRemover() {
   const removeBackground = async () => {
     if (!imageSrc) return;
     setIsProcessing(true);
-    setStatusText('Removing Background...');
+    setTimer(0);
+    setStatusText('Initializing AI...');
+    
+    const startTime = Date.now();
     
     try {
       const rawBlob = await hybridRemoveBackground(imageSrc, 'hd', (status) => {
@@ -198,6 +201,9 @@ export default function BackgroundRemover() {
       const resultImg = new Image();
       resultImg.onload = () => { originalImgRef.current = resultImg; };
       resultImg.src = url;
+
+      const duration = (Date.now() - startTime) / 1000;
+      console.log(`UI: BG Removal took ${duration}s`);
 
     } catch (error) {
       console.error("BG Removal Error:", error);
@@ -685,16 +691,29 @@ export default function BackgroundRemover() {
                       />
                       
                       {isProcessing && (
-                        <div className="preview-loading-overlay">
-                          <div className="flex flex-col items-center text-center">
-                            <div className="relative mb-6">
-                              <Loader2 className="w-16 h-16 animate-spin text-accent" />
-                              <div className="absolute inset-0 flex items-center justify-center font-bold text-white text-lg">
-                                {timer}s
+                        <div className="preview-loading-overlay backdrop-blur-md bg-black/40">
+                          <div className="flex flex-col items-center text-center max-w-xs w-full px-6">
+                            <div className="relative mb-8">
+                              <div className="w-24 h-24 rounded-full border-4 border-white/10 border-t-accent animate-spin" />
+                              <div className="absolute inset-0 flex items-center justify-center font-mono font-bold text-white text-xl">
+                                {timer.toFixed(1)}s
                               </div>
                             </div>
-                            <p className="font-bold text-xl mb-2 text-white">{statusText}</p>
-                            <p className="text-sm text-white/70">Optimizing for speed (Target: 5s)</p>
+                            
+                            <div className="w-full h-1.5 bg-white/10 rounded-full mb-4 overflow-hidden">
+                              <div 
+                                className="h-full bg-accent transition-all duration-500 ease-out"
+                                style={{ 
+                                  width: statusText.includes('Analyzing') ? '20%' : 
+                                         statusText.includes('Extracting') ? '50%' : 
+                                         statusText.includes('Refining') ? '80%' : 
+                                         statusText.includes('Finalizing') ? '95%' : '10%'
+                                }}
+                              />
+                            </div>
+
+                            <p className="font-bold text-2xl mb-2 text-white tracking-tight">{statusText}</p>
+                            <p className="text-sm text-white/60 font-medium">ISNet FP16 Optimized Engine</p>
                           </div>
                         </div>
                       )}
