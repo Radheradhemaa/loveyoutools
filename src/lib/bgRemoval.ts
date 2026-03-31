@@ -1,92 +1,43 @@
 import { removeBackground as imglyRemoveBackground, preload } from '@imgly/background-removal';
 import cv from '@techstark/opencv-js';
-import { SelfieSegmentation } from '@mediapipe/selfie_segmentation';
 
 let isPreloaded = false;
-let selfieSegmentation: SelfieSegmentation | null = null;
 
-let mpResolver: ((results: any) => void) | null = null;
-
-/**
- * Initialize MediaPipe Selfie Segmentation
- */
-const getMediaPipe = async () => {
-  if (selfieSegmentation) return selfieSegmentation;
-  
-  selfieSegmentation = new SelfieSegmentation({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`,
-  });
-  
-  selfieSegmentation.setOptions({
-    modelSelection: 1, // 0 for general, 1 for landscape/selfie
-  });
-
-  selfieSegmentation.onResults((results) => {
-    if (mpResolver) mpResolver(results);
-  });
-  
-  return selfieSegmentation;
-};
-
-/**
- * Lazy-load AI models only when needed.
- */
-const ensurePreloaded = async (mode: string) => {
-  if (isPreloaded && mode !== 'hd') return;
-  
-  // Use isnet_fp16 for 'fast' and 'smart' modes for better speed/accuracy balance
-  const models = mode === 'hd' ? ['isnet'] : ['isnet_fp16'] as const;
+const ensurePreloaded = async () => {
+  if (isPreloaded) return;
   try {
-    if (models.length > 0) {
-      console.log(`Preloading ${models[0]} Model...`);
-      // Add a timeout for preloading
-      await Promise.race([
-        Promise.all(models.map(model => preload({ model, proxyToWorker: true }))),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Model preload timeout")), 20000))
-      ]);
-    }
-    await getMediaPipe();
+    console.log(`Preloading AI Models...`);
+    await Promise.race([
+      preload({ model: 'isnet' }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Model preload timeout")), 15000))
+    ]);
     isPreloaded = true;
     console.log("AI Models Preloaded Successfully");
   } catch (err) {
-    console.warn("AI Model Preload failed:", err);
+    console.warn("AI Model Preload failed (will retry on demand):", err);
   }
 };
 
-/**
- * Helper to yield the main thread and prevent "Page Unresponsive" errors.
- */
-const yieldThread = () => new Promise(resolve => setTimeout(resolve, 0));
-
-/**
- * High-Performance Hybrid AI Background Removal Engine
- * MediaPipe (Fast Base) + U²-Net (Edge Refinement)
- */
 export const hybridRemoveBackground = async (
   imageSrc: string,
-  mode: string = 'smart', // 'fast', 'smart', 'hd'
   onProgress: (status: string, intermediateBlob?: Blob) => void
 ): Promise<Blob> => {
-  console.log(`Starting Hybrid BG Removal [Mode: ${mode}] for:`, imageSrc);
   const startTime = Date.now();
-  
   try {
     onProgress('Initializing Engine...');
-    await ensurePreloaded(mode);
-    await yieldThread();
+    await ensurePreloaded();
     
-    // --- Step 1: Input Optimization ---
     onProgress('Optimizing Input...');
     const origImg = await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
-      const timeout = setTimeout(() => reject(new Error("Image load timeout")), 15000);
-      img.onload = () => { clearTimeout(timeout); resolve(img); };
-      img.onerror = () => { clearTimeout(timeout); reject(new Error("Failed to load image")); };
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Failed to load image"));
       img.src = imageSrc;
     });
 
-    const MAX_DIM = mode === 'hd' ? 1536 : 1024;
+    // Max dimension 1024px for balance of professional quality and <7s speed
+    const MAX_DIM = 1024;
     let workW = origImg.width;
     let workH = origImg.height;
     if (workW > workH && workW > MAX_DIM) {
@@ -100,284 +51,161 @@ export const hybridRemoveBackground = async (
     const workCanvas = document.createElement('canvas');
     workCanvas.width = workW;
     workCanvas.height = workH;
-    const workCtx = workCanvas.getContext('2d', { alpha: false, desynchronized: true });
-    if (!workCtx) throw new Error("Canvas context failed");
+    const workCtx = workCanvas.getContext('2d')!;
     workCtx.drawImage(origImg, 0, 0, workW, workH);
-    
-    // Compression if needed (>2MB check is hard without blob, so we compress by default for speed)
-    const workBlob = await new Promise<Blob | null>(res => workCanvas.toBlob(res, 'image/jpeg', 0.85));
-    if (!workBlob) throw new Error("Failed to create work blob");
 
-    // --- Step 2: Fast Segmentation (MediaPipe) ---
-    onProgress('Fast Segmentation (MediaPipe)...');
-    await yieldThread();
-    
-    const mp = await getMediaPipe();
-    let mpMask: HTMLCanvasElement | null = null;
-    
-    // Use a promise to wait for MediaPipe results correctly
-    const mpResult = await new Promise<HTMLCanvasElement | null>((resolve) => {
-      const timeout = setTimeout(() => {
-        console.warn("MediaPipe timeout");
-        resolve(null);
-      }, 5000);
+    onProgress('Segmenting Subject...');
+    const blob = await new Promise<Blob | null>(res => workCanvas.toBlob(res, 'image/png'));
+    if (!blob) throw new Error("Failed to create image blob");
 
-      mpResolver = (results) => {
-        clearTimeout(timeout);
-        const canvas = document.createElement('canvas');
-        canvas.width = workW;
-        canvas.height = workH;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(results.segmentationMask, 0, 0, workW, workH);
-        }
-        mpResolver = null;
-        resolve(canvas);
-      };
-
-      mp.send({ image: workCanvas }).catch(err => {
-        console.error("MediaPipe send error:", err);
-        clearTimeout(timeout);
-        resolve(null);
-      });
+    // Use isnet for professional hair/edge quality
+    const maskBlob = await imglyRemoveBackground(blob, {
+      model: 'isnet',
+      output: { format: 'image/png' },
+      debug: false
     });
 
-    if (!mpResult) {
-      console.warn("MediaPipe failed, falling back to U²-Net only if possible");
-    }
-    mpMask = mpResult;
-
-    // Progressive Rendering: Show fast result first (Step 8: Output)
-    let intermediateBlob: Blob | null = null;
-    if (mpMask) {
-      intermediateBlob = await finalizeResult(origImg, mpMask, onProgress);
-      onProgress('Fast Result Ready', intermediateBlob);
-    }
-
-    // If Fast Mode, we still want accuracy, so we continue to U²-Net refinement
-    // but we used isnet_fp16 which is much faster.
-    // We only return early if MediaPipe failed completely or if we are in a true "preview" mode.
-
-    // --- Step 3 & 4: Selective U²Net Refinement ---
-    onProgress('Edge Refinement (U²-Net)...');
-    await yieldThread();
-
-    // Check if we are exceeding 4 seconds already, if so skip U²Net (Step 7)
-    if (Date.now() - startTime > 4000 && mode !== 'hd') {
-      console.warn("Performance Control: Skipping U²Net due to delay");
-      return intermediateBlob || throwError("Processing took too long");
-    }
-
-    // Run U²Net on a smaller dimension for speed (Step 4: Selective)
-    // Use isnet_fp16 for 'fast' and 'smart' modes for speed
-    const AI_DIM = mode === 'hd' ? 640 : 448;
-    const modelToUse = mode === 'hd' ? 'isnet' : 'isnet_fp16';
-    
-    const aiCanvas = document.createElement('canvas');
-    aiCanvas.width = AI_DIM;
-    aiCanvas.height = Math.round((workH * AI_DIM) / workW);
-    const aiCtx = aiCanvas.getContext('2d');
-    aiCtx?.drawImage(workCanvas, 0, 0, aiCanvas.width, aiCanvas.height);
-    const aiBlob = await new Promise<Blob | null>(res => aiCanvas.toBlob(res, 'image/jpeg', 0.8));
-    if (!aiBlob) throw new Error("Failed to create AI blob");
-
-    await yieldThread();
-
-    // Add a timeout for imglyRemoveBackground
-    const u2netMaskBlob = await Promise.race([
-      imglyRemoveBackground(aiBlob, {
-        model: modelToUse,
-        proxyToWorker: true,
-        output: { format: 'image/png' },
-        debug: false
-      }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("U²-Net refinement timeout")), 15000))
-    ]);
-
-    const u2netMaskImg = await new Promise<HTMLImageElement>((res, rej) => {
+    const maskImg = await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
-      const timeout = setTimeout(() => rej(new Error("Mask image load timeout")), 5000);
-      img.onload = () => { clearTimeout(timeout); res(img); };
-      img.onerror = () => { clearTimeout(timeout); rej(new Error("Failed to load mask image")); };
-      img.src = URL.createObjectURL(u2netMaskBlob);
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Failed to load mask"));
+      img.src = URL.createObjectURL(maskBlob);
     });
 
-    // --- Step 5 & 6: Smart Mask Fusion & Cleanup ---
-    onProgress('Smart Mask Fusion & Cleanup...');
-    await yieldThread();
-
-    const refinedMask = await fuseAndCleanup(mpMask, u2netMaskImg, workW, workH);
-    
-    const result = await finalizeResult(origImg, refinedMask, onProgress);
+    onProgress('Refining Edges & Colors...');
+    const resultBlob = await generateFinalOutput(origImg, maskImg);
     
     const duration = (Date.now() - startTime) / 1000;
-    console.log(`Hybrid BG Removal completed in ${duration.toFixed(2)}s`);
-    return result;
+    console.log(`BG Removal completed in ${duration.toFixed(2)}s`);
+    return resultBlob;
 
   } catch (error: any) {
-    console.error("Hybrid BG Removal failed:", error);
-    // Final fallback: try to return whatever we have
+    console.error("BG Removal Error:", error);
     throw error;
   }
 };
 
-const throwError = (msg: string): never => {
-  throw new Error(msg);
-};
+async function generateFinalOutput(origImg: HTMLImageElement, maskImg: HTMLImageElement): Promise<Blob> {
+  const w = origImg.width;
+  const h = origImg.height;
 
-/**
- * Step 5 & 6: Mask Fusion and Advanced OpenCV Cleanup
- */
-async function fuseAndCleanup(mpMask: HTMLCanvasElement | null, u2netMask: HTMLImageElement, w: number, h: number): Promise<HTMLCanvasElement> {
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return mpMask || document.createElement('canvas');
-
-  // Draw U²Net mask (it's a transparent PNG result)
-  ctx.drawImage(u2netMask, 0, 0, w, h);
-  const u2netData = ctx.getImageData(0, 0, w, h);
+  const finalCanvas = document.createElement('canvas');
+  finalCanvas.width = w; finalCanvas.height = h;
+  const ctx = finalCanvas.getContext('2d')!;
   
-  // If we have MediaPipe mask, use it to guide the fusion
-  if (mpMask) {
-    const mpCtx = mpMask.getContext('2d');
-    if (mpCtx) {
-      const mpData = mpCtx.getImageData(0, 0, w, h);
-      // Process in chunks if large
-      for (let i = 0; i < u2netData.data.length; i += 4) {
-        if (i % 100000 === 0) await yieldThread();
-        const mpAlpha = mpData.data[i]; 
-        const u2Alpha = u2netData.data[i + 3];
-        
-        // Strategy: U²-Net is better for hair/edges, MP is better for body stability.
-        // We trust U²-Net more at the edges, but MP helps prevent "holes" in the body.
-        // If MP says it's definitely foreground (>200) but U²-Net is unsure, we boost U²-Net.
-        if (mpAlpha > 200 && u2Alpha < 100) {
-          u2netData.data[i + 3] = Math.max(u2Alpha, mpAlpha * 0.8);
-        } else if (mpAlpha < 50 && u2Alpha < 50) {
-          // If both say background, make it definitely background (removes "shades")
-          u2netData.data[i + 3] = 0;
-        } else {
-          // Otherwise, trust U²-Net's sharp edges
-          u2netData.data[i + 3] = u2Alpha;
-        }
-        
-        // Set RGB to white for the mask
-        u2netData.data[i] = 255;
-        u2netData.data[i + 1] = 255;
-        u2netData.data[i + 2] = 255;
-      }
-    }
-  } else {
-    for (let i = 0; i < u2netData.data.length; i += 4) {
-      u2netData.data[i] = 255;
-      u2netData.data[i + 1] = 255;
-      u2netData.data[i + 2] = 255;
-    }
+  // Draw original image to get pure RGB data
+  ctx.drawImage(origImg, 0, 0);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  
+  // Draw maskImg (the cutout from imgly) to get its Alpha channel
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = w; maskCanvas.height = h;
+  const maskCtx = maskCanvas.getContext('2d')!;
+  maskCtx.drawImage(maskImg, 0, 0, w, h);
+  const maskData = maskCtx.getImageData(0, 0, w, h);
+  
+  // Extract the true alpha channel
+  let alphaArray = new Uint8Array(w * h);
+  for (let i = 0, j = 0; i < maskData.data.length; i += 4, j++) {
+    alphaArray[j] = maskData.data[i + 3];
   }
-  
-  ctx.putImageData(u2netData, 0, 0);
 
-  // Step 6: Advanced Edge Refinement with OpenCV
+  // Use OpenCV to strictly refine the alpha channel and remove ALL background remnants
   try {
-    if (cv.Mat) {
-      let src = cv.imread(canvas);
-      let gray = new cv.Mat();
-      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    if (cv && cv.Mat) {
+      const alphaMat = new cv.Mat(h, w, cv.CV_8UC1);
+      alphaMat.data.set(alphaArray);
       
-      // 1. Thresholding to remove very faint "shades" (halos)
-      // Any alpha below 15 becomes 0
-      cv.threshold(gray, gray, 15, 255, cv.THRESH_TOZERO);
+      // 1. ISLAND REMOVAL: Find contours and delete floating background patches
+      const binaryMask = new cv.Mat();
+      cv.threshold(alphaMat, binaryMask, 20, 255, cv.THRESH_BINARY);
       
-      // 2. Morphological Closing to fill small holes in the mask
-      let kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
-      cv.morphologyEx(gray, gray, cv.MORPH_CLOSE, kernel);
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(binaryMask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
       
-      // 3. Subtle Erosion to pull back the edge slightly (removes background bleed)
-      let erodeKernel = cv.Mat.ones(2, 2, cv.CV_8U);
-      cv.erode(gray, gray, erodeKernel, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+      let maxArea = 0;
+      for (let i = 0; i < contours.size(); i++) {
+          let area = cv.contourArea(contours.get(i));
+          if (area > maxArea) maxArea = area;
+      }
       
-      // 4. Guided Filter or Bilateral Filter could be here, but Gaussian is faster for real-time
-      // We use a very small blur to keep hair edges sharp but not aliased
-      cv.GaussianBlur(gray, gray, new cv.Size(3, 3), 0.3, 0.3, cv.BORDER_DEFAULT);
+      const cleanMask = cv.Mat.zeros(alphaMat.rows, alphaMat.cols, cv.CV_8UC1);
+      for (let i = 0; i < contours.size(); i++) {
+          let area = cv.contourArea(contours.get(i));
+          // Keep only significant contours (at least 2% of the main subject's size)
+          // This completely deletes floating background patches
+          if (area > maxArea * 0.02) {
+              cv.drawContours(cleanMask, contours, i, new cv.Scalar(255), -1, cv.LINE_8, hierarchy, 0);
+          }
+      }
       
-      // Convert back to RGBA
-      let channels = new cv.MatVector();
-      let r = cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8U);
-      let g = cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8U);
-      let b = cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8U);
-      r.setTo(new cv.Scalar(255));
-      g.setTo(new cv.Scalar(255));
-      b.setTo(new cv.Scalar(255));
+      // Apply the clean mask to the original alpha
+      cv.bitwise_and(alphaMat, cleanMask, alphaMat);
       
-      channels.push_back(r);
-      channels.push_back(g);
-      channels.push_back(b);
-      channels.push_back(gray);
+      // 2. AGGRESSIVE EROSION: Cut deeper into the edge to remove halos
+      const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+      cv.erode(alphaMat, alphaMat, kernel, new cv.Point(-1, -1), 1);
       
-      let rgba = new cv.Mat();
-      cv.merge(channels, rgba);
-      cv.imshow(canvas, rgba);
+      // 3. BLUR: Soften the eroded edge
+      cv.GaussianBlur(alphaMat, alphaMat, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
       
-      src.delete(); gray.delete(); kernel.delete(); erodeKernel.delete(); rgba.delete(); channels.delete(); r.delete(); g.delete(); b.delete();
+      alphaArray.set(alphaMat.data);
+      
+      // Cleanup OpenCV memory
+      binaryMask.delete(); contours.delete(); hierarchy.delete(); cleanMask.delete();
+      alphaMat.delete(); kernel.delete();
     }
   } catch (e) {
-    console.warn("OpenCV edge refinement failed:", e);
+    console.error("OpenCV mask refinement failed", e);
   }
-  
-  return canvas;
-}
 
-/**
- * Step 8: Final Output Composition with Color Decontamination
- */
-async function finalizeResult(origImg: HTMLImageElement, mask: HTMLCanvasElement, onProgress: (s: string, b?: Blob) => void): Promise<Blob> {
-  onProgress('Finalizing Output...');
-  const finalCanvas = document.createElement('canvas');
-  finalCanvas.width = origImg.width;
-  finalCanvas.height = origImg.height;
-  const finalCtx = finalCanvas.getContext('2d', { alpha: true });
-  if (!finalCtx) throw new Error("Final canvas context failed");
-
-  // 1. Draw the mask
-  finalCtx.drawImage(mask, 0, 0, origImg.width, origImg.height);
-  
-  // 2. Clip to the mask
-  finalCtx.globalCompositeOperation = 'source-in';
-  finalCtx.drawImage(origImg, 0, 0);
-  
-  // 3. Color Decontamination (Spill Suppression)
-  // This removes "shades" or color bleed from the original background at the edges
-  const imageData = finalCtx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
-  const data = imageData.data;
-  
-  for (let i = 0; i < data.length; i += 4) {
-    if (i % 100000 === 0) await yieldThread();
-    const a = data[i + 3];
-    if (a > 0 && a < 255) {
-      // Semi-transparent pixel (edge)
-      // We perform a simple spill suppression: if G or B is much higher than R (assuming green/blue screen)
-      // Or just generally desaturate the edge slightly to remove background "shade"
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      
-      // Simple neutral spill suppression
-      const avg = (r + g + b) / 3;
-      const factor = (255 - a) / 255; // More suppression for more transparent pixels
-      
-      data[i] = r * (1 - 0.2 * factor) + avg * (0.2 * factor);
-      data[i + 1] = g * (1 - 0.2 * factor) + avg * (0.2 * factor);
-      data[i + 2] = b * (1 - 0.2 * factor) + avg * (0.2 * factor);
+  for (let i = 0, j = 0; i < imgData.data.length; i += 4, j++) {
+    let alpha = alphaArray[j];
+    
+    // STRICT THRESHOLDING: Aggressively destroy faint background noise
+    if (alpha < 50) {
+        alpha = 0;
+    } else if (alpha > 220) {
+        alpha = 255;
+    } else {
+        // Smooth interpolation for the edges
+        alpha = Math.round((alpha - 50) * (255 / 170));
     }
+
+    if (alpha === 0) {
+        imgData.data[i] = 0;
+        imgData.data[i + 1] = 0;
+        imgData.data[i + 2] = 0;
+        imgData.data[i + 3] = 0;
+        continue;
+    }
+
+    // Color Decontamination (Spill Suppression) on semi-transparent edges
+    if (alpha < 255) {
+        let r = imgData.data[i];
+        let g = imgData.data[i + 1];
+        let b = imgData.data[i + 2];
+
+        // Neutralize green spill (more aggressive)
+        if (g > r * 1.05 && g > b * 1.05) {
+            imgData.data[i + 1] = Math.round((r + b) / 2);
+        }
+        // Neutralize blue spill
+        else if (b > r * 1.1 && b > g * 1.1) {
+            imgData.data[i + 2] = Math.round((r + g) / 2);
+        }
+    }
+
+    imgData.data[i + 3] = alpha;
   }
-  finalCtx.putImageData(imageData, 0, 0);
+  
+  ctx.putImageData(imgData, 0, 0);
 
   return new Promise<Blob>((resolve, reject) => {
     finalCanvas.toBlob((blob) => {
       if (blob) resolve(blob);
-      else reject(new Error("Blob creation failed"));
+      else reject(new Error("Failed to generate final blob"));
     }, 'image/png');
   });
 }

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo } from 'lucide-react';
+import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2 } from 'lucide-react';
 import ToolLayout from '../components/tool-system/ToolLayout';
 import { hybridRemoveBackground } from '../lib/bgRemoval';
 
@@ -10,7 +10,7 @@ export default function BackgroundRemover() {
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [statusText, setStatusText] = useState('');
-  const [mode, setMode] = useState<'fast' | 'smart' | 'hd'>('fast');
+  // Removed preload engine model on mount to prevent concurrent loading deadlocks
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -20,7 +20,7 @@ export default function BackgroundRemover() {
       // Start counting immediately
       interval = setInterval(() => {
         setTimer((prev) => {
-          const cap = mode === 'fast' ? 3 : mode === 'smart' ? 6 : 10;
+          const cap = 7;
           if (prev >= cap) return cap;
           return prev + 1;
         });
@@ -29,7 +29,7 @@ export default function BackgroundRemover() {
       setTimer(0);
     }
     return () => clearInterval(interval);
-  }, [isProcessing, mode]);
+  }, [isProcessing]);
   const [bgColor, setBgColor] = useState('transparent');
   const [customColor, setCustomColor] = useState('#ffffff');
   
@@ -200,14 +200,14 @@ export default function BackgroundRemover() {
     try {
       // Add a global timeout for the whole process
       const rawBlob = await Promise.race([
-        hybridRemoveBackground(imageSrc, mode, async (status, intermediateBlob) => {
+        hybridRemoveBackground(imageSrc, async (status, intermediateBlob) => {
           setStatusText(status);
           if (intermediateBlob) {
             const url = URL.createObjectURL(intermediateBlob);
             setResultImage(url);
           }
         }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 45000))
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 150000))
       ]);
 
       const url = URL.createObjectURL(rawBlob);
@@ -477,6 +477,13 @@ export default function BackgroundRemover() {
                           <Wand2 className="w-5 h-5 text-accent" /> AI Processing
                         </h3>
                         
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Background Removal</label>
+                          <p className="text-[10px] text-text-muted px-1">
+                            Ultra-fast hybrid AI processing.
+                          </p>
+                        </div>
+
                         <button 
                           onClick={removeBackground}
                         disabled={isProcessing}

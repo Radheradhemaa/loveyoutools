@@ -166,7 +166,6 @@ export default function PassportPhotoMaker() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [timer, setTimer] = useState(0);
   const [statusText, setStatusText] = useState('');
-  const [mode, setMode] = useState<'fast' | 'smart' | 'hd'>('fast');
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -174,7 +173,7 @@ export default function PassportPhotoMaker() {
       setTimer(1);
       interval = setInterval(() => {
         setTimer((prev) => {
-          const cap = mode === 'fast' ? 3 : mode === 'smart' ? 6 : 10;
+          const cap = 7;
           if (prev >= cap) return cap;
           return prev + 1;
         });
@@ -183,7 +182,7 @@ export default function PassportPhotoMaker() {
       setTimer(0);
     }
     return () => clearInterval(interval);
-  }, [isProcessing, mode]);
+  }, [isProcessing]);
 
   // Manual Touchup State
   const [isManualMode, setIsManualMode] = useState(false);
@@ -484,14 +483,14 @@ export default function PassportPhotoMaker() {
     try {
       // Add a global timeout for the whole process
       const rawBlob = await Promise.race([
-        hybridRemoveBackground(croppedImageSrc, mode, async (status, intermediateBlob) => {
+        hybridRemoveBackground(croppedImageSrc, async (status, intermediateBlob) => {
           setStatusText(status);
           if (intermediateBlob) {
             const url = URL.createObjectURL(intermediateBlob);
             setBgRemovedImageSrc(url);
           }
         }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 45000))
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 150000))
       ]);
 
       const url = URL.createObjectURL(rawBlob);
