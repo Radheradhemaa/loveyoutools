@@ -85,6 +85,44 @@ export default function BackgroundRemover() {
     return () => clearTimeout(timer);
   }, [brightness, contrast, saturation, sharpness, smoothness, edgeSoftness, beautyFace, isUltraHD]);
 
+  const getFilterStyle = () => {
+    let b = brightness;
+    let c = contrast;
+    let s = saturation;
+    
+    if (isUltraHD) {
+      c += 15;
+      s += 20;
+    }
+    
+    let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
+    if (smoothness > 0) {
+      filterString += ` blur(${smoothness / 100}px)`;
+    }
+    if (beautyFace > 0) {
+      const beautyBlur = beautyFace / 80;
+      const beautyBright = 100 + (beautyFace / 15);
+      const beautyContrast = 100 - (beautyFace / 20);
+      const beautySaturate = 100 + (beautyFace / 20);
+      filterString += ` blur(${beautyBlur}px) brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
+    }
+    if (edgeSoftness > 0) {
+      const edgeBlur = edgeSoftness / 50;
+      filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
+    }
+    
+    const finalSharpness = isUltraHD ? (sharpness + 60) : sharpness;
+    if (finalSharpness > 0) {
+      filterString += ` url(#sharpen-filter)`;
+    }
+    
+    return filterString;
+  };
+
+  const finalSharpness = isUltraHD ? (sharpness + 60) : sharpness;
+  const sharpnessAmount = finalSharpness / 100;
+  const centerValue = 1 + 4 * sharpnessAmount;
+
   const addToHistory = (src: string) => {
     const newHistory = history.slice(0, historyIndex + 1);
     newHistory.push(src);
@@ -712,9 +750,27 @@ export default function BackgroundRemover() {
             {/* --- MAIN PREVIEW --- */}
             <main className="tool-main-preview">
               <div className="preview-content-wrapper">
+                <svg width="0" height="0" className="absolute pointer-events-none">
+                  <defs>
+                    <filter id="sharpen-filter">
+                      <feConvolveMatrix 
+                        order="3 3" 
+                        preserveAlpha="true" 
+                        kernelMatrix={`0 ${-sharpnessAmount} 0 ${-sharpnessAmount} ${centerValue} ${-sharpnessAmount} 0 ${-sharpnessAmount} 0`}
+                        edgeMode="duplicate"
+                      />
+                    </filter>
+                  </defs>
+                </svg>
                 <div 
                   className="relative w-full h-full bg-bg-secondary rounded-3xl overflow-hidden border border-border flex items-center justify-center group shadow-inner"
-                  style={{ zoom: zoom }}
+                  style={{ 
+                    zoom: zoom,
+                    backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
+                    backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
+                    backgroundSize: '20px 20px',
+                    backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                  }}
                 >
                   {isManualMode ? (
                     <canvas
@@ -735,10 +791,7 @@ export default function BackgroundRemover() {
                         alt="Preview" 
                         className="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
                         style={{ 
-                          backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
-                          backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
-                          backgroundSize: '20px 20px',
-                          backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                          filter: resultImage && !isManualMode ? getFilterStyle() : 'none'
                         }}
                       />
                       
