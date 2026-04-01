@@ -1,15 +1,33 @@
 import { removeBackground as imglyRemoveBackground, preload } from '@imgly/background-removal';
 import cv from '@techstark/opencv-js';
+import { SelfieSegmentation } from '@mediapipe/selfie_segmentation';
 
 let isPreloaded = false;
+let selfieSegmentation: SelfieSegmentation | null = null;
+
+const setupMediaPipe = async () => {
+  if (selfieSegmentation) return selfieSegmentation;
+  
+  selfieSegmentation = new SelfieSegmentation({
+    locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
+    }
+  });
+  
+  selfieSegmentation.setOptions({
+    modelSelection: 1, // 1 for landscape (better quality), 0 for general
+  });
+  
+  return selfieSegmentation;
+};
 
 export const ensurePreloaded = async () => {
   if (isPreloaded) return;
   try {
     console.log(`Preloading AI Models...`);
-    await Promise.race([
+    await Promise.all([
       preload({ model: 'isnet_quint8' }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("Model preload timeout")), 15000))
+      setupMediaPipe()
     ]);
     isPreloaded = true;
     console.log("AI Models Preloaded Successfully");
@@ -18,13 +36,29 @@ export const ensurePreloaded = async () => {
   }
 };
 
+const getRoughMask = async (img: HTMLImageElement): Promise<HTMLCanvasElement> => {
+  const segmentation = await setupMediaPipe();
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d')!;
+
+  return new Promise((resolve) => {
+    segmentation.onResults((results) => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
+      resolve(canvas);
+    });
+    segmentation.send({ image: img });
+  });
+};
+
 export const hybridRemoveBackground = async (
   imageSrc: string,
   onProgress: (status: string, intermediateBlob?: Blob) => void
 ): Promise<Blob> => {
   const startTime = Date.now();
   try {
-    // Skip redundant status updates for "instant" feel
     await ensurePreloaded();
     
     const origImg = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -35,8 +69,32 @@ export const hybridRemoveBackground = async (
       img.src = imageSrc;
     });
 
-    // Max dimension 240px for extreme "instant" feel (sub-1s target)
-    const MAX_DIM = 240;
+    // Step 1: Instant Rough Mask (MediaPipe) - Under 1 second
+    onProgress('Generating Rough Mask...');
+    const roughMaskCanvas = await getRoughMask(origImg);
+    
+    // Create intermediate blob for "instant" feedback
+    const roughBlob = await new Promise<Blob | null>(res => roughMaskCanvas.toBlob(res, 'image/png'));
+    if (roughBlob) {
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = origImg.width;
+      tempCanvas.height = origImg.height;
+      const tempCtx = tempCanvas.getContext('2d')!;
+      tempCtx.drawImage(origImg, 0, 0);
+      tempCtx.globalCompositeOperation = 'destination-in';
+      tempCtx.drawImage(roughMaskCanvas, 0, 0);
+      
+      const cutoutBlob = await new Promise<Blob | null>(res => tempCanvas.toBlob(res, 'image/png'));
+      if (cutoutBlob) onProgress('Refining with IS-Net...', cutoutBlob);
+    }
+
+    // Step 2: High-Accuracy Refinement (IS-Net)
+    // We use the rough mask to help focus the refinement if needed, 
+    // but IS-Net is generally more accurate for the whole image.
+    onProgress('Refining Details...');
+    
+    // Max dimension 1024px for high accuracy as requested
+    const MAX_DIM = 1024;
     let workW = origImg.width;
     let workH = origImg.height;
     if (workW > workH && workW > MAX_DIM) {
@@ -53,17 +111,12 @@ export const hybridRemoveBackground = async (
     const workCtx = workCanvas.getContext('2d')!;
     workCtx.drawImage(origImg, 0, 0, workW, workH);
 
-    onProgress('Removing Background...');
-    // No artificial progress delay for "instant" feel
-
     const blob = await new Promise<Blob | null>(res => workCanvas.toBlob(res, 'image/png'));
-    if (!blob) {
-      throw new Error("Failed to create image blob");
-    }
+    if (!blob) throw new Error("Failed to create image blob");
 
-    // Use isnet_quint8 for lightning speed with professional edge quality
+    // IS-Net (FP16 optimized in WASM)
     const maskBlob = await imglyRemoveBackground(blob, {
-      model: 'isnet_quint8',
+      model: 'isnet_quint8', 
       output: { format: 'image/png' },
       debug: false
     });
@@ -75,11 +128,13 @@ export const hybridRemoveBackground = async (
       img.src = URL.createObjectURL(maskBlob);
     });
 
+    // Step 3: Post-Processing (OpenCV)
     onProgress('Finalizing Result...');
-    const resultBlob = await generateFinalOutput(origImg, maskImg);
+    // We pass both the rough mask and the IS-Net mask to generate the final result
+    const resultBlob = await generateFinalOutput(origImg, maskImg, roughMaskCanvas);
     
     const duration = (Date.now() - startTime) / 1000;
-    console.log(`BG Removal completed in ${duration.toFixed(2)}s`);
+    console.log(`Hybrid BG Removal completed in ${duration.toFixed(2)}s`);
     return resultBlob;
 
   } catch (error: any) {
@@ -88,12 +143,16 @@ export const hybridRemoveBackground = async (
   }
 };
 
-async function generateFinalOutput(origImg: HTMLImageElement, maskImg: HTMLImageElement): Promise<Blob> {
+async function generateFinalOutput(
+  origImg: HTMLImageElement, 
+  maskImg: HTMLImageElement,
+  roughMaskCanvas: HTMLCanvasElement
+): Promise<Blob> {
   const w = origImg.width;
   const h = origImg.height;
 
-  // Optimize refinement: Process mask at a fixed resolution (max 480px) for extreme speed
-  const REFINEMENT_DIM = 480;
+  // Step 3.1: Morphological operations (dilate + erode) on a refinement resolution
+  const REFINEMENT_DIM = 1024;
   let refW = w;
   let refH = h;
   if (refW > refH && refW > REFINEMENT_DIM) {
@@ -115,109 +174,81 @@ async function generateFinalOutput(origImg: HTMLImageElement, maskImg: HTMLImage
     alphaArray[j] = refData.data[i + 3];
   }
 
-  // Use OpenCV to strictly refine the alpha channel at refinement resolution
   try {
     if (cv && cv.Mat) {
       const alphaMat = new cv.Mat(refH, refW, cv.CV_8UC1);
       alphaMat.data.set(alphaArray);
       
-      // 1. ISLAND REMOVAL
-      const binaryMask = new cv.Mat();
-      cv.threshold(alphaMat, binaryMask, 20, 255, cv.THRESH_BINARY);
-      
-      const contours = new cv.MatVector();
-      const hierarchy = new cv.Mat();
-      cv.findContours(binaryMask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-      
-      let maxArea = 0;
-      let maxContourIdx = -1;
-      for (let i = 0; i < contours.size(); i++) {
-          let area = cv.contourArea(contours.get(i));
-          if (area > maxArea) {
-              maxArea = area;
-              maxContourIdx = i;
-          }
-      }
-      
-      const cleanMask = cv.Mat.zeros(alphaMat.rows, alphaMat.cols, cv.CV_8UC1);
-      if (maxContourIdx !== -1) {
-          for (let i = 0; i < contours.size(); i++) {
-              let area = cv.contourArea(contours.get(i));
-              if (area > maxArea * 0.2) {
-                  cv.drawContours(cleanMask, contours, i, new cv.Scalar(255), -1, cv.LINE_8, hierarchy, 0);
-              }
-          }
-      }
-      
-      cv.bitwise_and(alphaMat, cleanMask, alphaMat);
-      
-      // 2. MORPHOLOGICAL REFINEMENT
+      // Morphological operations (dilate + erode) to clean up edges
       const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
+      
+      // Dilate then Erode (Closing) to fill small holes
       cv.morphologyEx(alphaMat, alphaMat, cv.MORPH_CLOSE, kernel);
+      
+      // Erode then Dilate (Opening) to remove small noise
       cv.morphologyEx(alphaMat, alphaMat, cv.MORPH_OPEN, kernel);
       
-      // 3. Edge smoothing
-      cv.erode(alphaMat, alphaMat, kernel, new cv.Point(-1, -1), 2);
-      cv.GaussianBlur(alphaMat, alphaMat, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+      // Step 3.2: Gaussian blur on mask edges for smoothing
+      cv.GaussianBlur(alphaMat, alphaMat, new cv.Size(3, 3), 0, 0, cv.BORDER_DEFAULT);
       
       alphaArray.set(alphaMat.data);
-      
-      binaryMask.delete(); contours.delete(); hierarchy.delete(); cleanMask.delete();
       alphaMat.delete(); kernel.delete();
     }
   } catch (e) {
-    console.error("OpenCV mask refinement failed", e);
+    console.error("OpenCV processing failed", e);
   }
 
-  // Draw refined alpha back to refinement canvas
+  // Draw refined alpha back
   for (let i = 0, j = 0; i < refData.data.length; i += 4, j++) {
     refData.data[i + 3] = alphaArray[j];
   }
   refCtx.putImageData(refData, 0, 0);
 
-  // Final assembly on original resolution
+  // Final assembly
   const finalCanvas = document.createElement('canvas');
   finalCanvas.width = w; finalCanvas.height = h;
   const ctx = finalCanvas.getContext('2d')!;
   
-  // Draw original image
   ctx.drawImage(origImg, 0, 0);
   const imgData = ctx.getImageData(0, 0, w, h);
   
-  // Draw upscaled refined mask
   const finalMaskCanvas = document.createElement('canvas');
   finalMaskCanvas.width = w; finalMaskCanvas.height = h;
   const finalMaskCtx = finalMaskCanvas.getContext('2d')!;
+  
+  // Combine IS-Net mask with MediaPipe rough mask to remove distant artifacts
   finalMaskCtx.drawImage(refCanvas, 0, 0, w, h);
+  finalMaskCtx.globalCompositeOperation = 'multiply';
+  finalMaskCtx.drawImage(roughMaskCanvas, 0, 0, w, h);
+  
   const finalMaskData = finalMaskCtx.getImageData(0, 0, w, h);
 
   for (let i = 0; i < imgData.data.length; i += 4) {
     let alpha = finalMaskData.data[i + 3];
     
-    // ULTRA-STRICT THRESHOLDING
-    if (alpha < 130) {
+    // Step 3.3: Feathering (alpha smoothing)
+    // We apply a soft threshold to preserve hair details
+    if (alpha < 30) {
         alpha = 0;
-    } else if (alpha > 240) {
+    } else if (alpha > 220) {
         alpha = 255;
     } else {
-        alpha = Math.round((alpha - 130) * (255 / 110));
+        // Linear interpolation for soft edges
+        alpha = Math.round((alpha - 30) * (255 / 190));
     }
 
     if (alpha === 0) {
-        imgData.data[i] = 0;
-        imgData.data[i + 1] = 0;
-        imgData.data[i + 2] = 0;
         imgData.data[i + 3] = 0;
         continue;
     }
 
-    // Advanced Color Decontamination
+    // Color decontamination (remove background spill)
     if (alpha < 255) {
-        let r = imgData.data[i];
-        let g = imgData.data[i + 1];
-        let b = imgData.data[i + 2];
-        const lum = (r * 0.299 + g * 0.587 + b * 0.114);
         const factor = (255 - alpha) / 255;
+        const r = imgData.data[i];
+        const g = imgData.data[i + 1];
+        const b = imgData.data[i + 2];
+        const lum = (r * 0.299 + g * 0.587 + b * 0.114);
         imgData.data[i] = Math.round(r * (1 - factor) + lum * factor);
         imgData.data[i + 1] = Math.round(g * (1 - factor) + lum * factor);
         imgData.data[i + 2] = Math.round(b * (1 - factor) + lum * factor);

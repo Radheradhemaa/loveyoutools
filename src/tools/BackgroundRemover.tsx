@@ -294,11 +294,15 @@ export default function BackgroundRemover() {
       setHistory([]);
       setHistoryIndex(-1);
       setIsManualMode(false);
-      setIsCropping(true); // Start with crop mode
+      setIsCropping(false); // Direct to instant result
       setHasCropped(false);
       
       const img = new Image();
-      img.onload = () => { originalImgRef.current = img; };
+      img.onload = () => { 
+        originalImgRef.current = img; 
+        // Automatically trigger background removal
+        removeBackground(src);
+      };
       img.src = src;
     };
     reader.readAsDataURL(file);
@@ -964,16 +968,27 @@ export default function BackgroundRemover() {
                     Done Touchup
                   </button>
                 ) : (
-                  resultImage && (
-                    <div className="flex flex-col gap-2">
-                      <button onClick={downloadImage} className="w-full btn bp py-3 rounded-xl gap-2 font-bold shadow-lg shadow-accent/20">
-                        <Download className="w-5 h-5" /> Download Image
+                  <div className="flex flex-col gap-2">
+                    {!resultImage && !isProcessing && imageSrc && (
+                      <button 
+                        onClick={() => removeBackground()} 
+                        className="w-full btn bp py-3 rounded-xl gap-2 font-bold shadow-lg shadow-accent/20 animate-bounce"
+                      >
+                        <Wand2 className="w-5 h-5" /> Remove Background Now
                       </button>
-                      <button onClick={onReset} className="w-full text-xs font-bold text-text-muted hover:text-red-500 transition-colors py-2">
-                        Start Over
-                      </button>
-                    </div>
-                  )
+                    )}
+                    
+                    {resultImage && (
+                      <>
+                        <button onClick={downloadImage} className="w-full btn bp py-3 rounded-xl gap-2 font-bold shadow-lg shadow-accent/20">
+                          <Download className="w-5 h-5" /> Download Image
+                        </button>
+                        <button onClick={onReset} className="w-full text-xs font-bold text-text-muted hover:text-red-500 transition-colors py-2">
+                          Start Over
+                        </button>
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
             </aside>
