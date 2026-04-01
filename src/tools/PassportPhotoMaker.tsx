@@ -386,7 +386,7 @@ export default function PassportPhotoMaker() {
     const cropWidth = (completedPercentCrop.width * naturalWidth) / 100;
     const cropHeight = (completedPercentCrop.height * naturalHeight) / 100;
 
-    // Limit cropped image resolution to 1200px for performance
+    // Limit cropped image resolution to 1200px for performance and to prevent AI model from getting stuck
     const MAX_CROP_DIM = 1200;
     let targetWidth = Math.round(cropWidth);
     let targetHeight = Math.round(cropHeight);
@@ -490,7 +490,7 @@ export default function PassportPhotoMaker() {
             setBgRemovedImageSrc(url);
           }
         }, false), // Pass false to keep background transparent
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 150000))
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 300000))
       ]);
 
       const url = URL.createObjectURL(rawBlob);
@@ -578,7 +578,7 @@ export default function PassportPhotoMaker() {
         // Apply Sharpness (Optimized) to the subject only
         const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
         
-        if (finalSharpness > 40) {
+        if (finalSharpness > 0) {
           const amount = finalSharpness / 100;
           const a = amount;
           const b_val = 1 + 4 * a;
@@ -616,23 +616,30 @@ export default function PassportPhotoMaker() {
               const getG = (px: number) => ((px >> 24) & 0xff) === 0 ? ((p >> 8) & 0xff) : ((px >> 8) & 0xff);
               const getB = (px: number) => ((px >> 24) & 0xff) === 0 ? ((p >> 16) & 0xff) : ((px >> 16) & 0xff);
 
-              const r_val = ((p & 0xff) * b_val - (getR(pUp) + getR(pDown) + getR(pLeft) + getR(pRight)) * a);
-              const g_val = (((p >> 8) & 0xff) * b_val - (getG(pUp) + getG(pDown) + getG(pLeft) + getG(pRight)) * a);
-              const b_comp = (((p >> 16) & 0xff) * b_val - (getB(pUp) + getB(pDown) + getB(pLeft) + getB(pRight)) * a);
+              const r_orig = p & 0xff;
+              const g_orig = (p >> 8) & 0xff;
+              const b_orig = (p >> 16) & 0xff;
 
-              const finalR = r_val < 0 ? 0 : r_val > 255 ? 255 : (r_val | 0);
-              const finalG = g_val < 0 ? 0 : g_val > 255 ? 255 : (g_val | 0);
-              const finalB = b_comp < 0 ? 0 : b_comp > 255 ? 255 : (b_comp | 0);
+              const r_val = (r_orig * b_val - (getR(pUp) + getR(pDown) + getR(pLeft) + getR(pRight)) * a);
+              const g_val = (g_orig * b_val - (getG(pUp) + getG(pDown) + getG(pLeft) + getG(pRight)) * a);
+              const b_comp = (b_orig * b_val - (getB(pUp) + getB(pDown) + getB(pLeft) + getB(pRight)) * a);
+
+              let finalR = r_val < 0 ? 0 : r_val > 255 ? 255 : (r_val | 0);
+              let finalG = g_val < 0 ? 0 : g_val > 255 ? 255 : (g_val | 0);
+              let finalB = b_comp < 0 ? 0 : b_comp > 255 ? 255 : (b_comp | 0);
+
+              // Fade out sharpening on semi-transparent edges to prevent halos
+              if (alpha < 250) {
+                const blend = alpha / 250;
+                finalR = (finalR * blend + r_orig * (1 - blend)) | 0;
+                finalG = (finalG * blend + g_orig * (1 - blend)) | 0;
+                finalB = (finalB * blend + b_orig * (1 - blend)) | 0;
+              }
 
               dst[i] = finalR | (finalG << 8) | (finalB << 16) | (alpha << 24);
             }
           }
           tempCtx.putImageData(output, 0, 0);
-        } else if (finalSharpness > 0) {
-          // Fast sharpening fallback using contrast/brightness
-          tempCtx.filter = `contrast(${100 + finalSharpness / 2}%) brightness(${100 + finalSharpness / 10}%)`;
-          tempCtx.drawImage(tempCanvas, 0, 0);
-          tempCtx.filter = 'none';
         }
 
         // Now composite everything onto the final canvas
@@ -1416,27 +1423,31 @@ export default function PassportPhotoMaker() {
                       )}
                       
                       {isProcessing && (
-                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-50 text-white p-6">
-                          <div className="relative mb-4">
-                            <div className="w-12 h-12 rounded-full border-2 border-white/10 border-t-[#e8501a] animate-spin" />
-                            <div className="absolute inset-0 flex items-center justify-center font-bold text-white text-xs">
-                              {timer}s
+                        <div className="absolute inset-0 bg-black/20 flex flex-col items-center justify-center z-50 text-white p-6 transition-all duration-300">
+                          <div className="bg-gray-900/90 backdrop-blur-md px-8 py-6 rounded-2xl shadow-2xl flex flex-col items-center text-center border border-white/10">
+                            <div className="relative mb-4">
+                              <div className="w-12 h-12 rounded-full border-2 border-white/10 border-t-[#e8501a] animate-spin" />
+                              <div className="absolute inset-0 flex items-center justify-center font-bold text-white text-xs">
+                                {timer}s
+                              </div>
+                            </div>
+                            <div className="w-full max-w-[160px] h-1.5 bg-white/10 rounded-full mb-3 overflow-hidden">
+                              <div 
+                                className="h-full bg-[#e8501a] transition-all duration-300 ease-out"
+                                style={{ 
+                                  width: statusText.match(/(\d+)%/) ? statusText.match(/(\d+)%/)![0] :
+                                         statusText.includes('Downloading') ? '20%' : 
+                                         statusText.includes('Processing') ? '50%' : 
+                                         statusText.includes('Refining Edges') ? '80%' : 
+                                         statusText.includes('Finalizing') ? '95%' : '5%'
+                                }}
+                              />
+                            </div>
+                            <div className="text-sm font-bold text-center">{statusText}</div>
+                            <div className="text-[10px] text-gray-400 mt-2 text-center max-w-[200px]">
+                              High-accuracy AI is analyzing edges and fine details like hair...
                             </div>
                           </div>
-                          <div className="w-full max-w-[120px] h-1 bg-white/10 rounded-full mb-3 overflow-hidden">
-                            <div 
-                              className="h-full bg-[#e8501a] transition-all duration-300 ease-out"
-                              style={{ 
-                                width: statusText.includes('Optimizing') ? '10%' : 
-                                       statusText.includes('MediaPipe') ? '30%' : 
-                                       statusText.includes('U²-Net') ? '65%' : 
-                                       statusText.includes('Fusion') ? '85%' : 
-                                       statusText.includes('Finalizing') ? '95%' : '5%'
-                              }}
-                            />
-                          </div>
-                          <div className="text-sm font-bold text-center">{statusText}</div>
-                          <div className="text-[10px] text-white/60 mt-1">Hybrid AI Engine</div>
                         </div>
                       )}
                     </div>

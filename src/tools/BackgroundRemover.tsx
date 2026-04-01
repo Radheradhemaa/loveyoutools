@@ -31,7 +31,7 @@ export default function BackgroundRemover() {
     }
     return () => clearInterval(interval);
   }, [isProcessing]);
-  const [bgColor, setBgColor] = useState('#ffffff');
+  const [bgColor, setBgColor] = useState('transparent');
   const [customColor, setCustomColor] = useState('#ffffff');
   
   // Manual Touchup State
@@ -156,9 +156,6 @@ export default function BackgroundRemover() {
       const img = new Image();
       img.onload = () => { originalImgRef.current = img; };
       img.src = cropped;
-
-      // Automatically trigger background removal for "instant" feel
-      removeBackground(cropped);
     } catch (e) {
       console.error(e);
     }
@@ -300,8 +297,6 @@ export default function BackgroundRemover() {
       const img = new Image();
       img.onload = () => { 
         originalImgRef.current = img; 
-        // Automatically trigger background removal
-        removeBackground(src);
       };
       img.src = src;
     };
@@ -353,17 +348,24 @@ export default function BackgroundRemover() {
     const startTime = Date.now();
     
     try {
+      // Limit resolution to 1500px for performance and stability
+      const resizedBlob = await resizeImage(targetSrc, 1500);
+      const resizedUrl = URL.createObjectURL(resizedBlob);
+      
       // Add a global timeout for the whole process
       const rawBlob = await Promise.race([
-        hybridRemoveBackground(targetSrc, async (status, intermediateBlob) => {
+        hybridRemoveBackground(resizedUrl, async (status, intermediateBlob) => {
           setStatusText(status);
           if (intermediateBlob) {
             const url = URL.createObjectURL(intermediateBlob);
             setResultImage(url);
           }
         }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 150000))
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 300000))
       ]);
+
+      // Clean up the resized URL
+      URL.revokeObjectURL(resizedUrl);
 
       // No artificial delay - give output as soon as AI is ready
       setStatusText('Finalizing Result...');
@@ -614,8 +616,6 @@ export default function BackgroundRemover() {
               const img = new Image();
               img.onload = () => { 
                 originalImgRef.current = img;
-                // Automatically trigger background removal on upload
-                removeBackground(src);
               };
               img.src = src;
             };
@@ -1126,22 +1126,34 @@ export default function BackgroundRemover() {
                               setResultImage(null);
                             }
                           }}
-                          className="max-w-full max-h-full object-contain shadow-2xl rounded-lg bg-white"
+                          className="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
                           style={{ 
                             filter: resultImage && !isManualMode ? getFilterStyle() : 'none'
                           }}
                         />
                         
                         {isProcessing && (
-                          <div className="preview-loading-overlay backdrop-blur-sm bg-black/10 rounded-lg">
-                            <div className="flex flex-col items-center text-center max-w-xs w-full px-6">
-                              <div className="relative">
+                          <div className="preview-loading-overlay backdrop-blur-sm bg-black/40 rounded-lg">
+                            <div className="flex flex-col items-center text-center max-w-xs w-full px-6 bg-gray-900/80 p-6 rounded-xl border border-white/10 shadow-2xl">
+                              <div className="relative mb-3">
                                 <div className="w-12 h-12 rounded-full border-2 border-white/10 border-t-accent animate-spin" />
-                                <div className="absolute inset-0 flex items-center justify-center font-mono font-bold text-white text-[8px]">
+                                <div className="absolute inset-0 flex items-center justify-center font-mono font-bold text-white text-[10px]">
                                   {timer.toFixed(1)}s
                                 </div>
                               </div>
-                              <p className="mt-2 text-[10px] font-bold text-white uppercase tracking-widest animate-pulse">Removing...</p>
+                              <div className="w-full h-1.5 bg-white/10 rounded-full mb-2 overflow-hidden">
+                                <div 
+                                  className="h-full bg-accent transition-all duration-300 ease-out"
+                                  style={{ 
+                                    width: statusText.match(/(\d+)%/) ? statusText.match(/(\d+)%/)![0] :
+                                           statusText.includes('Downloading') ? '20%' : 
+                                           statusText.includes('Processing') ? '50%' : 
+                                           statusText.includes('Refining Edges') ? '80%' : 
+                                           statusText.includes('Finalizing') ? '95%' : '5%'
+                                  }}
+                                />
+                              </div>
+                              <p className="mt-1 text-xs font-bold text-white uppercase tracking-wider">{statusText || 'Removing...'}</p>
                             </div>
                           </div>
                         )}

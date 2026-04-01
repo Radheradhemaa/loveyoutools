@@ -1,56 +1,17 @@
 import { removeBackground as imglyRemoveBackground, preload } from '@imgly/background-removal';
-import cv from '@techstark/opencv-js';
-import { SelfieSegmentation } from '@mediapipe/selfie_segmentation';
 
 let isPreloaded = false;
-let selfieSegmentation: SelfieSegmentation | null = null;
-
-const setupMediaPipe = async () => {
-  if (selfieSegmentation) return selfieSegmentation;
-  
-  selfieSegmentation = new SelfieSegmentation({
-    locateFile: (file) => {
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
-    }
-  });
-  
-  selfieSegmentation.setOptions({
-    modelSelection: 1, // 1 for landscape (better quality), 0 for general
-  });
-  
-  return selfieSegmentation;
-};
 
 export const ensurePreloaded = async () => {
   if (isPreloaded) return;
   try {
     console.log(`Preloading AI Models...`);
-    await Promise.all([
-      preload({ model: 'isnet_quint8' }),
-      setupMediaPipe()
-    ]);
+    await preload({ model: 'isnet_fp16' });
     isPreloaded = true;
     console.log("AI Models Preloaded Successfully");
   } catch (err) {
     console.warn("AI Model Preload failed (will retry on demand):", err);
   }
-};
-
-const getRoughMask = async (img: HTMLImageElement): Promise<HTMLCanvasElement> => {
-  const segmentation = await setupMediaPipe();
-  const canvas = document.createElement('canvas');
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext('2d')!;
-
-  return new Promise((resolve) => {
-    segmentation.onResults((results) => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
-      resolve(canvas);
-    });
-    segmentation.send({ image: img });
-  });
 };
 
 export const hybridRemoveBackground = async (
@@ -70,51 +31,62 @@ export const hybridRemoveBackground = async (
       img.src = imageSrc;
     });
 
-    // Step 1: Instant Rough Mask (MediaPipe) - Under 1 second
-    onProgress('Generating Rough Mask...');
-    const roughMaskCanvas = await getRoughMask(origImg);
+    onProgress('Refining Details with AI...');
     
-    // Create intermediate blob for "instant" feedback
-    const roughBlob = await new Promise<Blob | null>(res => roughMaskCanvas.toBlob(res, 'image/png'));
-    if (roughBlob) {
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = origImg.width;
-      tempCanvas.height = origImg.height;
-      const tempCtx = tempCanvas.getContext('2d')!;
-      tempCtx.drawImage(origImg, 0, 0);
-      tempCtx.globalCompositeOperation = 'destination-in';
-      tempCtx.drawImage(roughMaskCanvas, 0, 0);
-      
-      const cutoutBlob = await new Promise<Blob | null>(res => tempCanvas.toBlob(res, 'image/png'));
-      if (cutoutBlob) onProgress('Refining with IS-Net...', cutoutBlob);
-    }
-
-    // Step 2: High-Accuracy Refinement (IS-Net)
-    // We use the rough mask to help focus the refinement if needed, 
-    // but IS-Net is generally more accurate for the whole image.
-    onProgress('Refining Details...');
-    
-    // IS-Net (FP16 optimized in WASM)
+    // IS-Net (FP16 optimized in WASM) - Native output is already perfectly matted
     const maskBlob = await imglyRemoveBackground(imageSrc, {
       model: 'isnet_fp16', 
       output: { format: 'image/png' },
-      debug: false
+      debug: false,
+      progress: (key, current, total) => {
+        const percent = Math.round((current / total) * 100);
+        if (key.includes('fetch')) {
+          onProgress(`Downloading AI Model... ${percent}%`);
+        } else if (key === 'compute:inference') {
+          onProgress(`AI Processing... ${percent}%`);
+        }
+      }
     });
 
+    onProgress('Refining Edges & Removing Halos...');
+    const refinedBlob = await refineCutout(maskBlob, origImg.width, origImg.height);
+
+    if (!forceWhiteBackground) {
+      const duration = (Date.now() - startTime) / 1000;
+      console.log(`AI BG Removal completed in ${duration.toFixed(2)}s`);
+      return refinedBlob;
+    }
+
+    // If white background is forced, composite it natively
+    onProgress('Finalizing Result...');
     const maskImg = await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
       img.onerror = () => reject(new Error("Failed to load mask"));
-      img.src = URL.createObjectURL(maskBlob);
+      img.src = URL.createObjectURL(refinedBlob);
     });
 
-    // Step 3: Post-Processing (OpenCV)
-    onProgress('Finalizing Result...');
-    // We pass both the rough mask and the IS-Net mask to generate the final result
-    const resultBlob = await generateFinalOutput(origImg, maskImg, roughMaskCanvas, forceWhiteBackground);
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = origImg.width;
+    finalCanvas.height = origImg.height;
+    const ctx = finalCanvas.getContext('2d')!;
     
+    // Draw pure white background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+    
+    // Draw the perfectly matted AI cutout over it
+    ctx.drawImage(maskImg, 0, 0, finalCanvas.width, finalCanvas.height);
+    
+    const resultBlob = await new Promise<Blob>((resolve, reject) => {
+      finalCanvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("Failed to generate final blob"));
+      }, 'image/jpeg', 1.0);
+    });
+
     const duration = (Date.now() - startTime) / 1000;
-    console.log(`Hybrid BG Removal completed in ${duration.toFixed(2)}s`);
+    console.log(`AI BG Removal completed in ${duration.toFixed(2)}s`);
     return resultBlob;
 
   } catch (error: any) {
@@ -123,87 +95,88 @@ export const hybridRemoveBackground = async (
   }
 };
 
-async function generateFinalOutput(
-  origImg: HTMLImageElement, 
-  maskImg: HTMLImageElement,
-  roughMaskCanvas: HTMLCanvasElement,
-  forceWhiteBackground: boolean
-): Promise<Blob> {
-  const w = origImg.width;
-  const h = origImg.height;
+async function refineCutout(maskBlob: Blob, origWidth: number, origHeight: number): Promise<Blob> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error("Failed to load mask"));
+    i.src = URL.createObjectURL(maskBlob);
+  });
 
-  const finalCanvas = document.createElement('canvas');
-  finalCanvas.width = w; finalCanvas.height = h;
-  const ctx = finalCanvas.getContext('2d')!;
+  const canvas = document.createElement('canvas');
+  // Force the canvas to be the original image's dimensions
+  const w = origWidth;
+  const h = origHeight;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   
-  // Draw original image
-  ctx.drawImage(origImg, 0, 0);
+  // Draw the mask image, scaling it to the original dimensions if necessary
+  ctx.drawImage(img, 0, 0, w, h);
+  
   const imgData = ctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+  const origData = new Uint8ClampedArray(data);
   
-  // Draw IS-Net mask (scaled to original size)
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = w; maskCanvas.height = h;
-  const maskCtx = maskCanvas.getContext('2d')!;
-  maskCtx.drawImage(maskImg, 0, 0, w, h);
-  const maskData = maskCtx.getImageData(0, 0, w, h);
-
-  for (let i = 0; i < imgData.data.length; i += 4) {
-    let alpha = maskData.data[i + 3]; // Use the highly accurate IS-Net alpha channel
-    
-    // Step 3: Soft Thresholding for a "Perfectly Clear" Cutout
-    // We use a softer threshold to preserve anti-aliased edges while removing faint background noise
-    if (alpha < 15) {
-        if (forceWhiteBackground) {
-            // Force pure WHITE background
-            imgData.data[i] = 255;     // R
-            imgData.data[i + 1] = 255; // G
-            imgData.data[i + 2] = 255; // B
-            imgData.data[i + 3] = 255; // A
-        } else {
-            imgData.data[i + 3] = 0; // Transparent
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const alpha = origData[i + 3];
+      
+      if (alpha < 55) {
+        // Very aggressive threshold to eliminate background halos and artifacts
+        data[i + 3] = 0;
+      } else if (alpha < 240) {
+        // Defringe: find nearest opaque pixel within a small radius
+        let bestR = origData[i];
+        let bestG = origData[i+1];
+        let bestB = origData[i+2];
+        let maxAlpha = alpha;
+        
+        // Search a 3x3 window for the most opaque pixel (subject core)
+        const radius = 1;
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const ny = y + dy;
+            const nx = x + dx;
+            if (ny >= 0 && ny < h && nx >= 0 && nx < w) {
+              const ni = (ny * w + nx) * 4;
+              const nAlpha = origData[ni + 3];
+              if (nAlpha > maxAlpha) {
+                maxAlpha = nAlpha;
+                bestR = origData[ni];
+                bestG = origData[ni+1];
+                bestB = origData[ni+2];
+              }
+            }
+          }
         }
-        continue;
-    } else if (alpha > 240) {
-        // Force fully opaque for the core subject
-        imgData.data[i + 3] = 255;
-    } else {
-        // Smoothly blend the anti-aliased edges
-        // Remap alpha to 0-1 range based on the 15-240 bounds
-        const mappedAlpha = (alpha - 15) / 225;
-        const invAlpha = 1 - mappedAlpha;
         
-        let r = imgData.data[i];
-        let g = imgData.data[i + 1];
-        let b = imgData.data[i + 2];
-        
-        // Color decontamination: desaturate the edge to remove color fringing (color spread)
-        const lum = r * 0.299 + g * 0.587 + b * 0.114;
-        r = r * mappedAlpha + lum * invAlpha;
-        g = g * mappedAlpha + lum * invAlpha;
-        b = b * mappedAlpha + lum * invAlpha;
-        
-        if (forceWhiteBackground) {
-            imgData.data[i] = Math.round(r * mappedAlpha + 255 * invAlpha);
-            imgData.data[i + 1] = Math.round(g * mappedAlpha + 255 * invAlpha);
-            imgData.data[i + 2] = Math.round(b * mappedAlpha + 255 * invAlpha);
-            imgData.data[i + 3] = 255; // Result is fully opaque
-        } else {
-            imgData.data[i] = Math.round(r);
-            imgData.data[i + 1] = Math.round(g);
-            imgData.data[i + 2] = Math.round(b);
-            // Use a smoothstep-like curve for the alpha to increase edge contrast slightly
-            const smoothAlpha = mappedAlpha * mappedAlpha * (3 - 2 * mappedAlpha);
-            imgData.data[i + 3] = Math.round(smoothAlpha * 255); // Transparent edge
+        // If we found a significantly more opaque pixel (>220), pull the color towards it
+        // This ensures we only borrow color from the subject core, not from other halo pixels
+        if (maxAlpha > 220 && maxAlpha > alpha) {
+            // The more transparent the pixel, the more we borrow from the opaque neighbor
+            const blendFactor = Math.min(1, (240 - alpha) / 160); 
+            
+            data[i] = Math.round(origData[i] * (1 - blendFactor) + bestR * blendFactor);
+            data[i+1] = Math.round(origData[i+1] * (1 - blendFactor) + bestG * blendFactor);
+            data[i+2] = Math.round(origData[i+2] * (1 - blendFactor) + bestB * blendFactor);
         }
+        
+        // Sharpen edges by eroding alpha. More aggressive for lower alpha values to remove halos.
+        // We only erode semi-transparent pixels to avoid making the subject core transparent.
+        const erosion = alpha < 80 ? 50 : (alpha < 160 ? 35 : (alpha < 220 ? 20 : 0));
+        data[i+3] = Math.max(0, alpha - erosion);
+      }
     }
   }
   
   ctx.putImageData(imgData, 0, 0);
-
+  
   return new Promise<Blob>((resolve, reject) => {
-    finalCanvas.toBlob((blob) => {
+    canvas.toBlob((blob) => {
       if (blob) resolve(blob);
-      else reject(new Error("Failed to generate final blob"));
+      else reject(new Error("Failed to generate refined blob"));
     }, 'image/png');
   });
 }
