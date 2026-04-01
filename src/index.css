@@ -18,6 +18,14 @@
   --color-success: var(--color-success-light);
 }
 
+@utility no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 @layer base {
   :root {
     --color-bg-light: #f5f3ef;
@@ -137,7 +145,7 @@
 
   /* --- UNIVERSAL TOOL LAYOUT SYSTEM --- */
   .tool-layout-container {
-    @apply flex flex-col lg:flex-row w-full h-full overflow-hidden bg-bg-secondary/30;
+    @apply flex flex-col lg:flex-row w-full h-full lg:overflow-hidden bg-bg-secondary/30;
   }
 
   /* Left Panel - Settings/Controls */
@@ -145,33 +153,27 @@
     @apply w-full lg:w-[30%] bg-surface border-b lg:border-b-0 lg:border-r border-border flex flex-col z-10 shadow-sm transition-all duration-300;
     /* Tablet: 40% height at bottom? User said: Top: preview (60%), Bottom: settings (40%) */
     @apply order-2 lg:order-1;
-    height: 40%; /* Tablet/Mobile default */
+    height: auto;
+    @apply flex-1 overflow-hidden;
   }
 
   @media (min-width: 1024px) {
     .tool-sidebar {
       height: 100% !important;
+      @apply w-[30%] shrink-0;
     }
   }
 
   @media (max-width: 1023px) {
     .tool-sidebar {
-      height: 40%;
-    }
-  }
-
-  @media (max-width: 767px) {
-    .tool-sidebar {
-      height: auto;
-      min-height: 200px;
+      @apply flex-1;
     }
   }
 
   /* Right Panel - Preview Area */
   .tool-main-preview {
-    @apply flex-1 lg:flex-[70%] relative bg-bg-secondary/50 flex flex-col overflow-hidden transition-all duration-300;
+    @apply flex-1 lg:flex-[65%] relative bg-bg-secondary/50 flex flex-col transition-all duration-300;
     @apply order-1 lg:order-2;
-    height: 60%; /* Tablet default */
   }
 
   @media (min-width: 1024px) {
@@ -182,20 +184,50 @@
 
   @media (max-width: 1023px) {
     .tool-main-preview {
-      height: 60%;
+      height: 50%;
+      @apply shrink-0;
     }
   }
 
   @media (max-width: 767px) {
     .tool-main-preview {
-      height: 300px; /* Fixed height for mobile preview to ensure visibility */
-      @apply sticky top-0 z-20 shadow-md;
+      height: 50vh; /* Increased height for mobile preview */
+      min-height: 320px;
+      @apply sticky top-0 z-20 shadow-md shrink-0;
     }
+    
+    /* When cropping, we might want even more space */
+    .tool-main-preview.is-cropping-mobile {
+      height: 60vh;
+    }
+  }
+
+  /* --- ReactCrop Custom Styles --- */
+  .ReactCrop__handle {
+    width: 16px !important;
+    height: 16px !important;
+    background-color: #e8501a !important; /* accent color */
+    border: 2px solid white !important;
+    border-radius: 50% !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3) !important;
+    opacity: 1 !important;
+  }
+
+  .ReactCrop__crop-selection {
+    border: 2px solid #e8501a !important;
+    box-shadow: 0 0 0 9999em rgba(0, 0, 0, 0.5) !important;
+  }
+
+  .ReactCrop__rule-of-thirds-vt::before,
+  .ReactCrop__rule-of-thirds-vt::after,
+  .ReactCrop__rule-of-thirds-hz::before,
+  .ReactCrop__rule-of-thirds-hz::after {
+    background-color: rgba(255, 255, 255, 0.4) !important;
   }
 
   /* Preview Content Fixes */
   .preview-content-wrapper {
-    @apply flex-1 relative flex items-center justify-center p-4 sm:p-8 overflow-hidden;
+    @apply flex-1 relative flex items-center justify-center p-2 sm:p-6 overflow-auto no-scrollbar;
   }
 
   .preview-content-wrapper img,

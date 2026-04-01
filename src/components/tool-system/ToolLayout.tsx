@@ -84,7 +84,7 @@ export default function ToolLayout({
   const fileName = Array.isArray(file) ? `${file.length} files` : file?.name || '';
 
   return (
-    <div className={`min-h-screen flex flex-col ${state === 'DURING' ? 'fixed inset-0 z-[100] bg-bg-primary overflow-hidden' : ''}`}>
+    <div className={`min-h-screen flex flex-col ${state === 'DURING' ? 'fixed inset-0 z-[100] bg-bg overflow-hidden' : ''}`}>
       <AnimatePresence mode="wait">
         {state === 'BEFORE' && (
           <motion.div
@@ -119,7 +119,7 @@ export default function ToolLayout({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-bg-primary flex flex-col h-[100dvh] lg:h-screen overflow-hidden overscroll-none"
+            className="fixed inset-0 z-[100] bg-bg flex flex-col h-[100dvh] lg:h-screen overflow-hidden overscroll-none"
           >
             {renderToolbar ? <RenderPropWrapper render={renderToolbar} fileName={fileName} onBack={handleReset} onComplete={handleComplete} /> : (
               <Toolbar 

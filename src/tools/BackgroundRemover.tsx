@@ -1,7 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2 } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
+import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { hybridRemoveBackground } from '../lib/bgRemoval';
+import { hybridRemoveBackground, ensurePreloaded } from '../lib/bgRemoval';
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -15,16 +17,15 @@ export default function BackgroundRemover() {
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isProcessing) {
-      setTimer(1);
+      setTimer(0);
       setProcessingError(null);
-      // Start counting immediately
       interval = setInterval(() => {
         setTimer((prev) => {
-          const cap = 7;
-          if (prev >= cap) return cap;
-          return prev + 1;
+          // Target 7 seconds for a high-quality result
+          if (prev >= 6.9) return 6.9;
+          return prev + 0.1;
         });
-      }, 1000);
+      }, 100);
     } else {
       setTimer(0);
     }
@@ -38,6 +39,10 @@ export default function BackgroundRemover() {
   const [brushMode, setBrushMode] = useState<'erase' | 'restore'>('erase');
   const [brushSize, setBrushSize] = useState(25);
   const [zoom, setZoom] = useState(1.0);
+  const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.2, 4));
+  const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.1));
+  const handleZoomReset = () => setZoom(1);
+
   const [isDrawing, setIsDrawing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const originalImgRef = useRef<HTMLImageElement | null>(null);
@@ -57,6 +62,107 @@ export default function BackgroundRemover() {
   const [edgeSoftness, setEdgeSoftness] = useState(0);
   const [beautyFace, setBeautyFace] = useState(0);
   const [isUltraHD, setIsUltraHD] = useState(false);
+
+  // Crop State
+  const [crop, setCrop] = useState<Crop>();
+  const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
+  const [aspect, setAspect] = useState<number | undefined>(undefined);
+  const [isCropping, setIsCropping] = useState(false);
+  const [hasCropped, setHasCropped] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const { width, height } = e.currentTarget;
+    const initialCrop = aspect 
+      ? centerCrop(
+          makeAspectCrop(
+            {
+              unit: '%',
+              width: 90,
+            },
+            aspect,
+            width,
+            height
+          ),
+          width,
+          height
+        )
+      : {
+          unit: '%' as const,
+          x: 5,
+          y: 5,
+          width: 90,
+          height: 90,
+        };
+    setCrop(initialCrop);
+  };
+
+  const [rotation, setRotation] = useState(0);
+
+  const getCroppedImg = async (imageSrc: string, pixelCrop: PixelCrop, rotation = 0): Promise<string> => {
+    const image = new Image();
+    image.src = imageSrc;
+    await new Promise(resolve => image.onload = resolve);
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return imageSrc;
+
+    // We need to use the rendered dimensions of the image in the cropper to calculate scales
+    // Since we are in an async function, we'll assume the imgRef is still valid or use natural dimensions if not
+    const renderedWidth = imgRef.current?.width || image.naturalWidth;
+    const renderedHeight = imgRef.current?.height || image.naturalHeight;
+
+    const scaleX = image.naturalWidth / renderedWidth;
+    const scaleY = image.naturalHeight / renderedHeight;
+
+    // Calculate canvas size based on rotation
+    const rotRad = (rotation * Math.PI) / 180;
+    const { width: cropWidth, height: cropHeight } = pixelCrop;
+    
+    // For simplicity in this tool, we'll handle rotation before cropping or as part of it
+    // But react-image-crop doesn't handle rotation in the crop object easily.
+    // Let's just implement high-quality cropping first.
+
+    canvas.width = cropWidth * scaleX;
+    canvas.height = cropHeight * scaleY;
+
+    ctx.save();
+    ctx.drawImage(
+      image,
+      pixelCrop.x * scaleX,
+      pixelCrop.y * scaleY,
+      pixelCrop.width * scaleX,
+      pixelCrop.height * scaleY,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    );
+    ctx.restore();
+
+    return canvas.toDataURL('image/png');
+  };
+
+  const applyCrop = async () => {
+    if (!imageSrc || !completedCrop) return;
+    try {
+      const cropped = await getCroppedImg(imageSrc, completedCrop, rotation);
+      setImageSrc(cropped);
+      setIsCropping(false);
+      setHasCropped(true);
+      setRotation(0); // Reset rotation after apply
+      
+      const img = new Image();
+      img.onload = () => { originalImgRef.current = img; };
+      img.src = cropped;
+
+      // Automatically trigger background removal for "instant" feel
+      removeBackground(cropped);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const [appliedAdjustments, setAppliedAdjustments] = useState({
     brightness: 100,
@@ -158,6 +264,11 @@ export default function BackgroundRemover() {
 
   // Removed preload engine model on mount to prevent concurrent loading deadlocks
 
+  // Preload AI models on mount for "instant" feel
+  useEffect(() => {
+    ensurePreloaded();
+  }, []);
+
   const updateCanvasFromSrc = (src: string | null) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -183,6 +294,8 @@ export default function BackgroundRemover() {
       setHistory([]);
       setHistoryIndex(-1);
       setIsManualMode(false);
+      setIsCropping(true); // Start with crop mode
+      setHasCropped(false);
       
       const img = new Image();
       img.onload = () => { originalImgRef.current = img; };
@@ -226,19 +339,19 @@ export default function BackgroundRemover() {
     });
   };
 
-  const removeBackground = async () => {
-    if (!imageSrc) return;
+  const removeBackground = async (src?: string) => {
+    const targetSrc = src || imageSrc;
+    if (!targetSrc) return;
     setIsProcessing(true);
     setProcessingError(null);
     setTimer(0);
-    setStatusText('Initializing AI...');
     
     const startTime = Date.now();
     
     try {
       // Add a global timeout for the whole process
       const rawBlob = await Promise.race([
-        hybridRemoveBackground(imageSrc, async (status, intermediateBlob) => {
+        hybridRemoveBackground(targetSrc, async (status, intermediateBlob) => {
           setStatusText(status);
           if (intermediateBlob) {
             const url = URL.createObjectURL(intermediateBlob);
@@ -247,6 +360,9 @@ export default function BackgroundRemover() {
         }),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 150000))
       ]);
+
+      // No artificial delay - give output as soon as AI is ready
+      setStatusText('Finalizing Result...');
 
       const url = URL.createObjectURL(rawBlob);
       setResultImage(url);
@@ -468,9 +584,15 @@ export default function BackgroundRemover() {
               setHistory([]);
               setHistoryIndex(-1);
               setIsManualMode(false);
+              setIsCropping(false); // Skip crop mode by default for "instant" feel
+              setHasCropped(false);
               
               const img = new Image();
-              img.onload = () => { originalImgRef.current = img; };
+              img.onload = () => { 
+                originalImgRef.current = img;
+                // Automatically trigger background removal on upload
+                removeBackground(src);
+              };
               img.src = src;
             };
             reader.readAsDataURL(file);
@@ -482,6 +604,8 @@ export default function BackgroundRemover() {
             setHistory([]);
             setHistoryIndex(-1);
             setIsManualMode(false);
+            setIsCropping(false);
+            setHasCropped(false);
           }
         }, [file]);
 
@@ -509,7 +633,105 @@ export default function BackgroundRemover() {
             <aside className="tool-sidebar">
               <div className="sidebar-content">
                 <div className="space-y-6">
-                  {!resultImage ? (
+                  {isCropping ? (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-left-4">
+                      <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                        <CropIcon className="w-5 h-5 text-accent" /> Crop Image
+                      </h3>
+                      <p className="text-xs text-text-muted">
+                        Drag the corners to select the area you want to keep.
+                      </p>
+                      
+                      <div className="space-y-3">
+                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Aspect Ratio</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[
+                            { label: 'Free', value: undefined },
+                            { label: '1:1', value: 1 },
+                            { label: '4:3', value: 4/3 },
+                            { label: '16:9', value: 16/9 },
+                            { label: '3:4', value: 3/4 },
+                            { label: '9:16', value: 9/16 },
+                          ].map((ratio) => (
+                            <button
+                              key={ratio.label}
+                              onClick={() => {
+                                setAspect(ratio.value);
+                                if (imgRef.current) {
+                                  const { width, height } = imgRef.current;
+                                  const newCrop = ratio.value 
+                                    ? centerCrop(makeAspectCrop({ unit: '%', width: 90 }, ratio.value, width, height), width, height)
+                                    : { unit: '%' as const, x: 5, y: 5, width: 90, height: 90 };
+                                  setCrop(newCrop);
+                                }
+                              }}
+                              className={`py-2 text-[10px] font-bold rounded-lg border transition-all ${aspect === ratio.value ? 'bg-accent border-accent text-white' : 'bg-surface border-border text-text-muted hover:border-accent'}`}
+                            >
+                              {ratio.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Rotation</label>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => setRotation((prev) => (prev - 90) % 360)}
+                            className="flex-1 py-2 bg-surface border border-border rounded-lg text-text-primary hover:border-accent transition-all flex items-center justify-center gap-2 text-[10px] font-bold"
+                          >
+                            <RotateCcw className="w-3 h-3" /> Rotate Left
+                          </button>
+                          <button 
+                            onClick={() => setRotation((prev) => (prev + 90) % 360)}
+                            className="flex-1 py-2 bg-surface border border-border rounded-lg text-text-primary hover:border-accent transition-all flex items-center justify-center gap-2 text-[10px] font-bold"
+                          >
+                            <RotateCcw className="w-3 h-3 scale-x-[-1]" /> Rotate Right
+                          </button>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setRotation(0);
+                            setAspect(undefined);
+                            if (imgRef.current) {
+                              setCrop({ unit: '%' as const, x: 5, y: 5, width: 90, height: 90 });
+                            }
+                          }}
+                          className="w-full py-2 bg-surface border border-border rounded-lg text-text-muted hover:text-accent transition-all text-[10px] font-bold mt-2"
+                        >
+                          Reset Crop Area
+                        </button>
+                      </div>
+
+                      <div className="pt-4 flex flex-col gap-2">
+                        <button 
+                          onClick={applyCrop}
+                          className="w-full btn bp py-4 rounded-2xl gap-2 text-lg shadow-lg shadow-accent/20"
+                        >
+                          <Sparkles className="w-5 h-5" /> Remove Background
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setIsCropping(false);
+                            setHasCropped(true);
+                            removeBackground(imageSrc || '');
+                          }}
+                          className="w-full py-3 bg-surface border border-border rounded-xl text-text-muted hover:text-accent transition-all text-xs font-bold"
+                        >
+                          Skip Crop & Remove Background
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setIsCropping(false);
+                            if (!hasCropped) onReset();
+                          }}
+                          className="w-full py-2 text-xs font-bold text-text-muted hover:text-red-500 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : !resultImage ? (
                       <div className="space-y-4">
                         <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
                           <Wand2 className="w-5 h-5 text-accent" /> AI Processing
@@ -529,6 +751,12 @@ export default function BackgroundRemover() {
                       >
                         {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : processingError ? <RefreshCw className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
                         {processingError ? 'Retry AI Removal' : 'Remove Background'}
+                      </button>
+                      <button 
+                        onClick={() => setIsCropping(true)}
+                        className="w-full py-2 text-xs font-bold text-text-muted hover:text-accent transition-colors flex items-center justify-center gap-2"
+                      >
+                        <CropIcon className="w-4 h-4" /> Adjust Crop
                       </button>
                       {processingError && (
                         <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 text-sm font-medium animate-in fade-in slide-in-from-top-2">
@@ -602,20 +830,6 @@ export default function BackgroundRemover() {
                             />
                           </div>
 
-                          <div className="space-y-3">
-                            <div className="flex justify-between text-sm font-bold text-text-primary">
-                              <span>Zoom</span>
-                              <span className="text-accent">{Math.round(zoom * 100)}%</span>
-                            </div>
-                            <input 
-                              type="range" 
-                              min="0.5" max="3" step="0.1"
-                              value={zoom} 
-                              onChange={(e) => setZoom(parseFloat(e.target.value))}
-                              className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
-                            />
-                          </div>
-
                           <div className="grid grid-cols-2 gap-3">
                             <button onClick={undo} disabled={historyIndex < 0} className="btn bs2 py-3 rounded-xl gap-2 disabled:opacity-50 text-xs">
                               <Undo className="w-4 h-4" /> Undo
@@ -631,27 +845,44 @@ export default function BackgroundRemover() {
                             <ImageIcon className="w-5 h-5 text-accent" /> Background
                           </h3>
 
-                          <div className="grid grid-cols-4 gap-2">
-                            {['transparent', '#ffffff', '#1e3a8a', '#dc2626', '#bae6fd', '#f3f4f6'].map(color => (
+                            <div className="grid grid-cols-4 gap-2">
+                              {[
+                                { color: 'transparent', label: 'Clear' },
+                                { color: '#ffffff', label: 'White' },
+                                { color: '#000000', label: 'Black' },
+                                { color: '#1e3a8a', label: 'Blue' },
+                                { color: '#dc2626', label: 'Red' },
+                                { color: '#bae6fd', label: 'Sky' },
+                                { color: '#f3f4f6', label: 'Gray' }
+                              ].map(item => (
+                                <button
+                                  key={item.color}
+                                  onClick={() => setBgColor(item.color)}
+                                  title={item.label}
+                                  className={`w-full aspect-square rounded-xl border-2 transition-all relative group ${bgColor === item.color ? 'border-accent scale-110 shadow-md' : 'border-transparent hover:border-border'}`}
+                                  style={{ 
+                                    backgroundColor: item.color === 'transparent' ? 'white' : item.color,
+                                    backgroundImage: item.color === 'transparent' ? 'linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%, #eee 100%), linear-gradient(45deg, #eee 25%, white 25%, white 75%, #eee 75%, #eee 100%)' : 'none',
+                                    backgroundSize: item.color === 'transparent' ? '10px 10px' : 'auto',
+                                    backgroundPosition: item.color === 'transparent' ? '0 0, 5px 5px' : '0 0'
+                                  }}
+                                >
+                                  <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10">
+                                    {item.label}
+                                  </span>
+                                </button>
+                              ))}
                               <button
-                                key={color}
-                                onClick={() => setBgColor(color)}
-                                className={`w-full aspect-square rounded-xl border-2 transition-all ${bgColor === color ? 'border-accent scale-110 shadow-md' : 'border-transparent hover:border-border'}`}
-                                style={{ 
-                                  backgroundColor: color === 'transparent' ? 'white' : color,
-                                  backgroundImage: color === 'transparent' ? 'linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%, #eee 100%), linear-gradient(45deg, #eee 25%, white 25%, white 75%, #eee 75%, #eee 100%)' : 'none',
-                                  backgroundSize: color === 'transparent' ? '10px 10px' : 'auto',
-                                  backgroundPosition: color === 'transparent' ? '0 0, 5px 5px' : '0 0'
-                                }}
-                              />
-                            ))}
-                            <button
-                              onClick={() => setBgColor('custom')}
-                              className={`w-full aspect-square rounded-xl border-2 flex items-center justify-center bg-gradient-to-br from-red-500 via-green-500 to-blue-500 transition-all ${bgColor === 'custom' ? 'border-accent scale-110 shadow-md' : 'border-transparent hover:border-border'}`}
-                            >
-                              <div className="w-4 h-4 rounded-full bg-white/50" />
-                            </button>
-                          </div>
+                                onClick={() => setBgColor('custom')}
+                                title="Custom"
+                                className={`w-full aspect-square rounded-xl border-2 flex items-center justify-center bg-gradient-to-br from-red-500 via-green-500 to-blue-500 transition-all relative group ${bgColor === 'custom' ? 'border-accent scale-110 shadow-md' : 'border-transparent hover:border-border'}`}
+                              >
+                                <div className="w-4 h-4 rounded-full bg-white/50" />
+                                <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10">
+                                  Custom
+                                </span>
+                              </button>
+                            </div>
 
                           {bgColor === 'custom' && (
                             <div className="space-y-2">
@@ -748,7 +979,7 @@ export default function BackgroundRemover() {
             </aside>
 
             {/* --- MAIN PREVIEW --- */}
-            <main className="tool-main-preview">
+            <main className={`tool-main-preview ${isCropping ? 'is-cropping-mobile' : ''}`}>
               <div className="preview-content-wrapper">
                 <svg width="0" height="0" className="absolute pointer-events-none">
                   <defs>
@@ -763,68 +994,125 @@ export default function BackgroundRemover() {
                   </defs>
                 </svg>
                 <div 
-                  className="relative w-full h-full bg-bg-secondary rounded-3xl overflow-hidden border border-border flex items-center justify-center group shadow-inner"
+                  className="relative w-full h-full min-h-[300px] bg-bg-secondary rounded-3xl overflow-auto border border-border flex items-center justify-center group shadow-inner no-scrollbar p-2 sm:p-6"
                   style={{ 
-                    zoom: zoom,
                     backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
                     backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
                     backgroundSize: '20px 20px',
                     backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
                   }}
                 >
-                  {isManualMode ? (
-                    <canvas
-                      ref={canvasRef}
-                      onMouseDown={startDrawing}
-                      onMouseMove={draw}
-                      onMouseUp={stopDrawing}
-                      onMouseLeave={stopDrawing}
-                      onTouchStart={startDrawing}
-                      onTouchMove={draw}
-                      onTouchEnd={stopDrawing}
-                      className="max-w-full max-h-full object-contain cursor-crosshair shadow-2xl"
-                    />
-                  ) : (
-                    <>
-                      <img 
-                        src={resultImage || imageSrc} 
-                        alt="Preview" 
-                        className="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
-                        style={{ 
-                          filter: resultImage && !isManualMode ? getFilterStyle() : 'none'
-                        }}
-                      />
-                      
-                      {isProcessing && (
-                        <div className="preview-loading-overlay backdrop-blur-md bg-black/40">
-                          <div className="flex flex-col items-center text-center max-w-xs w-full px-6">
-                            <div className="relative mb-8">
-                              <div className="w-24 h-24 rounded-full border-4 border-white/10 border-t-accent animate-spin" />
-                              <div className="absolute inset-0 flex items-center justify-center font-mono font-bold text-white text-2xl">
-                                {timer}s
-                              </div>
-                            </div>
-                            
-                            <div className="w-full h-1.5 bg-white/10 rounded-full mb-4 overflow-hidden">
-                              <div 
-                                className="h-full bg-accent transition-all duration-300 ease-out"
-                                style={{ 
-                                  width: statusText.includes('Optimizing') ? '10%' : 
-                                         statusText.includes('MediaPipe') ? '30%' : 
-                                         statusText.includes('U²-Net') ? '65%' : 
-                                         statusText.includes('Fusion') ? '85%' : 
-                                         statusText.includes('Finalizing') ? '95%' : '5%'
-                                }}
-                              />
-                            </div>
+                  {/* Compact Zoom Controls */}
+                  <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-surface/95 backdrop-blur-md p-1.5 rounded-xl border border-border shadow-xl z-40 animate-in fade-in slide-in-from-top-2">
+                    <button 
+                      onClick={handleZoomOut}
+                      className="p-1.5 hover:bg-bg-secondary rounded-lg transition-colors text-text-primary"
+                      title="Zoom Out"
+                    >
+                      <ZoomOut className="w-4 h-4" />
+                    </button>
+                    <span className="text-[9px] font-bold min-w-[32px] text-center text-text-primary">
+                      {Math.round(zoom * 100)}%
+                    </span>
+                    <button 
+                      onClick={handleZoomIn}
+                      className="p-1.5 hover:bg-bg-secondary rounded-xl transition-colors text-text-primary"
+                      title="Zoom In"
+                    >
+                      <ZoomIn className="w-4 h-4" />
+                    </button>
+                    <div className="w-px h-3 bg-border mx-0.5" />
+                    <button 
+                      onClick={handleZoomReset}
+                      className="p-1.5 hover:bg-bg-secondary rounded-lg transition-colors text-text-primary"
+                      title="Reset Zoom"
+                    >
+                      <Maximize2 className="w-4 h-4" />
+                    </button>
+                  </div>
 
-                            <p className="font-bold text-2xl mb-2 text-white tracking-tight animate-pulse">{statusText}</p>
-                            <p className="text-sm text-white/60 font-medium">Hybrid AI + OpenCV Engine</p>
+                  <div 
+                    className="flex items-center justify-center transition-transform duration-200 ease-out origin-center"
+                    style={{ 
+                      transform: `scale(${zoom})`,
+                      minWidth: '100%',
+                      minHeight: '100%'
+                    }}
+                  >
+                    {isCropping ? (
+                      <div className="w-full h-full flex items-center justify-center p-4 overflow-auto bg-black/20">
+                        <ReactCrop
+                          crop={crop}
+                          onChange={(c) => setCrop(c)}
+                          onComplete={(c) => setCompletedCrop(c)}
+                          aspect={aspect}
+                          className="max-w-full max-h-full"
+                          ruleOfThirds
+                          keepSelection
+                        >
+                          <img 
+                            ref={imgRef}
+                            src={imageSrc} 
+                            onLoad={onImageLoad}
+                            alt="To crop" 
+                            className="max-w-full max-h-full object-contain block transition-transform duration-300"
+                            style={{ 
+                              transform: `rotate(${rotation}deg)`,
+                              touchAction: 'none'
+                            }}
+                          />
+                        </ReactCrop>
+                      </div>
+                    ) : isManualMode ? (
+                      <div className="flex items-center justify-center">
+                        <canvas
+                          ref={canvasRef}
+                          onMouseDown={startDrawing}
+                          onMouseMove={draw}
+                          onMouseUp={stopDrawing}
+                          onMouseLeave={stopDrawing}
+                          onTouchStart={startDrawing}
+                          onTouchMove={draw}
+                          onTouchEnd={stopDrawing}
+                          className="max-w-full max-h-full object-contain cursor-crosshair shadow-2xl"
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center relative">
+                        <img 
+                          key={resultImage || 'original'}
+                          src={resultImage || imageSrc} 
+                          alt="Preview" 
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            console.error("Preview image failed to load:", resultImage);
+                            // Fallback to original if result fails
+                            if (resultImage) {
+                              setResultImage(null);
+                            }
+                          }}
+                          className="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
+                          style={{ 
+                            filter: resultImage && !isManualMode ? getFilterStyle() : 'none'
+                          }}
+                        />
+                        
+                        {isProcessing && (
+                          <div className="preview-loading-overlay backdrop-blur-sm bg-black/10 rounded-lg">
+                            <div className="flex flex-col items-center text-center max-w-xs w-full px-6">
+                              <div className="relative">
+                                <div className="w-12 h-12 rounded-full border-2 border-white/10 border-t-accent animate-spin" />
+                                <div className="absolute inset-0 flex items-center justify-center font-mono font-bold text-white text-[8px]">
+                                  {timer.toFixed(1)}s
+                                </div>
+                              </div>
+                              <p className="mt-2 text-[10px] font-bold text-white uppercase tracking-widest animate-pulse">Removing...</p>
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </>
-                  )}
+                        )}
+                      </div>
+                    )}
+                  </div>
                   
                   {/* Floating Controls */}
                   <div className="absolute top-4 right-4 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
