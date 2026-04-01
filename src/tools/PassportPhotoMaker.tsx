@@ -489,7 +489,7 @@ export default function PassportPhotoMaker() {
             const url = URL.createObjectURL(intermediateBlob);
             setBgRemovedImageSrc(url);
           }
-        }),
+        }, false), // Pass false to keep background transparent
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 150000))
       ]);
 
@@ -533,13 +533,14 @@ export default function PassportPhotoMaker() {
           return;
         }
 
-        // Draw Background
-        if (bgColor !== 'transparent') {
-          ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
+        // We need a temporary canvas to process the subject independently of the background
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        const tempCtx = tempCanvas.getContext('2d', { alpha: true });
+        if (!tempCtx) return;
 
-        // Apply Filters
+        // Apply Filters to the subject
         let b = appliedAdjustments.brightness;
         let c = appliedAdjustments.contrast;
         let s = appliedAdjustments.saturation;
@@ -568,15 +569,13 @@ export default function PassportPhotoMaker() {
           filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
         }
         
-        ctx.filter = filterString;
-        
-        // Draw Image
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0);
-        ctx.filter = 'none';
+        tempCtx.filter = filterString;
+        tempCtx.imageSmoothingEnabled = true;
+        tempCtx.imageSmoothingQuality = 'high';
+        tempCtx.drawImage(img, 0, 0);
+        tempCtx.filter = 'none';
 
-        // Apply Sharpness (Optimized)
+        // Apply Sharpness (Optimized) to the subject only
         const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
         
         if (finalSharpness > 40) {
@@ -584,33 +583,42 @@ export default function PassportPhotoMaker() {
           const a = amount;
           const b_val = 1 + 4 * a;
           
-          const sw = canvas.width;
-          const sh = canvas.height;
-          const imageData = ctx.getImageData(0, 0, sw, sh);
+          const sw = tempCanvas.width;
+          const sh = tempCanvas.height;
+          const imageData = tempCtx.getImageData(0, 0, sw, sh);
           const pixels = new Uint32Array(imageData.data.buffer);
-          const output = ctx.createImageData(sw, sh);
+          const output = tempCtx.createImageData(sw, sh);
           const dst = new Uint32Array(output.data.buffer);
 
           for (let y = 1; y < sh - 1; y++) {
             const offset = y * sw;
             for (let x = 1; x < sw - 1; x++) {
               const i = offset + x;
+              const p = pixels[i];
+              const alpha = (p >> 24) & 0xff;
+              
+              // Skip fully transparent pixels to avoid processing empty space
+              if (alpha === 0) continue;
+
               const iUp = i - sw;
               const iDown = i + sw;
               const iLeft = i - 1;
               const iRight = i + 1;
 
-              // Unpack RGBA for sharpening
-              const p = pixels[i];
               const pUp = pixels[iUp];
               const pDown = pixels[iDown];
               const pLeft = pixels[iLeft];
               const pRight = pixels[iRight];
 
-              const r_val = ((p & 0xff) * b_val - ((pUp & 0xff) + (pDown & 0xff) + (pLeft & 0xff) + (pRight & 0xff)) * a);
-              const g_val = (((p >> 8) & 0xff) * b_val - (((pUp >> 8) & 0xff) + ((pDown >> 8) & 0xff) + ((pLeft >> 8) & 0xff) + ((pRight >> 8) & 0xff)) * a);
-              const b_comp = (((p >> 16) & 0xff) * b_val - (((pUp >> 16) & 0xff) + ((pDown >> 16) & 0xff) + ((pLeft >> 16) & 0xff) + ((pRight >> 16) & 0xff)) * a);
-              const alpha = (p >> 24) & 0xff;
+              // Alpha-aware neighbor sampling: if a neighbor is transparent, use the center pixel's color
+              // This prevents dark halos around the edges of the subject
+              const getR = (px: number) => ((px >> 24) & 0xff) === 0 ? (p & 0xff) : (px & 0xff);
+              const getG = (px: number) => ((px >> 24) & 0xff) === 0 ? ((p >> 8) & 0xff) : ((px >> 8) & 0xff);
+              const getB = (px: number) => ((px >> 24) & 0xff) === 0 ? ((p >> 16) & 0xff) : ((px >> 16) & 0xff);
+
+              const r_val = ((p & 0xff) * b_val - (getR(pUp) + getR(pDown) + getR(pLeft) + getR(pRight)) * a);
+              const g_val = (((p >> 8) & 0xff) * b_val - (getG(pUp) + getG(pDown) + getG(pLeft) + getG(pRight)) * a);
+              const b_comp = (((p >> 16) & 0xff) * b_val - (getB(pUp) + getB(pDown) + getB(pLeft) + getB(pRight)) * a);
 
               const finalR = r_val < 0 ? 0 : r_val > 255 ? 255 : (r_val | 0);
               const finalG = g_val < 0 ? 0 : g_val > 255 ? 255 : (g_val | 0);
@@ -619,17 +627,25 @@ export default function PassportPhotoMaker() {
               dst[i] = finalR | (finalG << 8) | (finalB << 16) | (alpha << 24);
             }
           }
-          ctx.putImageData(output, 0, 0);
+          tempCtx.putImageData(output, 0, 0);
         } else if (finalSharpness > 0) {
           // Fast sharpening fallback using contrast/brightness
-          // We need to draw the image onto the canvas with the filter
-          // Since the image is already drawn, we can use a temporary canvas or just apply it to the source
-          ctx.filter = `contrast(${100 + finalSharpness / 2}%) brightness(${100 + finalSharpness / 10}%)`;
-          ctx.drawImage(img, 0, 0);
-          ctx.filter = 'none';
+          tempCtx.filter = `contrast(${100 + finalSharpness / 2}%) brightness(${100 + finalSharpness / 10}%)`;
+          tempCtx.drawImage(tempCanvas, 0, 0);
+          tempCtx.filter = 'none';
         }
 
-        // Add Border if requested
+        // Now composite everything onto the final canvas
+        // 1. Draw Background
+        if (bgColor !== 'transparent') {
+          ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // 2. Draw the processed subject
+        ctx.drawImage(tempCanvas, 0, 0);
+
+        // 3. Add Border if requested
         if (hasBorder) {
           ctx.strokeStyle = '#000000';
           ctx.lineWidth = Math.max(2, Math.round(canvas.width / 200));

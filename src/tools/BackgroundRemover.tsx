@@ -31,7 +31,7 @@ export default function BackgroundRemover() {
     }
     return () => clearInterval(interval);
   }, [isProcessing]);
-  const [bgColor, setBgColor] = useState('transparent');
+  const [bgColor, setBgColor] = useState('#ffffff');
   const [customColor, setCustomColor] = useState('#ffffff');
   
   // Manual Touchup State
@@ -491,13 +491,14 @@ export default function BackgroundRemover() {
       canvas.width = img.width;
       canvas.height = img.height;
       
-      // Draw Background
-      if (bgColor !== 'transparent') {
-        ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
-      
-      // Apply Filters
+      // We need a temporary canvas to process the subject independently of the background
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = canvas.width;
+      tempCanvas.height = canvas.height;
+      const tempCtx = tempCanvas.getContext('2d', { alpha: true });
+      if (!tempCtx) return;
+
+      // Apply Filters to the subject
       let b = appliedAdjustments.brightness;
       let c = appliedAdjustments.contrast;
       let s = appliedAdjustments.saturation;
@@ -526,38 +527,57 @@ export default function BackgroundRemover() {
         filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
       }
       
-      ctx.filter = filterString;
-      ctx.drawImage(img, 0, 0);
-      ctx.filter = 'none';
+      tempCtx.filter = filterString;
+      tempCtx.drawImage(img, 0, 0);
+      tempCtx.filter = 'none';
 
-      // Apply Sharpness
+      // Apply Sharpness to the subject only
       const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
       if (finalSharpness > 0) {
         const amount = finalSharpness / 100; // More balanced sharpening
         const a = amount;
         const b_val = 1 + 4 * a;
-        const sw = canvas.width;
-        const sh = canvas.height;
-        const imageData = ctx.getImageData(0, 0, sw, sh);
+        const sw = tempCanvas.width;
+        const sh = tempCanvas.height;
+        const imageData = tempCtx.getImageData(0, 0, sw, sh);
         const pixels = imageData.data;
-        const output = ctx.createImageData(sw, sh);
+        const output = tempCtx.createImageData(sw, sh);
         const dst = output.data;
 
         for (let i = 0; i < pixels.length; i += 4) {
           const x = (i / 4) % sw;
           const y = Math.floor((i / 4) / sw);
-          if (x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
+          const alpha = pixels[i + 3];
+          
+          if (alpha === 0 || x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
             dst[i] = pixels[i]; dst[i+1] = pixels[i+1]; dst[i+2] = pixels[i+2]; dst[i+3] = pixels[i+3];
             continue;
           }
+          
           const iUp = i - sw * 4; const iDown = i + sw * 4; const iLeft = i - 4; const iRight = i + 4;
-          dst[i]     = pixels[i] * b_val - (pixels[iUp] + pixels[iDown] + pixels[iLeft] + pixels[iRight]) * a;
-          dst[i + 1] = pixels[i + 1] * b_val - (pixels[iUp + 1] + pixels[iDown + 1] + pixels[iLeft + 1] + pixels[iRight + 1]) * a;
-          dst[i + 2] = pixels[i + 2] * b_val - (pixels[iUp + 2] + pixels[iDown + 2] + pixels[iLeft + 2] + pixels[iRight + 2]) * a;
-          dst[i + 3] = pixels[i + 3];
+          
+          // Alpha-aware neighbor sampling
+          const getR = (idx: number) => pixels[idx + 3] === 0 ? pixels[i] : pixels[idx];
+          const getG = (idx: number) => pixels[idx + 3] === 0 ? pixels[i + 1] : pixels[idx + 1];
+          const getB = (idx: number) => pixels[idx + 3] === 0 ? pixels[i + 2] : pixels[idx + 2];
+
+          dst[i]     = pixels[i] * b_val - (getR(iUp) + getR(iDown) + getR(iLeft) + getR(iRight)) * a;
+          dst[i + 1] = pixels[i + 1] * b_val - (getG(iUp) + getG(iDown) + getG(iLeft) + getG(iRight)) * a;
+          dst[i + 2] = pixels[i + 2] * b_val - (getB(iUp) + getB(iDown) + getB(iLeft) + getB(iRight)) * a;
+          dst[i + 3] = alpha;
         }
-        ctx.putImageData(output, 0, 0);
+        tempCtx.putImageData(output, 0, 0);
       }
+      
+      // Now composite everything onto the final canvas
+      // 1. Draw Background
+      if (bgColor !== 'transparent') {
+        ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      // 2. Draw the processed subject
+      ctx.drawImage(tempCanvas, 0, 0);
       
       const link = document.createElement('a');
       link.download = `bg-removed-${Date.now()}.png`;
@@ -955,7 +975,7 @@ export default function BackgroundRemover() {
                       <li>Use well-lit photos for best results.</li>
                       <li>Clear contrast between subject and background helps AI.</li>
                       <li>Use "Manual Touchup" to fix tiny details.</li>
-                      <li>Download as PNG to keep transparency.</li>
+                      <li>The background is automatically replaced with pure white.</li>
                     </ul>
                   </div>
                 </div>
@@ -1106,7 +1126,7 @@ export default function BackgroundRemover() {
                               setResultImage(null);
                             }
                           }}
-                          className="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
+                          className="max-w-full max-h-full object-contain shadow-2xl rounded-lg bg-white"
                           style={{ 
                             filter: resultImage && !isManualMode ? getFilterStyle() : 'none'
                           }}

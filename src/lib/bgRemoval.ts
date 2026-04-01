@@ -55,7 +55,8 @@ const getRoughMask = async (img: HTMLImageElement): Promise<HTMLCanvasElement> =
 
 export const hybridRemoveBackground = async (
   imageSrc: string,
-  onProgress: (status: string, intermediateBlob?: Blob) => void
+  onProgress: (status: string, intermediateBlob?: Blob) => void,
+  forceWhiteBackground: boolean = false
 ): Promise<Blob> => {
   const startTime = Date.now();
   try {
@@ -93,30 +94,9 @@ export const hybridRemoveBackground = async (
     // but IS-Net is generally more accurate for the whole image.
     onProgress('Refining Details...');
     
-    // Max dimension 1024px for high accuracy as requested
-    const MAX_DIM = 1024;
-    let workW = origImg.width;
-    let workH = origImg.height;
-    if (workW > workH && workW > MAX_DIM) {
-      workH = Math.round((workH * MAX_DIM) / workW);
-      workW = MAX_DIM;
-    } else if (workH > MAX_DIM) {
-      workW = Math.round((workW * MAX_DIM) / workH);
-      workH = MAX_DIM;
-    }
-
-    const workCanvas = document.createElement('canvas');
-    workCanvas.width = workW;
-    workCanvas.height = workH;
-    const workCtx = workCanvas.getContext('2d')!;
-    workCtx.drawImage(origImg, 0, 0, workW, workH);
-
-    const blob = await new Promise<Blob | null>(res => workCanvas.toBlob(res, 'image/png'));
-    if (!blob) throw new Error("Failed to create image blob");
-
     // IS-Net (FP16 optimized in WASM)
-    const maskBlob = await imglyRemoveBackground(blob, {
-      model: 'isnet_quint8', 
+    const maskBlob = await imglyRemoveBackground(imageSrc, {
+      model: 'isnet_fp16', 
       output: { format: 'image/png' },
       debug: false
     });
@@ -131,7 +111,7 @@ export const hybridRemoveBackground = async (
     // Step 3: Post-Processing (OpenCV)
     onProgress('Finalizing Result...');
     // We pass both the rough mask and the IS-Net mask to generate the final result
-    const resultBlob = await generateFinalOutput(origImg, maskImg, roughMaskCanvas);
+    const resultBlob = await generateFinalOutput(origImg, maskImg, roughMaskCanvas, forceWhiteBackground);
     
     const duration = (Date.now() - startTime) / 1000;
     console.log(`Hybrid BG Removal completed in ${duration.toFixed(2)}s`);
@@ -146,115 +126,76 @@ export const hybridRemoveBackground = async (
 async function generateFinalOutput(
   origImg: HTMLImageElement, 
   maskImg: HTMLImageElement,
-  roughMaskCanvas: HTMLCanvasElement
+  roughMaskCanvas: HTMLCanvasElement,
+  forceWhiteBackground: boolean
 ): Promise<Blob> {
   const w = origImg.width;
   const h = origImg.height;
 
-  // Step 3.1: Morphological operations (dilate + erode) on a refinement resolution
-  const REFINEMENT_DIM = 1024;
-  let refW = w;
-  let refH = h;
-  if (refW > refH && refW > REFINEMENT_DIM) {
-    refH = Math.round((refH * REFINEMENT_DIM) / refW);
-    refW = REFINEMENT_DIM;
-  } else if (refH > REFINEMENT_DIM) {
-    refW = Math.round((refW * REFINEMENT_DIM) / refH);
-    refH = REFINEMENT_DIM;
-  }
-
-  const refCanvas = document.createElement('canvas');
-  refCanvas.width = refW; refCanvas.height = refH;
-  const refCtx = refCanvas.getContext('2d')!;
-  refCtx.drawImage(maskImg, 0, 0, refW, refH);
-  const refData = refCtx.getImageData(0, 0, refW, refH);
-  
-  let alphaArray = new Uint8Array(refW * refH);
-  for (let i = 0, j = 0; i < refData.data.length; i += 4, j++) {
-    alphaArray[j] = refData.data[i + 3];
-  }
-
-  try {
-    if (cv && cv.Mat) {
-      const alphaMat = new cv.Mat(refH, refW, cv.CV_8UC1);
-      alphaMat.data.set(alphaArray);
-      
-      // Morphological operations (dilate + erode) to clean up edges
-      const kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
-      
-      // Dilate then Erode (Closing) to fill small holes
-      cv.morphologyEx(alphaMat, alphaMat, cv.MORPH_CLOSE, kernel);
-      
-      // Erode then Dilate (Opening) to remove small noise
-      cv.morphologyEx(alphaMat, alphaMat, cv.MORPH_OPEN, kernel);
-      
-      // Step 3.2: Gaussian blur on mask edges for smoothing
-      cv.GaussianBlur(alphaMat, alphaMat, new cv.Size(3, 3), 0, 0, cv.BORDER_DEFAULT);
-      
-      alphaArray.set(alphaMat.data);
-      alphaMat.delete(); kernel.delete();
-    }
-  } catch (e) {
-    console.error("OpenCV processing failed", e);
-  }
-
-  // Draw refined alpha back
-  for (let i = 0, j = 0; i < refData.data.length; i += 4, j++) {
-    refData.data[i + 3] = alphaArray[j];
-  }
-  refCtx.putImageData(refData, 0, 0);
-
-  // Final assembly
   const finalCanvas = document.createElement('canvas');
   finalCanvas.width = w; finalCanvas.height = h;
   const ctx = finalCanvas.getContext('2d')!;
   
+  // Draw original image
   ctx.drawImage(origImg, 0, 0);
   const imgData = ctx.getImageData(0, 0, w, h);
   
-  const finalMaskCanvas = document.createElement('canvas');
-  finalMaskCanvas.width = w; finalMaskCanvas.height = h;
-  const finalMaskCtx = finalMaskCanvas.getContext('2d')!;
-  
-  // Combine IS-Net mask with MediaPipe rough mask to remove distant artifacts
-  finalMaskCtx.drawImage(refCanvas, 0, 0, w, h);
-  finalMaskCtx.globalCompositeOperation = 'multiply';
-  finalMaskCtx.drawImage(roughMaskCanvas, 0, 0, w, h);
-  
-  const finalMaskData = finalMaskCtx.getImageData(0, 0, w, h);
+  // Draw IS-Net mask (scaled to original size)
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = w; maskCanvas.height = h;
+  const maskCtx = maskCanvas.getContext('2d')!;
+  maskCtx.drawImage(maskImg, 0, 0, w, h);
+  const maskData = maskCtx.getImageData(0, 0, w, h);
 
   for (let i = 0; i < imgData.data.length; i += 4) {
-    let alpha = finalMaskData.data[i + 3];
+    let alpha = maskData.data[i + 3]; // Use the highly accurate IS-Net alpha channel
     
-    // Step 3.3: Feathering (alpha smoothing)
-    // We apply a soft threshold to preserve hair details
-    if (alpha < 30) {
-        alpha = 0;
-    } else if (alpha > 220) {
-        alpha = 255;
-    } else {
-        // Linear interpolation for soft edges
-        alpha = Math.round((alpha - 30) * (255 / 190));
-    }
-
-    if (alpha === 0) {
-        imgData.data[i + 3] = 0;
+    // Step 3: Soft Thresholding for a "Perfectly Clear" Cutout
+    // We use a softer threshold to preserve anti-aliased edges while removing faint background noise
+    if (alpha < 15) {
+        if (forceWhiteBackground) {
+            // Force pure WHITE background
+            imgData.data[i] = 255;     // R
+            imgData.data[i + 1] = 255; // G
+            imgData.data[i + 2] = 255; // B
+            imgData.data[i + 3] = 255; // A
+        } else {
+            imgData.data[i + 3] = 0; // Transparent
+        }
         continue;
+    } else if (alpha > 240) {
+        // Force fully opaque for the core subject
+        imgData.data[i + 3] = 255;
+    } else {
+        // Smoothly blend the anti-aliased edges
+        // Remap alpha to 0-1 range based on the 15-240 bounds
+        const mappedAlpha = (alpha - 15) / 225;
+        const invAlpha = 1 - mappedAlpha;
+        
+        let r = imgData.data[i];
+        let g = imgData.data[i + 1];
+        let b = imgData.data[i + 2];
+        
+        // Color decontamination: desaturate the edge to remove color fringing (color spread)
+        const lum = r * 0.299 + g * 0.587 + b * 0.114;
+        r = r * mappedAlpha + lum * invAlpha;
+        g = g * mappedAlpha + lum * invAlpha;
+        b = b * mappedAlpha + lum * invAlpha;
+        
+        if (forceWhiteBackground) {
+            imgData.data[i] = Math.round(r * mappedAlpha + 255 * invAlpha);
+            imgData.data[i + 1] = Math.round(g * mappedAlpha + 255 * invAlpha);
+            imgData.data[i + 2] = Math.round(b * mappedAlpha + 255 * invAlpha);
+            imgData.data[i + 3] = 255; // Result is fully opaque
+        } else {
+            imgData.data[i] = Math.round(r);
+            imgData.data[i + 1] = Math.round(g);
+            imgData.data[i + 2] = Math.round(b);
+            // Use a smoothstep-like curve for the alpha to increase edge contrast slightly
+            const smoothAlpha = mappedAlpha * mappedAlpha * (3 - 2 * mappedAlpha);
+            imgData.data[i + 3] = Math.round(smoothAlpha * 255); // Transparent edge
+        }
     }
-
-    // Color decontamination (remove background spill)
-    if (alpha < 255) {
-        const factor = (255 - alpha) / 255;
-        const r = imgData.data[i];
-        const g = imgData.data[i + 1];
-        const b = imgData.data[i + 2];
-        const lum = (r * 0.299 + g * 0.587 + b * 0.114);
-        imgData.data[i] = Math.round(r * (1 - factor) + lum * factor);
-        imgData.data[i + 1] = Math.round(g * (1 - factor) + lum * factor);
-        imgData.data[i + 2] = Math.round(b * (1 - factor) + lum * factor);
-    }
-
-    imgData.data[i + 3] = alpha;
   }
   
   ctx.putImageData(imgData, 0, 0);
