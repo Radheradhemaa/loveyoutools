@@ -210,7 +210,6 @@ export default function PassportPhotoMaker() {
         if (!ctx) return;
 
         const origImg = new Image();
-        origImg.crossOrigin = "anonymous";
         await new Promise((resolve) => {
           origImg.onload = resolve;
           origImg.onerror = resolve; // Continue even on error to avoid hanging
@@ -228,7 +227,6 @@ export default function PassportPhotoMaker() {
 
         const currentImgSrc = bgRemovedImageSrc || croppedImageSrc;
         const currentImg = new Image();
-        currentImg.crossOrigin = "anonymous";
         await new Promise((resolve) => {
           currentImg.onload = resolve;
           currentImg.onerror = resolve;
@@ -435,7 +433,37 @@ export default function PassportPhotoMaker() {
       setHistoryIndex(0);
       setStep('edit');
       setZoom(1);
+      
+      // Auto-trigger background removal for "instant" feel
+      setTimeout(() => {
+        removeBackgroundFromSrc(croppedUrl);
+      }, 300);
     }, 'image/png');
+  };
+
+  const removeBackgroundFromSrc = async (src: string) => {
+    setIsProcessing(true);
+    setIsManualMode(false);
+    setStatusText('Initializing AI Engine...');
+    
+    try {
+      const rawBlob = await hybridRemoveBackground(src, async (status, intermediateBlob) => {
+        setStatusText(status);
+        if (intermediateBlob) {
+          const url = URL.createObjectURL(intermediateBlob);
+          setBgRemovedImageSrc(url);
+        }
+      }, false);
+
+      const url = URL.createObjectURL(rawBlob);
+      setBgRemovedImageSrc(url);
+      addToHistory(url);
+
+    } catch (error) {
+      console.error("BG Removal Error:", error);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // --- 3. Background Removal ---
@@ -476,33 +504,7 @@ export default function PassportPhotoMaker() {
 
   const removeBackground = async () => {
     if (!croppedImageSrc) return;
-    setIsProcessing(true);
-    setIsManualMode(false);
-    setStatusText('Removing Background...');
-    
-    try {
-      // Add a global timeout for the whole process
-      const rawBlob = await Promise.race([
-        hybridRemoveBackground(croppedImageSrc, async (status, intermediateBlob) => {
-          setStatusText(status);
-          if (intermediateBlob) {
-            const url = URL.createObjectURL(intermediateBlob);
-            setBgRemovedImageSrc(url);
-          }
-        }, false), // Pass false to keep background transparent
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 300000))
-      ]);
-
-      const url = URL.createObjectURL(rawBlob);
-      setBgRemovedImageSrc(url);
-      addToHistory(url);
-
-    } catch (error) {
-      console.error("BG Removal Error:", error);
-      alert("AI background removal failed. You can use 'Manual Touchup' to remove the background manually.");
-    } finally {
-      setIsProcessing(false);
-    }
+    await removeBackgroundFromSrc(croppedImageSrc);
   };
 
   // --- 4. Apply Adjustments & Background Color ---
@@ -515,7 +517,6 @@ export default function PassportPhotoMaker() {
 
     let isMounted = true;
     const img = new Image();
-    img.crossOrigin = "anonymous";
     img.onload = () => {
       if (!isMounted) return;
       setIsProcessingFilters(true);
@@ -934,7 +935,7 @@ export default function PassportPhotoMaker() {
       setHistory([]);
       setHistoryIndex(-1);
       setStep('crop');
-      setZoom(0.8);
+      setZoom(1.0);
       return () => URL.revokeObjectURL(url);
     } else {
       // Reset everything when file is null
@@ -945,7 +946,7 @@ export default function PassportPhotoMaker() {
       setHistory([]);
       setHistoryIndex(-1);
       setStep('crop');
-      setZoom(0.8);
+      setZoom(1.0);
     }
   }, [file]);
 
@@ -1291,10 +1292,10 @@ export default function PassportPhotoMaker() {
             </aside>
 
             {/* --- MAIN PREVIEW AREA --- */}
-            <main className="flex-1 lg:flex-[2] relative bg-[#e5e7eb] flex flex-col h-full overflow-hidden">
+            <main className="flex-1 lg:flex-[2] relative bg-[#e5e7eb] flex flex-col h-full overflow-hidden max-h-[700px] lg:max-h-none">
               
               {/* Toolbar (Zoom) - Improved with slider */}
-              <div className="w-full pt-4 pb-2 flex justify-center items-center shrink-0 z-20 relative">
+              <div className="w-full pt-2 pb-1 flex justify-center items-center shrink-0 z-20 relative">
                 <div className="flex items-center gap-3 bg-white/95 backdrop-blur-sm px-4 py-2 rounded-full shadow-md border border-gray-200">
                   <button 
                     onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} 

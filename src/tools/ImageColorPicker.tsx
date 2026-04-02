@@ -16,18 +16,19 @@ export default function ImageColorPicker() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
 
-  const initialFilesProcessed = useRef(false);
-
   const handleFiles = (files: File[]) => {
     if (files.length > 0) {
       const newImages = files.map((file: File) => ({
         file,
         preview: URL.createObjectURL(file)
       }));
-      setImages(prev => [...prev, ...newImages]);
-      if (images.length === 0 && !initialFilesProcessed.current) {
-        setCurrentIndex(0);
-      }
+      setImages(prev => {
+        const isFirst = prev.length === 0;
+        if (isFirst) {
+          setCurrentIndex(0);
+        }
+        return [...prev, ...newImages];
+      });
       setColor(null);
       setRgb(null);
     }
@@ -127,14 +128,10 @@ export default function ImageColorPicker() {
       {({ file, state, onComplete, onReset }) => {
         useEffect(() => {
           if (!file) {
-            initialFilesProcessed.current = false;
             setImages([]);
             return;
           }
-          if (file && !initialFilesProcessed.current) {
-            handleFiles(Array.isArray(file) ? file : [file]);
-            initialFilesProcessed.current = true;
-          }
+          handleFiles(Array.isArray(file) ? file : [file]);
         }, [file]);
 
         if (images.length === 0) return null;

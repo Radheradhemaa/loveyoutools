@@ -16,7 +16,6 @@ export default function PhotoSignResizer() {
   const [dpi, setDpi] = useState(300);
   const [targetKB, setTargetKB] = useState(50);
   const [loading, setLoading] = useState(false);
-  const initialFilesProcessed = useRef(false);
   const [estimatedSize, setEstimatedSize] = useState<number | null>(null);
   const [result, setResult] = useState<{ url: string; previewUrl: string; size: number; width: number; height: number } | null>(null);
   const [fileName, setFileName] = useState('photo');
@@ -61,29 +60,48 @@ export default function PhotoSignResizer() {
   }, [image, percentCrop, targetWidth, targetHeight, targetKB, dpi, unit, imgDimensions]);
 
   const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const { width, height, naturalWidth, naturalHeight } = e.currentTarget;
-    setImgDimensions({ width, height, naturalWidth, naturalHeight });
-    const aspect = targetWidth / targetHeight;
-    const initialCrop = centerCrop(
-      makeAspectCrop(
-        { unit: '%', width: 90 },
-        aspect,
-        width,
-        height
-      ),
-      width,
-      height
-    );
-    setCrop(initialCrop);
-    setPercentCrop(initialCrop as PercentCrop);
+    const { naturalWidth, naturalHeight } = e.currentTarget;
     
-    // Initialize completedCrop
+    let initialZoom = 1;
+    if (naturalWidth < 300 || naturalHeight < 300) {
+      const scale = Math.max(300 / naturalWidth, 300 / naturalHeight);
+      initialZoom = Number(scale.toFixed(1));
+      setZoom(initialZoom);
+    } else {
+      setZoom(1);
+    }
+
+    setImgDimensions({ width: naturalWidth * initialZoom, height: naturalHeight * initialZoom, naturalWidth, naturalHeight });
+    
+    const aspect = targetWidth / targetHeight;
+    const imageAspect = naturalWidth / naturalHeight;
+    
+    let cropPercentWidth = 90;
+    let cropPercentHeight = 90;
+    
+    if (imageAspect > aspect) {
+      cropPercentWidth = (90 * aspect) / imageAspect;
+    } else {
+      cropPercentHeight = (90 * imageAspect) / aspect;
+    }
+
+    const initialCropPercent: PercentCrop = {
+      unit: '%',
+      width: cropPercentWidth,
+      height: cropPercentHeight,
+      x: (100 - cropPercentWidth) / 2,
+      y: (100 - cropPercentHeight) / 2
+    };
+
+    setCrop(initialCropPercent);
+    setPercentCrop(initialCropPercent);
+    
     setCompletedCrop({
       unit: 'px',
-      x: (initialCrop.x * width) / 100,
-      y: (initialCrop.y * height) / 100,
-      width: (initialCrop.width * width) / 100,
-      height: (initialCrop.height * height) / 100
+      x: (initialCropPercent.x * naturalWidth) / 100,
+      y: (initialCropPercent.y * naturalHeight) / 100,
+      width: (initialCropPercent.width * naturalWidth) / 100,
+      height: (initialCropPercent.height * naturalHeight) / 100
     });
   };
 
@@ -91,11 +109,6 @@ export default function PhotoSignResizer() {
     if (files.length > 0) {
       const file = files[0];
       
-      // Check if it's the same file as currently loaded
-      if (image && originalFileName === file.name.split('.')[0]) {
-        return;
-      }
-
       setOriginalFileName(file.name.split('.')[0]);
       const reader = new FileReader();
       reader.addEventListener('load', () => setImage(reader.result as string));
@@ -114,20 +127,29 @@ export default function PhotoSignResizer() {
     setFileName(name);
     setResult(null);
     
-    if (imgRef.current) {
-      const { width, height } = imgRef.current;
+    if (imgDimensions) {
       const aspect = w / h;
-      const newCrop = centerCrop(
-        makeAspectCrop(
-          { unit: '%', width: 90 },
-          aspect,
-          width,
-          height
-        ),
-        width,
-        height
-      );
-      setCrop(newCrop);
+      const imageAspect = imgDimensions.naturalWidth / imgDimensions.naturalHeight;
+      
+      let cropPercentWidth = 90;
+      let cropPercentHeight = 90;
+      
+      if (imageAspect > aspect) {
+        cropPercentWidth = (90 * aspect) / imageAspect;
+      } else {
+        cropPercentHeight = (90 * imageAspect) / aspect;
+      }
+
+      const newCropPercent: PercentCrop = {
+        unit: '%',
+        width: cropPercentWidth,
+        height: cropPercentHeight,
+        x: (100 - cropPercentWidth) / 2,
+        y: (100 - cropPercentHeight) / 2
+      };
+
+      setCrop(newCropPercent);
+      setPercentCrop(newCropPercent);
     }
   };
 
@@ -136,7 +158,6 @@ export default function PhotoSignResizer() {
       const image = new Image();
       image.addEventListener('load', () => resolve(image));
       image.addEventListener('error', (error) => reject(error));
-      image.setAttribute('crossOrigin', 'anonymous');
       image.src = url;
     });
 
@@ -477,11 +498,11 @@ export default function PhotoSignResizer() {
                     {/* Subtle grid background for the preview area */}
                     <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 0)', backgroundSize: '20px 20px' }} />
                     
-                    <div className="relative group/result z-10">
+                    <div className="relative group/result z-10 w-full h-full flex items-center justify-center">
                       <img 
                         src={result.previewUrl || result.url} 
                         alt="Result preview" 
-                        className="max-h-[400px] max-w-full object-contain rounded shadow-2xl border border-border bg-white" 
+                        className="w-full h-full max-h-[400px] object-contain rounded shadow-2xl border border-border bg-white" 
                         style={{ imageRendering: 'auto' }}
                       />
                       <div className="absolute -bottom-3 -right-3 bg-accent text-white text-[10px] font-black px-2 py-1 rounded shadow-lg uppercase tracking-tighter">
@@ -503,13 +524,9 @@ export default function PhotoSignResizer() {
             setResult(null);
             setOriginalFileName(null);
             setLoading(false);
-            initialFilesProcessed.current = false;
             return;
           }
-          if (file && !initialFilesProcessed.current) {
-            handleFiles(Array.isArray(file) ? file : [file]);
-            initialFilesProcessed.current = true;
-          }
+          handleFiles(Array.isArray(file) ? file : [file]);
         }, [file]);
 
         if (!image) return null;
@@ -522,7 +539,10 @@ export default function PhotoSignResizer() {
                 <div className="min-h-full flex items-center justify-center m-auto w-max min-w-full">
                   <ReactCrop
                     crop={crop}
-                    onChange={c => setCrop(c)}
+                    onChange={(c, pc) => {
+                      setCrop(pc);
+                      setPercentCrop(pc);
+                    }}
                     onComplete={(c, pc) => {
                       setCompletedCrop(c);
                       setPercentCrop(pc);
@@ -539,10 +559,8 @@ export default function PhotoSignResizer() {
                       style={{ 
                         maxWidth: '100%', 
                         maxHeight: '70vh',
-                        width: 'auto',
-                        height: 'auto',
                         display: 'block', 
-                        imageRendering: 'high-quality',
+                        imageRendering: zoom > 1 ? 'pixelated' : 'auto',
                       }}
                     />
                   </ReactCrop>

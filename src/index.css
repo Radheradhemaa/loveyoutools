@@ -191,18 +191,22 @@
 
   @media (max-width: 767px) {
     .tool-main-preview {
-      height: 50vh; /* Increased height for mobile preview */
-      min-height: 320px;
+      height: 50vh; /* Increased height for better mobile preview */
+      min-height: 300px;
       @apply sticky top-0 z-20 shadow-md shrink-0;
     }
     
     /* When cropping, we might want even more space */
     .tool-main-preview.is-cropping-mobile {
-      height: 60vh;
+      height: 50vh;
     }
   }
 
   /* --- ReactCrop Custom Styles --- */
+  .ReactCrop * {
+    transition: none !important;
+  }
+
   .ReactCrop__handle {
     width: 16px !important;
     height: 16px !important;
@@ -211,11 +215,14 @@
     border-radius: 50% !important;
     box-shadow: 0 2px 4px rgba(0,0,0,0.3) !important;
     opacity: 1 !important;
+    transition: none !important;
   }
 
   .ReactCrop__crop-selection {
-    border: 2px solid #e8501a !important;
+    border: 1px solid #e8501a !important;
     box-shadow: 0 0 0 9999em rgba(0, 0, 0, 0.5) !important;
+    transition: none !important;
+    animation: none !important;
   }
 
   .ReactCrop__rule-of-thirds-vt::before,
@@ -227,7 +234,7 @@
 
   /* Preview Content Fixes */
   .preview-content-wrapper {
-    @apply flex-1 relative flex items-center justify-center p-2 sm:p-6 overflow-auto no-scrollbar;
+    @apply flex-1 relative flex items-center justify-center p-1 sm:p-4 overflow-auto no-scrollbar;
   }
 
   .preview-content-wrapper img,

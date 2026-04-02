@@ -29,8 +29,6 @@ export default function ImageCropper() {
   const [zoom, setZoom] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024 ? 1 : 0.5);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  const initialFilesProcessed = useRef(false);
-
   const handleFiles = (files: File[]) => {
     if (files.length > 0) {
       const newImages = files.map((file: File) => ({
@@ -38,10 +36,13 @@ export default function ImageCropper() {
         preview: URL.createObjectURL(file),
         output: null
       }));
-      setImages(prev => [...prev, ...newImages]);
-      if (images.length === 0 && !initialFilesProcessed.current) {
-        setCurrentIndex(0);
-      }
+      setImages(prev => {
+        const isFirst = prev.length === 0;
+        if (isFirst) {
+          setCurrentIndex(0);
+        }
+        return [...prev, ...newImages];
+      });
     }
   };
 
@@ -184,14 +185,10 @@ export default function ImageCropper() {
       {({ file, state, onComplete, onReset }) => {
         useEffect(() => {
           if (!file) {
-            initialFilesProcessed.current = false;
             setImages([]);
             return;
           }
-          if (file && !initialFilesProcessed.current) {
-            handleFiles(Array.isArray(file) ? file : [file]);
-            initialFilesProcessed.current = true;
-          }
+          handleFiles(Array.isArray(file) ? file : [file]);
         }, [file]);
 
         if (images.length === 0) return null;

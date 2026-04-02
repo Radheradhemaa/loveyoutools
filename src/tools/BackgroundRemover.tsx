@@ -293,10 +293,13 @@ export default function BackgroundRemover() {
       setIsManualMode(false);
       setIsCropping(false); // Direct to instant result
       setHasCropped(false);
+      setZoom(1.0); // Reset zoom to 100%
       
       const img = new Image();
       img.onload = () => { 
         originalImgRef.current = img; 
+        // Auto-trigger background removal for "instant" feel
+        removeBackground(src);
       };
       img.src = src;
     };
@@ -338,37 +341,24 @@ export default function BackgroundRemover() {
     });
   };
 
-  const removeBackground = async (src?: string) => {
-    const targetSrc = src || imageSrc;
+  const removeBackground = async (src?: string | React.MouseEvent) => {
+    const targetSrc = typeof src === 'string' ? src : imageSrc;
     if (!targetSrc) return;
     setIsProcessing(true);
     setProcessingError(null);
     setTimer(0);
+    setStatusText('Initializing AI Engine...');
     
     const startTime = Date.now();
     
     try {
-      // Limit resolution to 1500px for performance and stability
-      const resizedBlob = await resizeImage(targetSrc, 1500);
-      const resizedUrl = URL.createObjectURL(resizedBlob);
-      
-      // Add a global timeout for the whole process
-      const rawBlob = await Promise.race([
-        hybridRemoveBackground(resizedUrl, async (status, intermediateBlob) => {
-          setStatusText(status);
-          if (intermediateBlob) {
-            const url = URL.createObjectURL(intermediateBlob);
-            setResultImage(url);
-          }
-        }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI process is taking longer than expected. Please try again with a smaller image or better lighting.")), 300000))
-      ]);
-
-      // Clean up the resized URL
-      URL.revokeObjectURL(resizedUrl);
-
-      // No artificial delay - give output as soon as AI is ready
-      setStatusText('Finalizing Result...');
+      const rawBlob = await hybridRemoveBackground(targetSrc, async (status, intermediateBlob) => {
+        setStatusText(status);
+        if (intermediateBlob) {
+          const url = URL.createObjectURL(intermediateBlob);
+          setResultImage(url);
+        }
+      });
 
       const url = URL.createObjectURL(rawBlob);
       setResultImage(url);
@@ -488,7 +478,7 @@ export default function BackgroundRemover() {
     if (!ctx) return;
 
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    // Removed crossOrigin="anonymous" as it can interfere with blob URLs
     img.onload = () => {
       canvas.width = img.width;
       canvas.height = img.height;
@@ -581,10 +571,23 @@ export default function BackgroundRemover() {
       // 2. Draw the processed subject
       ctx.drawImage(tempCanvas, 0, 0);
       
-      const link = document.createElement('a');
-      link.download = `bg-removed-${Date.now()}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          console.error("Failed to create blob for download");
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.download = `bg-removed-${Date.now()}.png`;
+        link.href = url;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }, 'image/png');
+    };
+    img.onerror = (err) => {
+      console.error("Failed to load image for download", err);
     };
     img.src = resultImage;
   };
@@ -601,19 +604,20 @@ export default function BackgroundRemover() {
         useEffect(() => {
           if (file && !Array.isArray(file)) {
             const reader = new FileReader();
-            reader.onload = (event) => {
-              const src = event.target?.result as string;
-              setImageSrc(src);
-              // Reset all states for new image
-              setResultImage(null);
-              setProcessingError(null);
-              setHistory([]);
-              setHistoryIndex(-1);
-              setIsManualMode(false);
-              setIsCropping(false); // Skip crop mode by default for "instant" feel
-              setHasCropped(false);
-              
-              const img = new Image();
+              reader.onload = (event) => {
+                const src = event.target?.result as string;
+                setImageSrc(src);
+                // Reset all states for new image
+                setResultImage(null);
+                setProcessingError(null);
+                setHistory([]);
+                setHistoryIndex(-1);
+                setIsManualMode(false);
+                setIsCropping(false); // Skip crop mode by default for "instant" feel
+                setHasCropped(false);
+                setZoom(1.0); // Default to 100% on new upload
+                
+                const img = new Image();
               img.onload = () => { 
                 originalImgRef.current = img;
               };
@@ -1029,7 +1033,7 @@ export default function BackgroundRemover() {
                   </defs>
                 </svg>
                 <div 
-                  className="relative w-full h-full min-h-[300px] bg-bg-secondary rounded-3xl overflow-auto border border-border flex items-center justify-center group shadow-inner no-scrollbar p-2 sm:p-6"
+                  className="relative w-full h-full min-h-[300px] max-h-[700px] bg-bg-secondary rounded-3xl overflow-auto border border-border flex items-center justify-center group shadow-inner no-scrollbar p-2 sm:p-4"
                   style={{ 
                     backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
                     backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
