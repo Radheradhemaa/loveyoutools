@@ -269,6 +269,7 @@ export default function ImageCompressor() {
           if (!file) {
             setImages([]);
             setCurrentIndex(0);
+            processedFilesRef.current.clear();
             return;
           }
           if (file) {

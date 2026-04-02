@@ -201,17 +201,25 @@ export default function AdvancedPdfEditor() {
       onDownload={handleDownload}
       renderToolbar={() => null}
     >
-      {({ file, onComplete, onReset }) => (
-        <PdfEditorWorkspace 
-          initialFile={file} 
-          onComplete={(url: string) => {
-            setLastExportedUrl(url);
-            onComplete();
-          }} 
-          onReset={onReset}
-          ref={editorRef}
-        />
-      )}
+      {({ file, state, onComplete, onReset }) => {
+        useEffect(() => {
+          if (state === 'BEFORE') {
+            setLastExportedUrl(null);
+          }
+        }, [state]);
+
+        return (
+          <PdfEditorWorkspace 
+            initialFile={file} 
+            onComplete={(url: string) => {
+              setLastExportedUrl(url);
+              onComplete();
+            }} 
+            onReset={onReset}
+            ref={editorRef}
+          />
+        );
+      }}
     </ToolLayout>
   );
 }
@@ -374,6 +382,35 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
         renderPage(1);
       };
       reader.readAsArrayBuffer(file);
+    } else {
+      // Reset state when initialFile is null
+      setPdfFile(null);
+      pdfDocRef.current = null;
+      if (fabricCanvas.current) {
+        fabricCanvas.current.dispose();
+        fabricCanvas.current = null;
+      }
+      setState({
+        currentPage: 1,
+        zoom: 1,
+        tool: 'select',
+        isProcessing: false,
+        history: [],
+        historyIndex: -1,
+        pageData: {},
+        deletedPages: [],
+        pageOrder: [],
+        selectedObject: null,
+        showSearch: false,
+        searchQuery: '',
+        replaceQuery: '',
+        thumbnails: [],
+        isDarkMode: false,
+        exportFormat: 'pdf',
+        compressionLevel: 0.7,
+        isPasswordProtected: false,
+        password: '',
+      });
     }
   }, [initialFile]);
 

@@ -497,6 +497,13 @@ export default function SvgToPngConverter() {
       {({ file: uploadedFiles, state: toolState, onReset }) => {
         // Sync uploaded files with internal state
         useEffect(() => {
+          if (!uploadedFiles) {
+            setFiles([]);
+            setSelectedFileId(null);
+            setHistory([initialState]);
+            setHistoryIndex(0);
+            return;
+          }
           if (uploadedFiles) {
             const fileList = Array.isArray(uploadedFiles) ? uploadedFiles : [uploadedFiles];
             if (fileList.length > 0 && files.length === 0) {

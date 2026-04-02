@@ -500,6 +500,9 @@ export default function PhotoSignResizer() {
         useEffect(() => {
           if (!file) {
             setImage(null);
+            setResult(null);
+            setOriginalFileName(null);
+            setLoading(false);
             initialFilesProcessed.current = false;
             return;
           }

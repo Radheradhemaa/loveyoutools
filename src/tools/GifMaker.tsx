@@ -303,6 +303,12 @@ export default function GifMaker() {
     >
       {({ file, onReset }) => {
         useEffect(() => {
+          if (!file) {
+            setFrames([]);
+            setOutput(null);
+            setError(null);
+            return;
+          }
           if (file) handleFiles(file);
         }, [file, handleFiles]);
 
