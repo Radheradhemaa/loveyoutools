@@ -38,10 +38,10 @@ export default function BackgroundRemover() {
   const [isManualMode, setIsManualMode] = useState(false);
   const [brushMode, setBrushMode] = useState<'erase' | 'restore'>('erase');
   const [brushSize, setBrushSize] = useState(25);
-  const [zoom, setZoom] = useState(0.5);
+  const [zoom, setZoom] = useState(0.3);
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.1, 4));
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.1, 0.1));
-  const handleZoomReset = () => setZoom(0.5);
+  const handleZoomReset = () => setZoom(0.3);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -293,7 +293,7 @@ export default function BackgroundRemover() {
       setIsManualMode(false);
       setIsCropping(false); // Direct to instant result
       setHasCropped(false);
-      setZoom(0.5); // Reset zoom to 50%
+      setZoom(0.3); // Reset zoom to 30%
       
       const img = new Image();
       img.onload = () => { 
@@ -615,7 +615,7 @@ export default function BackgroundRemover() {
                 setIsManualMode(false);
                 setIsCropping(false); // Skip crop mode by default for "instant" feel
                 setHasCropped(false);
-                setZoom(0.5); // Default to 50% on new upload
+                setZoom(0.3); // Default to 30% on new upload
                 
                 const img = new Image();
               img.onload = () => { 

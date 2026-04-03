@@ -56,7 +56,7 @@ export default function PassportPhotoMaker() {
   const [completedPercentCrop, setCompletedPercentCrop] = useState<CropType>();
   const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number } | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const [zoom, setZoom] = useState(0.5); // Default zoom at 50%
+  const [zoom, setZoom] = useState(0.8); // Default zoom at 80%
   
   // Settings States
   const [selectedPreset, setSelectedPreset] = useState(PRESETS[1]); // Default 35x45
@@ -935,7 +935,7 @@ export default function PassportPhotoMaker() {
       setHistory([]);
       setHistoryIndex(-1);
       setStep('crop');
-      setZoom(0.5);
+      setZoom(0.8);
       return () => URL.revokeObjectURL(url);
     } else {
       // Reset everything when file is null
@@ -946,7 +946,7 @@ export default function PassportPhotoMaker() {
       setHistory([]);
       setHistoryIndex(-1);
       setStep('crop');
-      setZoom(0.5);
+      setZoom(0.8);
     }
   }, [file]);
 
@@ -1330,7 +1330,7 @@ export default function PassportPhotoMaker() {
                   </span>
                   
                   <button 
-                    onClick={() => setZoom(0.5)} 
+                    onClick={() => setZoom(0.8)} 
                     className="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors" 
                     title="Reset Zoom"
                   >
