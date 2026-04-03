@@ -227,9 +227,9 @@ async function advancedMattingEngine(origImg: HTMLImageElement, maskBlob: Blob):
         let found = false;
         let avgR = 0, avgG = 0, avgB = 0, count = 0;
         
-        // Search in a larger radius (up to 5px) for solid foreground pixels
-        for (let dy = -5; dy <= 5 && !found; dy++) {
-          for (let dx = -5; dx <= 5; dx++) {
+        // Search in a larger radius (up to 7px) for solid foreground pixels
+        for (let dy = -7; dy <= 7 && !found; dy++) {
+          for (let dx = -7; dx <= 7; dx++) {
             const ny = y + dy;
             const nx = x + dx;
             if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
@@ -241,12 +241,13 @@ async function advancedMattingEngine(origImg: HTMLImageElement, maskBlob: Blob):
                 const sb = (sample >> 16) & 0xff;
                 
                 // Avoid sampling white/very bright pixels for decontamination
-                if (sr < 245 || sg < 245 || sb < 245) {
+                // Increased threshold to 235 for even more aggressive avoidance
+                if (sr < 235 || sg < 235 || sb < 235) {
                   avgR += sr;
                   avgG += sg;
                   avgB += sb;
                   count++;
-                  if (count > 8) { 
+                  if (count > 12) { 
                     found = true;
                     break;
                   }
@@ -262,28 +263,36 @@ async function advancedMattingEngine(origImg: HTMLImageElement, maskBlob: Blob):
           b = avgB / count;
           
           // Edge Color Correction: Counteract white spill by darkening
-          // If the original pixel was very bright (likely white spill), darken it more
+          // If the original pixel was very bright (likely white spill), darken it significantly
           const origLum = (0.299 * (origPixel & 0xff) + 0.587 * ((origPixel >> 8) & 0xff) + 0.114 * ((origPixel >> 16) & 0xff));
-          const darken = origLum > 200 ? 0.82 : 0.90; 
+          // More aggressive darkening for bright edges
+          const darken = origLum > 160 ? 0.75 : 0.85; 
           
           r = Math.min(255, r * darken);
           g = Math.min(255, g * darken);
           b = Math.min(255, b * darken);
           
           const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-          const sat = 1.15; 
+          const sat = 1.25; // More saturation for edges to kill gray/white haze
           r = Math.min(255, Math.max(0, gray + (r - gray) * sat));
           g = Math.min(255, Math.max(0, gray + (g - gray) * sat));
           b = Math.min(255, Math.max(0, gray + (b - gray) * sat));
+        } else {
+          // If no solid neighbor found, it's likely a thin strand or noise
+          // Darken it aggressively to avoid white fringes
+          r *= 0.7;
+          g *= 0.7;
+          b *= 0.7;
         }
       }
 
-      // Final Alpha Refinement: Contract 1.5px to eliminate lingering white fringes
+      // Final Alpha Refinement: Contract 2.5px to eliminate lingering white fringes
       let a = maskA;
       if (maskA > 0 && maskA < 255) {
         let minNeighborA = maskA;
-        for (let dy = -2; dy <= 2; dy++) {
-          for (let dx = -2; dx <= 2; dx++) {
+        // Check 7x7 area for 3px contraction
+        for (let dy = -3; dy <= 3; dy++) {
+          for (let dx = -3; dx <= 3; dx++) {
             const ny = y + dy;
             const nx = x + dx;
             if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
@@ -292,8 +301,9 @@ async function advancedMattingEngine(origImg: HTMLImageElement, maskBlob: Blob):
             }
           }
         }
-        // More aggressive contraction for semi-transparent edges
-        a = Math.max(0, minNeighborA - 12); 
+        // Ultra-aggressive contraction for semi-transparent edges
+        // This effectively "eats" the white halo
+        a = Math.max(0, minNeighborA - 25); 
       }
 
       resultBuffer[i] = (a << 24) | (b << 16) | (g << 8) | r;
