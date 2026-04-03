@@ -38,10 +38,10 @@ export default function BackgroundRemover() {
   const [isManualMode, setIsManualMode] = useState(false);
   const [brushMode, setBrushMode] = useState<'erase' | 'restore'>('erase');
   const [brushSize, setBrushSize] = useState(25);
-  const [zoom, setZoom] = useState(1.0);
-  const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.2, 4));
-  const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.1));
-  const handleZoomReset = () => setZoom(1);
+  const [zoom, setZoom] = useState(0.5);
+  const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.1, 4));
+  const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.1, 0.1));
+  const handleZoomReset = () => setZoom(0.5);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -293,7 +293,7 @@ export default function BackgroundRemover() {
       setIsManualMode(false);
       setIsCropping(false); // Direct to instant result
       setHasCropped(false);
-      setZoom(1.0); // Reset zoom to 100%
+      setZoom(0.5); // Reset zoom to 50%
       
       const img = new Image();
       img.onload = () => { 
@@ -615,7 +615,7 @@ export default function BackgroundRemover() {
                 setIsManualMode(false);
                 setIsCropping(false); // Skip crop mode by default for "instant" feel
                 setHasCropped(false);
-                setZoom(1.0); // Default to 100% on new upload
+                setZoom(0.5); // Default to 50% on new upload
                 
                 const img = new Image();
               img.onload = () => { 
@@ -1019,7 +1019,45 @@ export default function BackgroundRemover() {
 
             {/* --- MAIN PREVIEW --- */}
             <main className={`tool-main-preview ${isCropping ? 'is-cropping-mobile' : ''}`}>
-              <div className="preview-content-wrapper">
+              <div className="preview-content-wrapper flex flex-col gap-4">
+                {/* Separate Zoom Controls */}
+                <div className="flex items-center justify-center gap-2 bg-surface/80 backdrop-blur-md p-2 rounded-2xl border border-border shadow-sm w-fit mx-auto animate-in fade-in slide-in-from-top-2">
+                  <button 
+                    onClick={handleZoomOut}
+                    className="p-2 hover:bg-bg-secondary rounded-xl transition-colors text-text-primary"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut className="w-5 h-5" />
+                  </button>
+                  <div className="flex flex-col items-center min-w-[60px]">
+                    <span className="text-xs font-bold text-text-primary">
+                      {Math.round(zoom * 100)}%
+                    </span>
+                    <div className="w-full h-1 bg-border rounded-full mt-1 overflow-hidden">
+                      <div 
+                        className="h-full bg-accent transition-all" 
+                        style={{ width: `${Math.min(100, (zoom / 4) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                  <button 
+                    onClick={handleZoomIn}
+                    className="p-2 hover:bg-bg-secondary rounded-xl transition-colors text-text-primary"
+                    title="Zoom In"
+                  >
+                    <ZoomIn className="w-5 h-5" />
+                  </button>
+                  <div className="w-px h-4 bg-border mx-1" />
+                  <button 
+                    onClick={handleZoomReset}
+                    className="p-2 hover:bg-bg-secondary rounded-xl transition-colors text-text-primary flex items-center gap-2 text-xs font-bold"
+                    title="Reset Zoom"
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                    Reset
+                  </button>
+                </div>
+
                 <svg width="0" height="0" className="absolute pointer-events-none">
                   <defs>
                     <filter id="sharpen-filter">
@@ -1033,7 +1071,7 @@ export default function BackgroundRemover() {
                   </defs>
                 </svg>
                 <div 
-                  className="relative w-full h-full min-h-[300px] max-h-[700px] bg-bg-secondary rounded-3xl overflow-auto border border-border flex items-center justify-center group shadow-inner no-scrollbar p-2 sm:p-4"
+                  className="relative w-full h-[400px] sm:h-[550px] bg-bg-secondary rounded-3xl overflow-auto border border-border flex items-center justify-center group shadow-inner no-scrollbar p-6 sm:p-12"
                   style={{ 
                     backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
                     backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
@@ -1041,35 +1079,6 @@ export default function BackgroundRemover() {
                     backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
                   }}
                 >
-                  {/* Compact Zoom Controls */}
-                  <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-surface/95 backdrop-blur-md p-1.5 rounded-xl border border-border shadow-xl z-40 animate-in fade-in slide-in-from-top-2">
-                    <button 
-                      onClick={handleZoomOut}
-                      className="p-1.5 hover:bg-bg-secondary rounded-lg transition-colors text-text-primary"
-                      title="Zoom Out"
-                    >
-                      <ZoomOut className="w-4 h-4" />
-                    </button>
-                    <span className="text-[9px] font-bold min-w-[32px] text-center text-text-primary">
-                      {Math.round(zoom * 100)}%
-                    </span>
-                    <button 
-                      onClick={handleZoomIn}
-                      className="p-1.5 hover:bg-bg-secondary rounded-xl transition-colors text-text-primary"
-                      title="Zoom In"
-                    >
-                      <ZoomIn className="w-4 h-4" />
-                    </button>
-                    <div className="w-px h-3 bg-border mx-0.5" />
-                    <button 
-                      onClick={handleZoomReset}
-                      className="p-1.5 hover:bg-bg-secondary rounded-lg transition-colors text-text-primary"
-                      title="Reset Zoom"
-                    >
-                      <Maximize2 className="w-4 h-4" />
-                    </button>
-                  </div>
-
                   <div 
                     className="flex items-center justify-center transition-transform duration-200 ease-out origin-center"
                     style={{ 
@@ -1130,9 +1139,10 @@ export default function BackgroundRemover() {
                               setResultImage(null);
                             }
                           }}
-                          className="max-w-full max-h-full object-contain shadow-2xl rounded-lg"
+                          className="max-w-full max-h-full object-contain shadow-2xl rounded-lg bg-white/5"
                           style={{ 
-                            filter: resultImage && !isManualMode ? getFilterStyle() : 'none'
+                            filter: resultImage && !isManualMode ? getFilterStyle() : 'none',
+                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
                           }}
                         />
                         

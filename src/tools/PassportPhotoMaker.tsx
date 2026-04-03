@@ -56,7 +56,7 @@ export default function PassportPhotoMaker() {
   const [completedPercentCrop, setCompletedPercentCrop] = useState<CropType>();
   const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number } | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const [zoom, setZoom] = useState(1); // Default zoom at 100%
+  const [zoom, setZoom] = useState(0.5); // Default zoom at 50%
   
   // Settings States
   const [selectedPreset, setSelectedPreset] = useState(PRESETS[1]); // Default 35x45
@@ -935,7 +935,7 @@ export default function PassportPhotoMaker() {
       setHistory([]);
       setHistoryIndex(-1);
       setStep('crop');
-      setZoom(1.0);
+      setZoom(0.5);
       return () => URL.revokeObjectURL(url);
     } else {
       // Reset everything when file is null
@@ -946,7 +946,7 @@ export default function PassportPhotoMaker() {
       setHistory([]);
       setHistoryIndex(-1);
       setStep('crop');
-      setZoom(1.0);
+      setZoom(0.5);
     }
   }, [file]);
 
@@ -1292,7 +1292,7 @@ export default function PassportPhotoMaker() {
             </aside>
 
             {/* --- MAIN PREVIEW AREA --- */}
-            <main className="flex-1 lg:flex-[2] relative bg-[#e5e7eb] flex flex-col h-full overflow-hidden max-h-[700px] lg:max-h-none">
+            <main className="flex-1 lg:flex-[2] relative bg-[#e5e7eb] flex flex-col h-full overflow-hidden max-h-[600px] lg:max-h-none">
               
               {/* Toolbar (Zoom) - Improved with slider */}
               <div className="w-full pt-2 pb-1 flex justify-center items-center shrink-0 z-20 relative">
@@ -1330,7 +1330,7 @@ export default function PassportPhotoMaker() {
                   </span>
                   
                   <button 
-                    onClick={() => setZoom(1)} 
+                    onClick={() => setZoom(0.5)} 
                     className="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors" 
                     title="Reset Zoom"
                   >
@@ -1340,7 +1340,7 @@ export default function PassportPhotoMaker() {
               </div>
 
               {/* Preview Container - Darker background for focus */}
-              <div className="flex-1 w-full overflow-auto p-4 pb-8 min-h-0 bg-gray-200/50">
+              <div className="flex-1 w-full overflow-auto p-8 sm:p-12 min-h-0 bg-gray-200/50">
                 <div className="min-h-full flex items-center justify-center m-auto w-max min-w-full">
                   
                   {step === 'crop' && imageSrc && (
@@ -1362,11 +1362,12 @@ export default function PassportPhotoMaker() {
                         onLoad={onImageLoad}
                         style={{ 
                           maxWidth: '100%', 
-                          maxHeight: '70vh',
+                          maxHeight: '60vh',
                           width: 'auto',
                           height: 'auto',
                           display: 'block', 
                           imageRendering: 'high-quality',
+                          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.3)'
                         }}
                       />
                     </ReactCrop>
@@ -1377,12 +1378,13 @@ export default function PassportPhotoMaker() {
                       className="relative shadow-2xl rounded-sm overflow-hidden flex items-center justify-center"
                       style={{
                         aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : (completedCrop ? `${completedCrop.width} / ${completedCrop.height}` : 'auto'),
-                        height: `70vh`,
+                        height: `60vh`,
                         maxWidth: `100%`,
                         transition: 'all 0.1s ease-out',
                         zoom: zoom,
                         backgroundColor: bgColor === 'transparent' ? 'transparent' : (bgColor === 'custom' ? customColor : bgColor),
-                        backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : 'none'
+                        backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : 'none',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.3)'
                       }}
                     >
                       {isManualMode ? (
