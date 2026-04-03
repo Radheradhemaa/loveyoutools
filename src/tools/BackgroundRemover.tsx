@@ -1139,7 +1139,7 @@ export default function BackgroundRemover() {
                           onTouchStart={startDrawing}
                           onTouchMove={draw}
                           onTouchEnd={stopDrawing}
-                          className="w-full h-full object-contain cursor-crosshair shadow-2xl rounded-lg"
+                          className="max-w-full max-h-full cursor-crosshair shadow-2xl rounded-lg"
                           style={{
                             backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
                             backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
@@ -1162,7 +1162,7 @@ export default function BackgroundRemover() {
                               setResultImage(null);
                             }
                           }}
-                          className="w-full h-full object-contain shadow-2xl rounded-lg"
+                          className="max-w-full max-h-full shadow-2xl rounded-lg"
                           style={{ 
                             filter: resultImage && !isManualMode ? getFilterStyle() : 'none',
                             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',

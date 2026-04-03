@@ -10,8 +10,8 @@ export const ensurePreloaded = async () => {
   preloadPromise = (async () => {
     try {
       console.log(`Preloading High-Quality AI Models...`);
-      // Using 'isnet_fp16' for faster processing while maintaining good quality
-      await preload({ model: 'isnet_fp16' });
+      // Using 'isnet' for maximum quality and better object detection
+      await preload({ model: 'isnet' });
       isPreloaded = true;
       console.log("AI Models Preloaded Successfully");
     } catch (err) {
@@ -50,10 +50,10 @@ export const hybridRemoveBackground = async (
       img.src = imageSrc;
     });
 
-    // Step 1: Create a high-quality version for the AI (800px for speed)
+    // Step 1: Create a high-quality version for the AI
     onProgress('Analyzing Image...');
     const aiCanvas = document.createElement('canvas');
-    const aiSize = 800; 
+    const aiSize = 1200; // Increased resolution for better object detection
     const scale = Math.min(1, aiSize / Math.max(origImg.width, origImg.height));
     aiCanvas.width = Math.round(origImg.width * scale);
     aiCanvas.height = Math.round(origImg.height * scale);
@@ -63,10 +63,10 @@ export const hybridRemoveBackground = async (
     aiCtx.drawImage(origImg, 0, 0, aiCanvas.width, aiCanvas.height);
     const aiDataUrl = aiCanvas.toDataURL('image/jpeg', 0.95);
 
-    // Step 2: Run AI on high-res version using the 'isnet_fp16' model for speed
+    // Step 2: Run AI on high-res version using the 'isnet' model for best quality
     onProgress('Removing Background...');
     const maskBlob = await imglyRemoveBackground(aiDataUrl, {
-      model: 'isnet_fp16', 
+      model: 'isnet', // Use full precision model for better accuracy
       output: { format: 'image/png', quality: 1.0 },
       debug: false,
     });
@@ -154,11 +154,12 @@ async function advancedMattingEngine(origImg: HTMLImageElement, maskBlob: Blob):
   const resultBuffer = new Uint32Array(resultPixels.buffer);
 
   // Pre-process mask: Thresholding
+  // More aggressive thresholding to forcibly clear background objects
   const finalAlpha = new Uint8Array(width * height);
   for (let i = 0; i < width * height; i++) {
     let a = (maskBuffer[i] >> 24) & 0xff;
-    if (a < 25) a = 0;
-    else if (a > 235) a = 255;
+    if (a < 80) a = 0; // Increased lower threshold to remove faint background objects
+    else if (a > 200) a = 255; // Lowered upper threshold to solidify foreground
     finalAlpha[i] = a;
   }
 
@@ -216,24 +217,33 @@ async function advancedMattingEngine(origImg: HTMLImageElement, maskBlob: Blob):
 
         // Apply decontamination
         if (count > 0) {
-          r = avgR / count; g = avgG / count; b = avgB / count;
-          const origLum = (0.299 * (origPixel & 0xff) + 0.587 * ((origPixel >> 8) & 0xff) + 0.114 * ((origPixel >> 16) & 0xff));
-          const darken = origLum > 160 ? 0.75 : 0.85; 
-          r = Math.min(255, r * darken);
-          g = Math.min(255, g * darken);
-          b = Math.min(255, b * darken);
+          const interiorR = avgR / count;
+          const interiorG = avgG / count;
+          const interiorB = avgB / count;
           
-          const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-          const sat = 1.25;
-          r = Math.min(255, Math.max(0, gray + (r - gray) * sat));
-          g = Math.min(255, Math.max(0, gray + (g - gray) * sat));
-          b = Math.min(255, Math.max(0, gray + (b - gray) * sat));
-        } else {
-          r *= 0.7; g *= 0.7; b *= 0.7;
+          // Blend original edge pixel with interior color based on transparency
+          // More transparent = use more interior color
+          const blendFactor = 0.8; 
+          
+          r = r * (1 - blendFactor) + interiorR * blendFactor;
+          g = g * (1 - blendFactor) + interiorG * blendFactor;
+          b = b * (1 - blendFactor) + interiorB * blendFactor;
+
+          // If the edge is still significantly brighter than the interior, it's likely white spill.
+          // Darken it slightly to match interior luminance.
+          const currentLum = 0.299 * r + 0.587 * g + 0.114 * b;
+          const interiorLum = 0.299 * interiorR + 0.587 * interiorG + 0.114 * interiorB;
+          
+          if (currentLum > interiorLum + 20) {
+             const reduction = 0.9;
+             r *= reduction;
+             g *= reduction;
+             b *= reduction;
+          }
         }
 
-        // Apply contraction
-        a = Math.max(0, minNeighborA - 25);
+        // Apply contraction (less aggressive)
+        a = Math.max(0, minNeighborA - 15);
       }
 
       resultBuffer[i] = (a << 24) | (b << 16) | (g << 8) | r;
