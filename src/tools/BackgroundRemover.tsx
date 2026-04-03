@@ -493,6 +493,22 @@ export default function BackgroundRemover() {
     }
   };
 
+  const resultImgRef = useRef<HTMLImageElement | null>(null);
+
+  useEffect(() => {
+    if (resultImage) {
+      const img = new Image();
+      img.onload = () => {
+        resultImgRef.current = img;
+      };
+      img.src = resultImage;
+    } else {
+      resultImgRef.current = null;
+    }
+  }, [resultImage]);
+
+  const resultImgElementRef = useRef<HTMLImageElement>(null);
+
   const downloadImage = () => {
     if (!resultImage) return;
     
@@ -500,119 +516,134 @@ export default function BackgroundRemover() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const img = new Image();
-    // Removed crossOrigin="anonymous" as it can interfere with blob URLs
-    img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
-      
-      // We need a temporary canvas to process the subject independently of the background
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = canvas.width;
-      tempCanvas.height = canvas.height;
-      const tempCtx = tempCanvas.getContext('2d', { alpha: true });
-      if (!tempCtx) return;
+    // Use the already loaded image element from the DOM if available, otherwise fallback to the ref
+    const img = resultImgElementRef.current || resultImgRef.current;
+    if (!img) {
+      console.error("Image not ready for download");
+      return;
+    }
+    
+    const width = img.naturalWidth || img.width;
+    const height = img.naturalHeight || img.height;
 
-      // Apply Filters to the subject
-      let b = appliedAdjustments.brightness;
-      let c = appliedAdjustments.contrast;
-      let s = appliedAdjustments.saturation;
-      
-      if (appliedAdjustments.isUltraHD) {
-        c += 15;
-        s += 20;
-      }
-      
-      let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
-      if (appliedAdjustments.smoothness > 0) {
-        // Skin smoothing: subtle blur
-        filterString += ` blur(${appliedAdjustments.smoothness / 100}px)`;
-      }
-      if (appliedAdjustments.beautyFace > 0) {
-        // Beauty face: subtle blur + brightness boost + contrast reduction + saturation boost
-        const beautyBlur = appliedAdjustments.beautyFace / 80;
-        const beautyBright = 100 + (appliedAdjustments.beautyFace / 15);
-        const beautyContrast = 100 - (appliedAdjustments.beautyFace / 20);
-        const beautySaturate = 100 + (appliedAdjustments.beautyFace / 20);
-        filterString += ` blur(${beautyBlur}px) brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
-      }
-      if (appliedAdjustments.edgeSoftness > 0) {
-        // Edge adjustment: drop-shadow + very subtle blur for feathering
-        const edgeBlur = appliedAdjustments.edgeSoftness / 50;
-        filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
-      }
-      
-      tempCtx.filter = filterString;
-      tempCtx.drawImage(img, 0, 0);
-      tempCtx.filter = 'none';
+    if (!width || !height) {
+      // Image hasn't loaded its dimensions yet, wait for it
+      const tempImg = new Image();
+      tempImg.onload = () => {
+        resultImgRef.current = tempImg;
+        downloadImage(); // Retry
+      };
+      tempImg.src = resultImage;
+      return;
+    }
+    
+    canvas.width = width;
+    canvas.height = height;
+    
+    // We need a temporary canvas to process the subject independently of the background
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    const tempCtx = tempCanvas.getContext('2d', { alpha: true });
+    if (!tempCtx) return;
 
-      // Apply Sharpness to the subject only
-      const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
-      if (finalSharpness > 0) {
-        const amount = finalSharpness / 100; // More balanced sharpening
-        const a = amount;
-        const b_val = 1 + 4 * a;
-        const sw = tempCanvas.width;
-        const sh = tempCanvas.height;
-        const imageData = tempCtx.getImageData(0, 0, sw, sh);
-        const pixels = imageData.data;
-        const output = tempCtx.createImageData(sw, sh);
-        const dst = output.data;
+    // Apply Filters to the subject
+    let b = appliedAdjustments.brightness;
+    let c = appliedAdjustments.contrast;
+    let s = appliedAdjustments.saturation;
+    
+    if (appliedAdjustments.isUltraHD) {
+      c += 15;
+      s += 20;
+    }
+    
+    let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
+    if (appliedAdjustments.smoothness > 0) {
+      // Skin smoothing: subtle blur
+      filterString += ` blur(${appliedAdjustments.smoothness / 100}px)`;
+    }
+    if (appliedAdjustments.beautyFace > 0) {
+      // Beauty face: subtle blur + brightness boost + contrast reduction + saturation boost
+      const beautyBlur = appliedAdjustments.beautyFace / 80;
+      const beautyBright = 100 + (appliedAdjustments.beautyFace / 15);
+      const beautyContrast = 100 - (appliedAdjustments.beautyFace / 20);
+      const beautySaturate = 100 + (appliedAdjustments.beautyFace / 20);
+      filterString += ` blur(${beautyBlur}px) brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
+    }
+    if (appliedAdjustments.edgeSoftness > 0) {
+      // Edge adjustment: drop-shadow + very subtle blur for feathering
+      const edgeBlur = appliedAdjustments.edgeSoftness / 50;
+      filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
+    }
+    
+    tempCtx.filter = filterString;
+    tempCtx.drawImage(img, 0, 0);
+    tempCtx.filter = 'none';
 
-        for (let i = 0; i < pixels.length; i += 4) {
-          const x = (i / 4) % sw;
-          const y = Math.floor((i / 4) / sw);
-          const alpha = pixels[i + 3];
-          
-          if (alpha === 0 || x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
-            dst[i] = pixels[i]; dst[i+1] = pixels[i+1]; dst[i+2] = pixels[i+2]; dst[i+3] = pixels[i+3];
-            continue;
-          }
-          
-          const iUp = i - sw * 4; const iDown = i + sw * 4; const iLeft = i - 4; const iRight = i + 4;
-          
-          // Alpha-aware neighbor sampling
-          const getR = (idx: number) => pixels[idx + 3] === 0 ? pixels[i] : pixels[idx];
-          const getG = (idx: number) => pixels[idx + 3] === 0 ? pixels[i + 1] : pixels[idx + 1];
-          const getB = (idx: number) => pixels[idx + 3] === 0 ? pixels[i + 2] : pixels[idx + 2];
+    // Apply Sharpness to the subject only
+    const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
+    if (finalSharpness > 0) {
+      const amount = finalSharpness / 100; // More balanced sharpening
+      const a = amount;
+      const b_val = 1 + 4 * a;
+      const sw = tempCanvas.width;
+      const sh = tempCanvas.height;
+      const imageData = tempCtx.getImageData(0, 0, sw, sh);
+      const pixels = imageData.data;
+      const output = tempCtx.createImageData(sw, sh);
+      const dst = output.data;
 
-          dst[i]     = pixels[i] * b_val - (getR(iUp) + getR(iDown) + getR(iLeft) + getR(iRight)) * a;
-          dst[i + 1] = pixels[i + 1] * b_val - (getG(iUp) + getG(iDown) + getG(iLeft) + getG(iRight)) * a;
-          dst[i + 2] = pixels[i + 2] * b_val - (getB(iUp) + getB(iDown) + getB(iLeft) + getB(iRight)) * a;
-          dst[i + 3] = alpha;
+      for (let i = 0; i < pixels.length; i += 4) {
+        const x = (i / 4) % sw;
+        const y = Math.floor((i / 4) / sw);
+        const alpha = pixels[i + 3];
+        
+        if (alpha === 0 || x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
+          dst[i] = pixels[i]; dst[i+1] = pixels[i+1]; dst[i+2] = pixels[i+2]; dst[i+3] = pixels[i+3];
+          continue;
         }
-        tempCtx.putImageData(output, 0, 0);
-      }
-      
-      // Now composite everything onto the final canvas
-      // 1. Draw Background
-      if (bgColor !== 'transparent') {
-        ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
+        
+        const iUp = i - sw * 4; const iDown = i + sw * 4; const iLeft = i - 4; const iRight = i + 4;
+        
+        // Alpha-aware neighbor sampling
+        const getR = (idx: number) => pixels[idx + 3] === 0 ? pixels[i] : pixels[idx];
+        const getG = (idx: number) => pixels[idx + 3] === 0 ? pixels[i + 1] : pixels[idx + 1];
+        const getB = (idx: number) => pixels[idx + 3] === 0 ? pixels[i + 2] : pixels[idx + 2];
 
-      // 2. Draw the processed subject
-      ctx.drawImage(tempCanvas, 0, 0);
-      
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          console.error("Failed to create blob for download");
-          return;
-        }
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.download = `bg-removed-${Date.now()}.png`;
-        link.href = url;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-      }, 'image/png');
-    };
-    img.onerror = (err) => {
-      console.error("Failed to load image for download", err);
-    };
-    img.src = resultImage;
+        dst[i]     = pixels[i] * b_val - (getR(iUp) + getR(iDown) + getR(iLeft) + getR(iRight)) * a;
+        dst[i + 1] = pixels[i + 1] * b_val - (getG(iUp) + getG(iDown) + getG(iLeft) + getG(iRight)) * a;
+        dst[i + 2] = pixels[i + 2] * b_val - (getB(iUp) + getB(iDown) + getB(iLeft) + getB(iRight)) * a;
+        dst[i + 3] = alpha;
+      }
+      tempCtx.putImageData(output, 0, 0);
+    }
+    
+    // Now composite everything onto the final canvas
+    // 1. Draw Background
+    if (bgColor !== 'transparent') {
+      ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // 2. Draw the processed subject
+    ctx.drawImage(tempCanvas, 0, 0);
+    
+    // Use toBlob for large image support. Since we removed the async img.onload, 
+    // this should still be considered part of the user gesture by most browsers.
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        console.error("Failed to create blob for download");
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.download = `bg-removed-${Date.now()}.png`;
+      link.href = url;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, 'image/png');
   };
 
   return (
@@ -621,6 +652,7 @@ export default function BackgroundRemover() {
       description="Remove image backgrounds instantly with professional precision using High-Accuracy AI."
       toolId="background-remover"
       acceptedFileTypes={['image/*']}
+      onDownload={downloadImage}
     >
       {({ file, onReset }) => {
         // Sync with ToolLayout file
@@ -1095,23 +1127,21 @@ export default function BackgroundRemover() {
                 </svg>
                 <div 
                   ref={previewContainerRef}
-                  className="relative w-full h-[400px] sm:h-[550px] bg-bg-secondary rounded-3xl overflow-auto border border-border flex items-center justify-center group shadow-inner no-scrollbar p-6 sm:p-12"
+                  className="relative w-full h-[400px] sm:h-[550px] bg-bg-secondary rounded-3xl overflow-auto border border-border group shadow-inner p-6 sm:p-12"
                 >
                   <div 
-                    className="flex items-center justify-center transition-all duration-200 ease-out"
-                    style={{ 
-                      width: `${zoom * 100}%`,
-                      height: `${zoom * 100}%`
-                    }}
+                    className="table mx-auto transition-all duration-200 ease-out"
+                    style={{ minHeight: '100%' }}
                   >
+                    <div className="table-cell align-middle">
                     {isCropping ? (
-                      <div className="w-full h-full flex items-center justify-center p-4 overflow-auto bg-black/20">
+                      <div className="w-full h-full flex items-center justify-center p-4 overflow-auto bg-black/20 rounded-3xl">
                         <ReactCrop
                           crop={crop}
                           onChange={(c) => setCrop(c)}
                           onComplete={(c) => setCompletedCrop(c)}
                           aspect={aspect}
-                          className="w-full h-full"
+                          className="shadow-2xl rounded-sm bg-white border border-gray-300"
                           ruleOfThirds
                           keepSelection
                         >
@@ -1120,8 +1150,11 @@ export default function BackgroundRemover() {
                             src={imageSrc} 
                             onLoad={onImageLoad}
                             alt="To crop" 
-                            className="w-full h-full object-contain block transition-transform duration-300"
                             style={{ 
+                              maxWidth: '100%', 
+                              maxHeight: '400px',
+                              width: 'auto',
+                              height: 'auto',
                               transform: `rotate(${rotation}deg)`,
                               touchAction: 'none'
                             }}
@@ -1139,8 +1172,9 @@ export default function BackgroundRemover() {
                           onTouchStart={startDrawing}
                           onTouchMove={draw}
                           onTouchEnd={stopDrawing}
-                          className="max-w-full max-h-full cursor-crosshair shadow-2xl rounded-lg"
+                          className="max-w-full max-h-full cursor-crosshair shadow-2xl rounded-lg transition-all duration-200"
                           style={{
+                            zoom: zoom,
                             backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
                             backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
                             backgroundSize: '20px 20px',
@@ -1151,6 +1185,7 @@ export default function BackgroundRemover() {
                     ) : (
                       <div className="flex items-center justify-center relative w-full h-full">
                         <img 
+                          ref={resultImgElementRef}
                           key={resultImage || 'original'}
                           src={resultImage || imageSrc} 
                           alt="Preview" 
@@ -1162,8 +1197,9 @@ export default function BackgroundRemover() {
                               setResultImage(null);
                             }
                           }}
-                          className="max-w-full max-h-full shadow-2xl rounded-lg"
+                          className="max-w-full max-h-full shadow-2xl rounded-lg transition-all duration-200"
                           style={{ 
+                            zoom: zoom,
                             filter: resultImage && !isManualMode ? getFilterStyle() : 'none',
                             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
                             backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
@@ -1200,6 +1236,7 @@ export default function BackgroundRemover() {
                         )}
                       </div>
                     )}
+                    </div>
                   </div>
                   
                   {/* Floating Controls */}

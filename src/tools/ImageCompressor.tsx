@@ -35,6 +35,29 @@ export default function ImageCompressor() {
   const processedFilesRef = useRef<Set<File>>(new Set());
 
   const [zoom, setZoom] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024 ? 1 : 0.5);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleZoomIn = useCallback(() => setZoom(prev => Math.min(prev + 0.25, 5)), []);
+  const handleZoomOut = useCallback(() => setZoom(prev => Math.max(prev - 0.25, 0.1)), []);
+
+  useEffect(() => {
+    const container = previewContainerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault(); // Prevent page/container scroll
+      if (e.deltaY < 0) {
+        handleZoomIn();
+      } else {
+        handleZoomOut();
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleZoomIn, handleZoomOut]);
 
   const faq = [
     { q: "What image formats are supported?", a: "We support all major formats including JPG, PNG, WEBP, GIF, BMP, and SVG." },
@@ -306,25 +329,28 @@ export default function ImageCompressor() {
                 </div>
               </div>
 
-              <div className="flex-1 relative overflow-hidden flex flex-col items-center justify-center p-4 lg:p-8">
+              <div 
+                ref={previewContainerRef}
+                className="flex-1 relative overflow-auto p-4 lg:p-8 no-scrollbar"
+              >
                 {currentImage.isProcessing ? (
                   <div className="absolute inset-0 flex items-center justify-center bg-bg-primary/50 backdrop-blur-sm z-20">
                     <RefreshCw className="w-8 h-8 animate-spin text-accent" />
                   </div>
                 ) : null}
 
-                <div className="w-full h-full max-h-[60vh] lg:max-h-none flex items-center justify-center">
+                <div 
+                  className="flex items-center justify-center transition-all duration-200 ease-out min-w-full min-h-full"
+                  style={{ 
+                    width: `${zoom * 100}%`,
+                    height: `${zoom * 100}%`
+                  }}
+                >
                   {(currentImage.finalUrl || currentImage.originalUrl) && (
                     <img 
                       src={currentImage.finalUrl || currentImage.originalUrl} 
                       alt="Preview" 
-                      style={{ 
-                        maxHeight: '100%', 
-                        maxWidth: '100%',
-                        transform: `scale(${zoom})`,
-                        objectFit: 'contain'
-                      }} 
-                      className="shadow-2xl rounded-xl border border-border transition-transform duration-300" 
+                      className="max-w-full max-h-full object-contain shadow-2xl rounded-xl border border-border m-auto" 
                     />
                   )}
                 </div>
