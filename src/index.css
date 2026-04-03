@@ -148,11 +148,10 @@
     @apply flex flex-col lg:flex-row w-full h-full lg:overflow-hidden bg-bg-secondary/30;
   }
 
-  /* Left Panel - Settings/Controls */
+  /* Right Panel - Settings/Controls (Swapped from Left) */
   .tool-sidebar {
-    @apply w-full lg:w-[30%] bg-surface border-b lg:border-b-0 lg:border-r border-border flex flex-col z-10 shadow-sm transition-all duration-300;
-    /* Tablet: 40% height at bottom? User said: Top: preview (60%), Bottom: settings (40%) */
-    @apply order-2 lg:order-1;
+    @apply w-full lg:w-[280px] xl:w-[320px] bg-surface border-b lg:border-b-0 lg:border-l border-border flex flex-col z-10 shadow-sm transition-all duration-300;
+    @apply order-2 lg:order-2;
     height: auto;
     @apply flex-1 overflow-hidden;
   }
@@ -160,7 +159,7 @@
   @media (min-width: 1024px) {
     .tool-sidebar {
       height: 100% !important;
-      @apply w-[30%] shrink-0;
+      @apply shrink-0;
     }
   }
 
@@ -170,10 +169,10 @@
     }
   }
 
-  /* Right Panel - Preview Area */
+  /* Left/Center Panel - Preview Area (Swapped from Right) */
   .tool-main-preview {
-    @apply flex-1 lg:flex-[65%] relative bg-bg-secondary/50 flex flex-col transition-all duration-300;
-    @apply order-1 lg:order-2;
+    @apply flex-1 relative bg-bg-secondary/50 flex flex-col transition-all duration-300;
+    @apply order-1 lg:order-1;
   }
 
   @media (min-width: 1024px) {

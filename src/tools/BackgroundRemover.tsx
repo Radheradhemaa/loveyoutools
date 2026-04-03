@@ -39,9 +39,32 @@ export default function BackgroundRemover() {
   const [brushMode, setBrushMode] = useState<'erase' | 'restore'>('erase');
   const [brushSize, setBrushSize] = useState(25);
   const [zoom, setZoom] = useState(0.3);
-  const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.1, 4));
-  const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.1, 0.1));
-  const handleZoomReset = () => setZoom(0.3);
+  const handleZoomIn = useCallback(() => setZoom(prev => Math.min(prev + 0.1, 4)), []);
+  const handleZoomOut = useCallback(() => setZoom(prev => Math.max(prev - 0.1, 0.1)), []);
+  const handleZoomReset = useCallback(() => setZoom(0.3), []);
+
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = previewContainerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // Only zoom if ctrl/meta is pressed, OR if we just want to zoom on any wheel event
+      // The user requested "scrolldownable to zoom", so we zoom on any wheel event
+      e.preventDefault(); // Prevent page/container scroll
+      if (e.deltaY < 0) {
+        handleZoomIn();
+      } else {
+        handleZoomOut();
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleZoomIn, handleZoomOut]);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -819,7 +842,7 @@ export default function BackgroundRemover() {
                     <>
                       {/* Manual Mode Controls */}
                       {isManualMode ? (
-                        <div className="space-y-6 animate-in fade-in slide-in-from-left-4">
+                        <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
                           <div className="flex items-center justify-between">
                             <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
                               <Eraser className="w-5 h-5 text-accent" /> Touchup
@@ -868,7 +891,7 @@ export default function BackgroundRemover() {
                           </div>
                         </div>
                       ) : (
-                        <div className="space-y-6 animate-in fade-in slide-in-from-left-4">
+                        <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
                           <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
                             <ImageIcon className="w-5 h-5 text-accent" /> Background
                           </h3>
@@ -1071,20 +1094,14 @@ export default function BackgroundRemover() {
                   </defs>
                 </svg>
                 <div 
+                  ref={previewContainerRef}
                   className="relative w-full h-[400px] sm:h-[550px] bg-bg-secondary rounded-3xl overflow-auto border border-border flex items-center justify-center group shadow-inner no-scrollbar p-6 sm:p-12"
-                  style={{ 
-                    backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
-                    backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
-                    backgroundSize: '20px 20px',
-                    backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
-                  }}
                 >
                   <div 
-                    className="flex items-center justify-center transition-transform duration-200 ease-out origin-center"
+                    className="flex items-center justify-center transition-all duration-200 ease-out"
                     style={{ 
-                      transform: `scale(${zoom})`,
-                      minWidth: '100%',
-                      minHeight: '100%'
+                      width: `${zoom * 100}%`,
+                      height: `${zoom * 100}%`
                     }}
                   >
                     {isCropping ? (
@@ -1094,7 +1111,7 @@ export default function BackgroundRemover() {
                           onChange={(c) => setCrop(c)}
                           onComplete={(c) => setCompletedCrop(c)}
                           aspect={aspect}
-                          className="max-w-full max-h-full"
+                          className="w-full h-full"
                           ruleOfThirds
                           keepSelection
                         >
@@ -1103,7 +1120,7 @@ export default function BackgroundRemover() {
                             src={imageSrc} 
                             onLoad={onImageLoad}
                             alt="To crop" 
-                            className="max-w-full max-h-full object-contain block transition-transform duration-300"
+                            className="w-full h-full object-contain block transition-transform duration-300"
                             style={{ 
                               transform: `rotate(${rotation}deg)`,
                               touchAction: 'none'
@@ -1112,7 +1129,7 @@ export default function BackgroundRemover() {
                         </ReactCrop>
                       </div>
                     ) : isManualMode ? (
-                      <div className="flex items-center justify-center">
+                      <div className="flex items-center justify-center w-full h-full">
                         <canvas
                           ref={canvasRef}
                           onMouseDown={startDrawing}
@@ -1122,11 +1139,17 @@ export default function BackgroundRemover() {
                           onTouchStart={startDrawing}
                           onTouchMove={draw}
                           onTouchEnd={stopDrawing}
-                          className="max-w-full max-h-full object-contain cursor-crosshair shadow-2xl"
+                          className="w-full h-full object-contain cursor-crosshair shadow-2xl rounded-lg"
+                          style={{
+                            backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
+                            backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
+                            backgroundSize: '20px 20px',
+                            backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                          }}
                         />
                       </div>
                     ) : (
-                      <div className="flex items-center justify-center relative">
+                      <div className="flex items-center justify-center relative w-full h-full">
                         <img 
                           key={resultImage || 'original'}
                           src={resultImage || imageSrc} 
@@ -1139,10 +1162,14 @@ export default function BackgroundRemover() {
                               setResultImage(null);
                             }
                           }}
-                          className="max-w-full max-h-full object-contain shadow-2xl rounded-lg bg-white/5"
+                          className="w-full h-full object-contain shadow-2xl rounded-lg"
                           style={{ 
                             filter: resultImage && !isManualMode ? getFilterStyle() : 'none',
-                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+                            backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
+                            backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
+                            backgroundSize: '20px 20px',
+                            backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
                           }}
                         />
                         

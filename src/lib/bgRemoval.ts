@@ -10,8 +10,8 @@ export const ensurePreloaded = async () => {
   preloadPromise = (async () => {
     try {
       console.log(`Preloading High-Quality AI Models...`);
-      // Using 'isnet' for maximum accuracy and clarity
-      await preload({ model: 'isnet' });
+      // Using 'isnet_fp16' for faster processing while maintaining good quality
+      await preload({ model: 'isnet_fp16' });
       isPreloaded = true;
       console.log("AI Models Preloaded Successfully");
     } catch (err) {
@@ -50,10 +50,10 @@ export const hybridRemoveBackground = async (
       img.src = imageSrc;
     });
 
-    // Step 1: Create a high-quality version for the AI (1024px)
+    // Step 1: Create a high-quality version for the AI (800px for speed)
     onProgress('Analyzing Image...');
     const aiCanvas = document.createElement('canvas');
-    const aiSize = 1024; 
+    const aiSize = 800; 
     const scale = Math.min(1, aiSize / Math.max(origImg.width, origImg.height));
     aiCanvas.width = Math.round(origImg.width * scale);
     aiCanvas.height = Math.round(origImg.height * scale);
@@ -63,10 +63,10 @@ export const hybridRemoveBackground = async (
     aiCtx.drawImage(origImg, 0, 0, aiCanvas.width, aiCanvas.height);
     const aiDataUrl = aiCanvas.toDataURL('image/jpeg', 0.95);
 
-    // Step 2: Run AI on high-res version using the full 'isnet' model
+    // Step 2: Run AI on high-res version using the 'isnet_fp16' model for speed
     onProgress('Removing Background...');
     const maskBlob = await imglyRemoveBackground(aiDataUrl, {
-      model: 'isnet', 
+      model: 'isnet_fp16', 
       output: { format: 'image/png', quality: 1.0 },
       debug: false,
     });
@@ -153,60 +153,16 @@ async function advancedMattingEngine(origImg: HTMLImageElement, maskBlob: Blob):
   const maskBuffer = new Uint32Array(maskPixels.buffer);
   const resultBuffer = new Uint32Array(resultPixels.buffer);
 
-  // Pre-process mask: Island removal and Hole filling
-  const refinedAlpha = new Uint8Array(width * height);
-  for (let i = 0; i < width * height; i++) {
-    refinedAlpha[i] = (maskBuffer[i] >> 24) & 0xff;
-  }
-
-  // Aggressive Cleanup Pass
+  // Pre-process mask: Thresholding
   const finalAlpha = new Uint8Array(width * height);
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const i = y * width + x;
-      let a = refinedAlpha[i];
-
-      // Thresholding: Eliminate low-alpha noise (dhaba)
-      if (a < 25) a = 0;
-      else if (a > 235) a = 255;
-
-      // Island Removal: If a pixel is opaque but surrounded by transparent pixels, it's an artifact
-      if (a > 0) {
-        let opaqueNeighbors = 0;
-        // Check 7x7 area for ultra-aggressive island detection
-        for (let dy = -3; dy <= 3; dy++) {
-          for (let dx = -3; dx <= 3; dx++) {
-            const ny = y + dy;
-            const nx = x + dx;
-            if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
-              if (refinedAlpha[ny * width + nx] > 40) opaqueNeighbors++;
-            }
-          }
-        }
-        // If very few opaque neighbors in a 7x7 area, it's definitely an island/artifact
-        if (opaqueNeighbors < 6) a = 0;
-      }
-
-      // Hole Filling: If a pixel is transparent but surrounded by opaque pixels, it's a hole
-      if (a < 255) {
-        let opaqueNeighbors = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            const ny = y + dy;
-            const nx = x + dx;
-            if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
-              if (refinedAlpha[ny * width + nx] > 200) opaqueNeighbors++;
-            }
-          }
-        }
-        // If mostly surrounded by opaque pixels, fill the hole
-        if (opaqueNeighbors > 6) a = 255;
-      }
-
-      finalAlpha[i] = a;
-    }
+  for (let i = 0; i < width * height; i++) {
+    let a = (maskBuffer[i] >> 24) & 0xff;
+    if (a < 25) a = 0;
+    else if (a > 235) a = 255;
+    finalAlpha[i] = a;
   }
 
+  // Single fast pass for decontamination and contraction
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x;
@@ -221,89 +177,63 @@ async function advancedMattingEngine(origImg: HTMLImageElement, maskBlob: Blob):
       let r = origPixel & 0xff;
       let g = (origPixel >> 8) & 0xff;
       let b = (origPixel >> 16) & 0xff;
+      let a = maskA;
 
-      // Color Decontamination for edges (maskA < 250)
-      if (maskA < 250) {
+      // Process only edge pixels for speed
+      if (maskA > 0 && maskA < 255) {
         let found = false;
         let avgR = 0, avgG = 0, avgB = 0, count = 0;
+        let minNeighborA = maskA;
         
-        // Search in a larger radius (up to 7px) for solid foreground pixels
-        for (let dy = -7; dy <= 7 && !found; dy++) {
-          for (let dx = -7; dx <= 7; dx++) {
+        // Single 5x5 pass for both decontamination and contraction
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
             const ny = y + dy;
             const nx = x + dx;
             if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
               const ni = ny * width + nx;
-              if (finalAlpha[ni] > 250) {
+              const na = finalAlpha[ni];
+              
+              // Contraction check
+              if (na < minNeighborA) minNeighborA = na;
+
+              // Decontamination check
+              if (!found && na === 255) {
                 const sample = origBuffer[ni];
                 const sr = sample & 0xff;
                 const sg = (sample >> 8) & 0xff;
                 const sb = (sample >> 16) & 0xff;
                 
-                // Avoid sampling white/very bright pixels for decontamination
-                // Increased threshold to 235 for even more aggressive avoidance
                 if (sr < 235 || sg < 235 || sb < 235) {
-                  avgR += sr;
-                  avgG += sg;
-                  avgB += sb;
+                  avgR += sr; avgG += sg; avgB += sb;
                   count++;
-                  if (count > 12) { 
-                    found = true;
-                    break;
-                  }
+                  if (count > 4) found = true;
                 }
               }
             }
           }
         }
 
+        // Apply decontamination
         if (count > 0) {
-          r = avgR / count;
-          g = avgG / count;
-          b = avgB / count;
-          
-          // Edge Color Correction: Counteract white spill by darkening
-          // If the original pixel was very bright (likely white spill), darken it significantly
+          r = avgR / count; g = avgG / count; b = avgB / count;
           const origLum = (0.299 * (origPixel & 0xff) + 0.587 * ((origPixel >> 8) & 0xff) + 0.114 * ((origPixel >> 16) & 0xff));
-          // More aggressive darkening for bright edges
           const darken = origLum > 160 ? 0.75 : 0.85; 
-          
           r = Math.min(255, r * darken);
           g = Math.min(255, g * darken);
           b = Math.min(255, b * darken);
           
           const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-          const sat = 1.25; // More saturation for edges to kill gray/white haze
+          const sat = 1.25;
           r = Math.min(255, Math.max(0, gray + (r - gray) * sat));
           g = Math.min(255, Math.max(0, gray + (g - gray) * sat));
           b = Math.min(255, Math.max(0, gray + (b - gray) * sat));
         } else {
-          // If no solid neighbor found, it's likely a thin strand or noise
-          // Darken it aggressively to avoid white fringes
-          r *= 0.7;
-          g *= 0.7;
-          b *= 0.7;
+          r *= 0.7; g *= 0.7; b *= 0.7;
         }
-      }
 
-      // Final Alpha Refinement: Contract 2.5px to eliminate lingering white fringes
-      let a = maskA;
-      if (maskA > 0 && maskA < 255) {
-        let minNeighborA = maskA;
-        // Check 7x7 area for 3px contraction
-        for (let dy = -3; dy <= 3; dy++) {
-          for (let dx = -3; dx <= 3; dx++) {
-            const ny = y + dy;
-            const nx = x + dx;
-            if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
-              const na = finalAlpha[ny * width + nx];
-              if (na < minNeighborA) minNeighborA = na;
-            }
-          }
-        }
-        // Ultra-aggressive contraction for semi-transparent edges
-        // This effectively "eats" the white halo
-        a = Math.max(0, minNeighborA - 25); 
+        // Apply contraction
+        a = Math.max(0, minNeighborA - 25);
       }
 
       resultBuffer[i] = (a << 24) | (b << 16) | (g << 8) | r;

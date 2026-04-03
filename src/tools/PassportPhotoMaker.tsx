@@ -951,10 +951,10 @@ export default function PassportPhotoMaker() {
   }, [file]);
 
         return (
-          <div className="flex flex-col lg:flex-row w-full h-full bg-gray-50 overflow-hidden">
+          <div className="flex flex-col lg:flex-row-reverse w-full h-full bg-gray-50 overflow-hidden">
             
             {/* --- SIDEBAR (STEPS & CONTROLS) --- */}
-            <aside className="w-full lg:w-[320px] bg-white border-r border-gray-200 flex flex-col h-[40vh] lg:h-full z-10 shadow-lg">
+            <aside className="w-full lg:w-[320px] bg-white border-l border-gray-200 flex flex-col h-[40vh] lg:h-full z-10 shadow-lg order-2 lg:order-2">
               
               {/* Stepper Header */}
               <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center shrink-0">
@@ -980,7 +980,7 @@ export default function PassportPhotoMaker() {
                 
                 {/* STEP 1: CROP */}
                 {step === 'crop' && (
-                  <div className="space-y-5 animate-in fade-in slide-in-from-left-4">
+                  <div className="space-y-5 animate-in fade-in slide-in-from-right-4">
                     <div>
                       <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
                         <Crop className="w-4 h-4" /> Select Size
@@ -1013,7 +1013,7 @@ export default function PassportPhotoMaker() {
 
                 {/* STEP 2: EDIT */}
                 {step === 'edit' && (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-left-4">
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
                     
                     {/* Background */}
                     <div>
@@ -1179,7 +1179,7 @@ export default function PassportPhotoMaker() {
 
                 {/* STEP 3: PRINT */}
                 {step === 'print' && (
-                  <div className="space-y-6 animate-in fade-in slide-in-from-left-4">
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
                     <div>
                       <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
                         <Layout className="w-4 h-4" /> Paper Size
@@ -1292,7 +1292,7 @@ export default function PassportPhotoMaker() {
             </aside>
 
             {/* --- MAIN PREVIEW AREA --- */}
-            <main className="flex-1 lg:flex-[2] relative bg-[#e5e7eb] flex flex-col h-full overflow-hidden max-h-[600px] lg:max-h-none">
+            <main className="flex-1 relative bg-[#e5e7eb] flex flex-col h-full overflow-hidden max-h-[600px] lg:max-h-none order-1 lg:order-1">
               
               {/* Toolbar (Zoom) - Improved with slider */}
               <div className="w-full pt-2 pb-1 flex justify-center items-center shrink-0 z-20 relative">
