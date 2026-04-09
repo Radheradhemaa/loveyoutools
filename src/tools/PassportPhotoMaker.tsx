@@ -23,6 +23,7 @@ const PAPER_SIZES = [
   { id: '4x6', name: '4 x 6 inch', width: 101.6, height: 152.4 },
   { id: '5x7', name: '5 x 7 inch', width: 127, height: 177.8 },
   { id: 'custom', name: 'Custom Size', width: 210, height: 297 },
+  { id: 'custom-grid', name: 'Custom Grid', width: 0, height: 0 },
 ];
 
 const COLORS = [
@@ -159,6 +160,7 @@ export default function PassportPhotoMaker() {
   // Print States
   const [paperSize, setPaperSize] = useState(PAPER_SIZES[1]); // Default A4
   const [customPaper, setCustomPaper] = useState({ width: 210, height: 297 });
+  const [customGrid, setCustomGrid] = useState({ rows: 2, cols: 4 });
   const [hasBorder, setHasBorder] = useState(true);
   const [hasCutLines, setHasCutLines] = useState(true);
   
@@ -746,15 +748,25 @@ export default function PassportPhotoMaker() {
     }
 
     // Generate A4/Grid
+    const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
+    const photoWidth = Math.round((targetPreset.width / 25.4) * dpi);
+    const photoHeight = Math.round((targetPreset.height / 25.4) * dpi);
+    const margin = Math.round((5 / 25.4) * dpi); // 5mm margin between photos
+
+    let sheetWidthMm = paperSize.id === 'custom' ? customPaper.width : paperSize.width;
+    let sheetHeightMm = paperSize.id === 'custom' ? customPaper.height : paperSize.height;
+
+    if (paperSize.id === 'custom-grid') {
+      sheetWidthMm = customGrid.cols * targetPreset.width + (customGrid.cols + 1) * 5;
+      sheetHeightMm = customGrid.rows * targetPreset.height + (customGrid.rows + 1) * 5;
+    }
+
+    const sheetWidth = Math.round((sheetWidthMm / 25.4) * dpi);
+    const sheetHeight = Math.round((sheetHeightMm / 25.4) * dpi);
+
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
-    const sheetWidthMm = paperSize.id === 'custom' ? customPaper.width : paperSize.width;
-    const sheetHeightMm = paperSize.id === 'custom' ? customPaper.height : paperSize.height;
-    
-    const sheetWidth = Math.round((sheetWidthMm / 25.4) * dpi);
-    const sheetHeight = Math.round((sheetHeightMm / 25.4) * dpi);
     
     canvas.width = sheetWidth;
     canvas.height = sheetHeight;
@@ -766,13 +778,16 @@ export default function PassportPhotoMaker() {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     
-    const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
-    const photoWidth = Math.round((targetPreset.width / 25.4) * dpi);
-    const photoHeight = Math.round((targetPreset.height / 25.4) * dpi);
-    const margin = Math.round((5 / 25.4) * dpi); // 5mm margin between photos
-    
-    const cols = Math.floor((sheetWidth - margin) / (photoWidth + margin));
-    const rows = Math.floor((sheetHeight - margin) / (photoHeight + margin));
+    let cols = 0;
+    let rows = 0;
+
+    if (paperSize.id === 'custom-grid') {
+      cols = customGrid.cols;
+      rows = customGrid.rows;
+    } else {
+      cols = Math.floor((sheetWidth - margin) / (photoWidth + margin));
+      rows = Math.floor((sheetHeight - margin) / (photoHeight + margin));
+    }
     
     if (cols <= 0 || rows <= 0) {
       alert("Paper size is too small for even one photo.");
@@ -845,15 +860,29 @@ export default function PassportPhotoMaker() {
       );
     }
 
-    const sheetWidthMm = paperSize.id === 'custom' ? customPaper.width : paperSize.width;
-    const sheetHeightMm = paperSize.id === 'custom' ? customPaper.height : paperSize.height;
     const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
     const photoWidthMm = targetPreset.width;
     const photoHeightMm = targetPreset.height;
     const marginMm = 5;
     
-    const cols = Math.floor((sheetWidthMm - marginMm) / (photoWidthMm + marginMm));
-    const rows = Math.floor((sheetHeightMm - marginMm) / (photoHeightMm + marginMm));
+    let sheetWidthMm = paperSize.id === 'custom' ? customPaper.width : paperSize.width;
+    let sheetHeightMm = paperSize.id === 'custom' ? customPaper.height : paperSize.height;
+
+    if (paperSize.id === 'custom-grid') {
+      sheetWidthMm = customGrid.cols * photoWidthMm + (customGrid.cols + 1) * marginMm;
+      sheetHeightMm = customGrid.rows * photoHeightMm + (customGrid.rows + 1) * marginMm;
+    }
+    
+    let cols = 0;
+    let rows = 0;
+
+    if (paperSize.id === 'custom-grid') {
+      cols = customGrid.cols;
+      rows = customGrid.rows;
+    } else {
+      cols = Math.floor((sheetWidthMm - marginMm) / (photoWidthMm + marginMm));
+      rows = Math.floor((sheetHeightMm - marginMm) / (photoHeightMm + marginMm));
+    }
     
     if (cols <= 0 || rows <= 0) return <div className="p-4 text-center text-gray-500 font-bold">Paper size too small.</div>;
     
@@ -1207,6 +1236,19 @@ export default function PassportPhotoMaker() {
                           <div>
                             <label className="text-[10px] font-bold text-gray-500 uppercase">Height (mm)</label>
                             <input type="number" value={customPaper.height} onChange={e => setCustomPaper({...customPaper, height: Number(e.target.value)})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
+                          </div>
+                        </div>
+                      )}
+
+                      {paperSize.id === 'custom-grid' && (
+                        <div className="grid grid-cols-2 gap-3 mt-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-500 uppercase">Photos per Row</label>
+                            <input type="number" min="1" value={customGrid.cols} onChange={e => setCustomGrid({...customGrid, cols: Math.max(1, Number(e.target.value))})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-500 uppercase">Number of Rows</label>
+                            <input type="number" min="1" value={customGrid.rows} onChange={e => setCustomGrid({...customGrid, rows: Math.max(1, Number(e.target.value))})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
                           </div>
                         </div>
                       )}
