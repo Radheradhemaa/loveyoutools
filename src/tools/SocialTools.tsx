@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, Check, RefreshCw, Youtube, Instagram, Download, Image as ImageIcon, Type, MessageSquare, Sparkles, Send, AlertCircle, Hash, Shuffle } from 'lucide-react';
+import { Copy, Check, RefreshCw, Youtube, Instagram, Download, Image as ImageIcon, Type, MessageSquare, Sparkles, Send, AlertCircle, Hash, Shuffle, Twitter, User, Smile, Plus, Trash2, Tag, AlignLeft } from 'lucide-react';
 
 const HASHTAG_DATA = {
   travel: ['#travel', '#travelgram', '#instatravel', '#wanderlust', '#travelphotography', '#vacation', '#traveling', '#adventure', '#explore', '#trip', '#holiday', '#landscape', '#nature', '#tourist', '#travelblogger', '#traveler', '#photooftheday', '#beautiful', '#sunset', '#beach', '#mountains', '#city', '#exploretheworld', '#traveladdict', '#globetrotter', '#traveldiaries', '#passportready', '#worldtraveler', '#travelgoals', '#seetheworld'],
@@ -88,6 +88,22 @@ export default function SocialTools({ toolId }: { toolId: string }) {
   const [captionsList, setCaptionsList] = useState<string[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
+  // YouTube Tag Generator
+  const [ytTags, setYtTags] = useState<string[]>([]);
+
+  // Tweet Length Checker
+  const [tweetText, setTweetText] = useState('');
+
+  // Bio Generator
+  const [bioName, setBioName] = useState('');
+  const [bioNiche, setBioNiche] = useState('');
+  const [bioTone, setBioTone] = useState('Professional');
+  const [generatedBios, setGeneratedBios] = useState<string[]>([]);
+
+  // Emoji Picker
+  const [emojiSearch, setEmojiSearch] = useState('');
+  const [selectedEmojis, setSelectedEmojis] = useState('');
+
   useEffect(() => {
     setInput('');
     setOutput('');
@@ -95,6 +111,13 @@ export default function SocialTools({ toolId }: { toolId: string }) {
     setYtThumbnails([]);
     setIgImage('');
     setCaptionsList([]);
+    setYtTags([]);
+    setTweetText('');
+    setBioName('');
+    setBioNiche('');
+    setGeneratedBios([]);
+    setEmojiSearch('');
+    setSelectedEmojis('');
     if (toolId === 'caption-generator') {
       setCaptionsList(CAPTIONS['Love']);
     }
@@ -177,6 +200,57 @@ export default function SocialTools({ toolId }: { toolId: string }) {
         case 'caption-generator':
           // Handled via category selection, but we can shuffle
           setCaptionsList([...CAPTIONS[captionCategory]].sort(() => 0.5 - Math.random()));
+          break;
+
+        case 'youtube-tag-generator':
+          if (!input) {
+            setError('Please enter a video topic or keyword.');
+            break;
+          }
+          const tags = [
+            input.toLowerCase(),
+            `${input.toLowerCase()} 2026`,
+            `how to ${input.toLowerCase()}`,
+            `best ${input.toLowerCase()}`,
+            `${input.toLowerCase()} tutorial`,
+            `${input.toLowerCase()} review`,
+            `${input.toLowerCase()} tips`,
+            `${input.toLowerCase()} guide`,
+            `${input.toLowerCase()} explained`,
+            `${input.toLowerCase()} for beginners`,
+            `what is ${input.toLowerCase()}`,
+            `${input.toLowerCase()} update`,
+            `${input.toLowerCase()} tricks`,
+            `top 10 ${input.toLowerCase()}`,
+            `${input.toLowerCase()} compilation`
+          ].map(t => t.replace(/[^a-zA-Z0-9 ]/g, '').trim()).filter(Boolean);
+          setYtTags(tags);
+          break;
+
+        case 'social-media-bio-generator':
+          if (!bioName || !bioNiche) {
+            setError('Please enter your name and niche/profession.');
+            break;
+          }
+          const bios = [];
+          if (bioTone === 'Professional') {
+            bios.push(`${bioNiche} Professional | Helping businesses grow through innovative solutions. Let's connect! 🚀`);
+            bios.push(`Hi, I'm ${bioName}. Experienced ${bioNiche} passionate about delivering excellence and driving results. 💼`);
+            bios.push(`${bioNiche} Specialist | Dedicated to continuous learning and professional growth. Reach out for collaborations! 🤝`);
+          } else if (bioTone === 'Creative') {
+            bios.push(`✨ Turning coffee into ${bioNiche} magic. | ${bioName} | Let's create something beautiful together. 🎨`);
+            bios.push(`Dreamer. Creator. ${bioNiche} enthusiast. 🌟 | Making the web a better place one pixel at a time. | ${bioName}`);
+            bios.push(`Crafting digital experiences & telling stories through ${bioNiche}. 🚀 | Welcome to my creative journey! 🎭`);
+          } else if (bioTone === 'Funny') {
+            bios.push(`I put the 'el' in ${bioNiche}... wait, that doesn't make sense. Anyway, I'm ${bioName}. 🤪`);
+            bios.push(`Professional overthinker and amateur ${bioNiche}. 🍕 Powered by pizza and caffeine. | ${bioName}`);
+            bios.push(`I'm ${bioName}. I do ${bioNiche} things so you don't have to. You're welcome. 😎`);
+          } else if (bioTone === 'Minimalist') {
+            bios.push(`${bioName}. ${bioNiche}.`);
+            bios.push(`${bioNiche} @ World. | ${bioName}`);
+            bios.push(`Creating. | ${bioNiche} | ${bioName}`);
+          }
+          setGeneratedBios(bios);
           break;
 
         default:
@@ -390,6 +464,269 @@ export default function SocialTools({ toolId }: { toolId: string }) {
     </div>
   );
 
+  const renderYoutubeTagGenerator = () => (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="bg-surface border border-border rounded-[14px] p-6 shadow-sm h-fit">
+        <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+          <Tag className="w-5 h-5 text-accent" /> YouTube Tag Generator
+        </h3>
+        <div className="fg mb-4">
+          <label className="fl">Enter Video Topic or Keyword</label>
+          <div className="relative">
+            <Youtube className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+            <input type="text" className="fi pl-10" value={input} onChange={e => setInput(e.target.value)} placeholder="e.g. react tutorial, fitness vlog..." />
+          </div>
+        </div>
+        {error && <div className="text-red-500 text-sm flex items-center gap-1 mb-4"><AlertCircle className="w-4 h-4"/> {error}</div>}
+        <button onClick={generate} disabled={loading || !input} className="btn bp w-full gap-2 h-12 text-lg">
+          {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+          {loading ? 'Generating...' : 'Generate Tags'}
+        </button>
+      </div>
+
+      <div className="bg-surface border border-border rounded-[14px] p-6 shadow-sm h-full flex flex-col min-h-[400px]">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Hash className="w-5 h-5 text-accent" /> Generated Tags
+          </h3>
+          <div className="flex gap-2">
+            <button onClick={() => handleCopy(ytTags.join(', '))} disabled={ytTags.length === 0} className="btn bs gap-2 py-1.5 text-sm" title="Copy All">
+              {copied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />} Copy All
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 relative">
+          {ytTags.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {ytTags.map((tag, idx) => (
+                <div key={idx} className="bg-bg-secondary border border-border px-3 py-1.5 rounded-lg text-sm flex items-center gap-2">
+                  <span>{tag}</span>
+                  <button onClick={() => handleCopy(tag, idx)} className="text-text-muted hover:text-accent transition-colors">
+                    {copiedIndex === idx ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="h-full flex items-center justify-center text-text-muted">
+              Your generated tags will appear here...
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderTweetLengthChecker = () => {
+    const getTweetLength = (text: string) => {
+      // Basic approximation: URLs count as 23 chars
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      const textWithoutUrls = text.replace(urlRegex, '');
+      const urlCount = (text.match(urlRegex) || []).length;
+      return textWithoutUrls.length + (urlCount * 23);
+    };
+
+    const length = getTweetLength(tweetText);
+    const isOverLimit = length > 280;
+    const progress = Math.min((length / 280) * 100, 100);
+
+    return (
+      <div className="space-y-6 max-w-3xl mx-auto">
+        <div className="bg-surface border border-border rounded-[14px] p-6 shadow-sm">
+          <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+            <Twitter className="w-5 h-5 text-accent" /> Tweet Length Checker
+          </h3>
+          
+          <div className="relative mb-4">
+            <textarea 
+              className={`fta w-full h-48 p-4 rounded-xl border ${isOverLimit ? 'border-red-500 focus:ring-red-500/20' : 'border-border focus:ring-accent/20'} resize-none text-lg`}
+              value={tweetText}
+              onChange={e => setTweetText(e.target.value)}
+              placeholder="What's happening?"
+            />
+            <div className={`absolute bottom-4 right-4 font-bold ${isOverLimit ? 'text-red-500' : 'text-text-muted'}`}>
+              {length} / 280
+            </div>
+          </div>
+
+          <div className="w-full h-2 bg-bg-secondary rounded-full overflow-hidden mb-6">
+            <div 
+              className={`h-full transition-all duration-300 ${isOverLimit ? 'bg-red-500' : length > 250 ? 'bg-yellow-500' : 'bg-[#1DA1F2]'}`}
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            <div className="bg-bg-secondary p-4 rounded-xl text-center">
+              <div className="text-2xl font-bold text-text-primary">{tweetText.length === 0 ? 0 : tweetText.trim().split(/\s+/).length}</div>
+              <div className="text-xs text-text-muted uppercase tracking-wider font-bold mt-1">Words</div>
+            </div>
+            <div className="bg-bg-secondary p-4 rounded-xl text-center">
+              <div className="text-2xl font-bold text-text-primary">{(tweetText.match(/#/g) || []).length}</div>
+              <div className="text-xs text-text-muted uppercase tracking-wider font-bold mt-1">Hashtags</div>
+            </div>
+            <div className="bg-bg-secondary p-4 rounded-xl text-center">
+              <div className="text-2xl font-bold text-text-primary">{(tweetText.match(/@/g) || []).length}</div>
+              <div className="text-xs text-text-muted uppercase tracking-wider font-bold mt-1">Mentions</div>
+            </div>
+            <div className="bg-bg-secondary p-4 rounded-xl text-center">
+              <div className="text-2xl font-bold text-text-primary">{(tweetText.match(/(https?:\/\/[^\s]+)/g) || []).length}</div>
+              <div className="text-xs text-text-muted uppercase tracking-wider font-bold mt-1">Links</div>
+            </div>
+          </div>
+
+          <div className="flex gap-4">
+            <button onClick={() => handleCopy(tweetText)} disabled={!tweetText} className="btn bp flex-1 gap-2 h-12">
+              {copied ? <Check className="w-5 h-5 text-success" /> : <Copy className="w-5 h-5" />} Copy Tweet
+            </button>
+            <button onClick={() => setTweetText('')} disabled={!tweetText} className="btn bs flex-1 gap-2 h-12">
+              <Trash2 className="w-5 h-5" /> Clear
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderBioGenerator = () => (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="lg:col-span-1 bg-surface border border-border rounded-[14px] p-6 shadow-sm h-fit space-y-4">
+        <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+          <User className="w-5 h-5 text-accent" /> Bio Generator
+        </h3>
+        <div className="fg">
+          <label className="fl">Your Name</label>
+          <input type="text" className="fi" value={bioName} onChange={e => setBioName(e.target.value)} placeholder="e.g. Alex Doe" />
+        </div>
+        <div className="fg">
+          <label className="fl">Niche / Profession</label>
+          <input type="text" className="fi" value={bioNiche} onChange={e => setBioNiche(e.target.value)} placeholder="e.g. Web Developer, Photographer" />
+        </div>
+        <div className="fg">
+          <label className="fl">Tone</label>
+          <select className="fi" value={bioTone} onChange={e => setBioTone(e.target.value)}>
+            <option value="Professional">Professional</option>
+            <option value="Creative">Creative</option>
+            <option value="Funny">Funny</option>
+            <option value="Minimalist">Minimalist</option>
+          </select>
+        </div>
+        {error && <div className="text-red-500 text-sm flex items-center gap-1"><AlertCircle className="w-4 h-4"/> {error}</div>}
+        <button onClick={generate} disabled={loading || !bioName || !bioNiche} className="btn bp w-full gap-2 h-12 text-lg mt-2">
+          {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+          {loading ? 'Generating...' : 'Generate Bios'}
+        </button>
+      </div>
+
+      <div className="lg:col-span-2 bg-surface border border-border rounded-[14px] p-6 shadow-sm">
+        <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+          <AlignLeft className="w-5 h-5 text-accent" /> Generated Bios
+        </h3>
+        <div className="space-y-4">
+          {generatedBios.length > 0 ? generatedBios.map((bio, idx) => (
+            <div key={idx} className="p-5 bg-bg-secondary rounded-xl border border-border flex flex-col gap-3 group hover:border-accent/30 transition-colors">
+              <p className="text-text-primary text-base whitespace-pre-wrap">{bio}</p>
+              <div className="flex justify-between items-center pt-2 border-t border-border/50">
+                <span className="text-xs font-bold text-text-muted">{bio.length} chars</span>
+                <button 
+                  onClick={() => handleCopy(bio, idx)}
+                  className="btn bs gap-2 py-1.5 text-sm"
+                >
+                  {copiedIndex === idx ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />} Copy
+                </button>
+              </div>
+            </div>
+          )) : (
+            <div className="h-48 flex items-center justify-center text-text-muted border-2 border-dashed border-border rounded-xl">
+              Fill out your details and click generate!
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderEmojiPicker = () => {
+    const EMOJI_CATEGORIES = [
+      { name: 'Smileys & Emotion', emojis: ['😀','😃','😄','😁','😆','😅','😂','🤣','🥲','☺️','😊','😇','🙂','🙃','😉','😌','😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓','😎','🥸','🤩','🥳','😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬','🤯','😳','🥵','🥶','😱','😨','😰','😥','😓','🤗','🤔','🤭','🤫','🤥','😶','😐','😑','😬','🙄','😯','😦','😧','😮','😲','🥱','😴','🤤','😪','😵','🤐','🥴','🤢','🤮','🤧','😷','🤒','🤕','🤑','🤠','😈','👿','👹','👺','🤡','💩','👻','💀','☠️','👽','👾','🤖','🎃','😺','😸','😹','😻','😼','😽','🙀','😿','😾'] },
+      { name: 'Gestures & Body Parts', emojis: ['👋','🤚','🖐','✋','🖖','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','👍','👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🤝','🙏','✍️','💅','🤳','💪','🦾','🦿','🦵','🦶','👂','🦻','👃','🧠','🫀','🫁','🦷','🦴','👀','👁','👅','👄','💋','🩸'] },
+      { name: 'Animals & Nature', emojis: ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐻‍❄️','🐨','🐯','🦁','🐮','🐷','🐽','🐸','🐵','🙈','🙉','🙊','🐒','🐔','🐧','🐦','🐤','🐣','🐥','🦆','🦅','🦉','🦇','🐺','🐗','🐴','🦄','🐝','🪱','🐛','🦋','🐌','🐞','🐜','🪰','🪲','🪳','🦟','🦗','🕷','🕸','🦂','🐢','🐍','🦎','🦖','🦕','🐙','🦑','🦐','🦞','🦀','🐡','🐠','🐟','🐬','🐳','🐋','🦈','🦭','🐊','🐅','🐆','🦓','🦍','🦧','🦣','🐘','🦛','🦏','🐪','🐫','🦒','🦘','🦬','🐃','🐂','🐄','🐎','🐖','🐏','🐑','🦙','🐐','🦌','🐕','🐩','🦮','🐕‍🦺','🐈','🐈‍⬛','🪶','🐓','🦃','🦤','🦚','🦜','🦢','🦩','🕊','🐇','🦝','🦨','🦡','🦫','🦦','🦥','🐁','🐀','🐿','🦔','🐾','🐉','🐲','🌵','🎄','🌲','🌳','🌴','🪵','🌱','🌿','☘️','🍀','🎍','🪴','🎋','🍃','🍂','🍁','🍄','🐚','🪨','🌾','💐','🌷','🌹','🥀','🌺','🌸','🌼','🌻','🌞','🌝','🌛','🌜','🌚','🌕','🌖','🌗','🌘','🌑','🌒','🌓','🌔','🌙','🌎','🌍','🌏','🪐','💫','⭐️','🌟','✨','⚡️','☄️','💥','🔥','🌪','🌈','☀️','🌤','⛅️','🌥','☁️','🌦','🌧','⛈','🌩','🌨','❄️','☃️','⛄️','🌬','💨','💧','💦','☔️','☂️','🌊','🌫'] },
+      { name: 'Food & Drink', emojis: ['🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶','🫑','🌽','🥕','🫒','🧄','🧅','🥔','🍠','🥐','🥯','🍞','🥖','🥨','🧀','🥚','🍳','🧈','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🫓','🥪','🥙','🧆','🌮','🌯','🫔','🥗','🥘','🫕','🥫','🍝','🍜','🍲','🍛','🍣','🍱','🥟','🦪','🍤','🍙','🍚','🍘','🍥','🥠','🥮','🍢','🍡','🍧','🍨','🍦','🥧','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🥛','🍼','🫖','☕️','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🧊','🥄','🍴','🍽','🥣','🥡','🥢','🧂'] }
+    ];
+
+    const filteredCategories = EMOJI_CATEGORIES.map(cat => ({
+      ...cat,
+      emojis: cat.emojis.filter(e => emojiSearch === '' || cat.name.toLowerCase().includes(emojiSearch.toLowerCase()))
+    })).filter(cat => cat.emojis.length > 0);
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-surface border border-border rounded-[14px] p-6 shadow-sm">
+          <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+            <Smile className="w-5 h-5 text-accent" /> Emoji Picker
+          </h3>
+          
+          <div className="flex flex-col md:flex-row gap-4 mb-6">
+            <div className="flex-1 relative">
+              <Type className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+              <input 
+                type="text" 
+                className="fi pl-10" 
+                value={emojiSearch} 
+                onChange={e => setEmojiSearch(e.target.value)} 
+                placeholder="Search categories..." 
+              />
+            </div>
+          </div>
+
+          <div className="bg-bg-secondary border border-border rounded-xl p-4 mb-6 flex flex-col sm:flex-row gap-4 items-center">
+            <div className="flex-1 w-full relative">
+              <input 
+                type="text" 
+                className="fi pr-24 text-2xl tracking-widest" 
+                value={selectedEmojis} 
+                onChange={e => setSelectedEmojis(e.target.value)} 
+                placeholder="Selected emojis..." 
+              />
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1">
+                <button onClick={() => setSelectedEmojis('')} className="p-1.5 text-text-muted hover:text-red-500 rounded-lg transition-colors" title="Clear">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <button onClick={() => handleCopy(selectedEmojis)} disabled={!selectedEmojis} className="btn bp gap-2 h-12 w-full sm:w-auto shrink-0">
+              {copied ? <Check className="w-5 h-5 text-success" /> : <Copy className="w-5 h-5" />} Copy
+            </button>
+          </div>
+
+          <div className="h-[500px] overflow-y-auto pr-2 custom-scrollbar space-y-8">
+            {filteredCategories.length > 0 ? filteredCategories.map((category, idx) => (
+              <div key={idx}>
+                <h4 className="text-sm font-bold text-text-muted uppercase tracking-wider mb-3 sticky top-0 bg-surface py-2 z-10">{category.name}</h4>
+                <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2">
+                  {category.emojis.map((emoji, eIdx) => (
+                    <button 
+                      key={eIdx}
+                      onClick={() => setSelectedEmojis(prev => prev + emoji)}
+                      className="text-3xl p-2 hover:bg-bg-secondary rounded-xl transition-transform hover:scale-110 active:scale-95 flex items-center justify-center aspect-square"
+                      title="Add Emoji"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )) : (
+              <div className="h-full flex items-center justify-center text-text-muted">
+                No emojis found matching your search.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Main Render
   switch (toolId) {
     case 'youtube-thumbnail-downloader':
@@ -401,16 +738,13 @@ export default function SocialTools({ toolId }: { toolId: string }) {
     case 'caption-generator':
       return renderCaptionTool();
     case 'youtube-tag-generator':
+      return renderYoutubeTagGenerator();
     case 'tweet-length-checker':
+      return renderTweetLengthChecker();
     case 'social-media-bio-generator':
+      return renderBioGenerator();
     case 'emoji-picker':
-      return (
-        <div className="bg-surface border border-border rounded-[14px] p-12 text-center">
-          <AlertCircle className="w-12 h-12 text-text-muted mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-text-primary mb-2">Coming Soon</h2>
-          <p className="text-text-muted">This tool is currently under development and will be available soon.</p>
-        </div>
-      );
+      return renderEmojiPicker();
     default:
       return (
         <div className="bg-surface border border-border rounded-[14px] p-12 text-center">
