@@ -26,7 +26,7 @@ export default function ImageCropper() {
   const [completedCrop, setCompletedCrop] = useState<PixelCrop | null>(null);
   const [loading, setLoading] = useState(false);
   const [aspect, setAspect] = useState<number | undefined>(undefined);
-  const [zoom, setZoom] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024 ? 1 : 0.5);
+  const [zoom, setZoom] = useState(1);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const handleFiles = (files: File[]) => {
@@ -37,10 +37,7 @@ export default function ImageCropper() {
         output: null
       }));
       setImages(prev => {
-        const isFirst = prev.length === 0;
-        if (isFirst) {
-          setCurrentIndex(0);
-        }
+        setTimeout(() => setCurrentIndex(prev.length), 0);
         return [...prev, ...newImages];
       });
     }
@@ -50,37 +47,47 @@ export default function ImageCropper() {
     imgRef.current = e.currentTarget;
   };
 
+  const generateCropDataUrl = (image: HTMLImageElement, crop: PixelCrop): string | null => {
+    const canvas = document.createElement('canvas');
+    const scaleX = image.naturalWidth / image.width;
+    const scaleY = image.naturalHeight / image.height;
+    
+    const targetWidth = crop.width * scaleX;
+    const targetHeight = crop.height * scaleY;
+    
+    if (targetWidth <= 0 || targetHeight <= 0) return null;
+    
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) return null;
+
+    ctx.drawImage(
+      image,
+      crop.x * scaleX,
+      crop.y * scaleY,
+      crop.width * scaleX,
+      crop.height * scaleY,
+      0,
+      0,
+      targetWidth,
+      targetHeight
+    );
+
+    return canvas.toDataURL('image/jpeg', 0.95);
+  };
+
   const processCrop = useCallback(() => {
     if (!completedCrop || !imgRef.current || images.length === 0) return;
     setLoading(true);
 
     try {
-      const image = imgRef.current;
-      const canvas = document.createElement('canvas');
-      const scaleX = image.naturalWidth / image.width;
-      const scaleY = image.naturalHeight / image.height;
-      canvas.width = completedCrop.width;
-      canvas.height = completedCrop.height;
-      const ctx = canvas.getContext('2d');
-
-      if (!ctx) {
+      const dataUrl = generateCropDataUrl(imgRef.current, completedCrop);
+      if (!dataUrl) {
         setLoading(false);
         return;
       }
-
-      ctx.drawImage(
-        image,
-        completedCrop.x * scaleX,
-        completedCrop.y * scaleY,
-        completedCrop.width * scaleX,
-        completedCrop.height * scaleY,
-        0,
-        0,
-        completedCrop.width,
-        completedCrop.height
-      );
-
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
       
       setImages(prev => {
         const updated = [...prev];
@@ -112,7 +119,18 @@ export default function ImageCropper() {
   };
 
   const downloadAll = async () => {
-    const processedImages = images.filter(img => img.output);
+    let finalImages = [...images];
+    
+    // Auto-crop current image if it hasn't been cropped and we have a valid crop box
+    if (finalImages.length > 0 && !finalImages[currentIndex].output && completedCrop && imgRef.current) {
+      const dataUrl = generateCropDataUrl(imgRef.current, completedCrop);
+      if (dataUrl) {
+        finalImages[currentIndex].output = dataUrl;
+        setImages(finalImages);
+      }
+    }
+
+    const processedImages = finalImages.filter(img => img.output);
     if (processedImages.length === 0) return;
 
     if (processedImages.length === 1) {
@@ -131,8 +149,7 @@ export default function ImageCropper() {
     const zip = new JSZip();
     
     for (const img of processedImages) {
-      const response = await fetch(img.output!);
-      const blob = await response.blob();
+      const blob = dataURLtoBlob(img.output!);
       zip.file(`cropped_${img.file.name}`, blob);
     }
 
@@ -188,7 +205,16 @@ export default function ImageCropper() {
             setImages([]);
             return;
           }
-          handleFiles(Array.isArray(file) ? file : [file]);
+          setImages(prev => {
+            if (prev.length > 0) return prev;
+            const initialFiles = Array.isArray(file) ? file : [file];
+            return initialFiles.map(f => ({
+              file: f,
+              preview: URL.createObjectURL(f),
+              output: null
+            }));
+          });
+          setCurrentIndex(0);
         }, [file]);
 
         if (images.length === 0) return null;
@@ -254,21 +280,22 @@ export default function ImageCropper() {
               </div>
 
               {/* Main Working Area */}
-              <div className="flex-1 relative overflow-hidden flex flex-col items-center justify-center p-4 lg:p-8">
+              <div className="flex-1 relative overflow-auto flex flex-col items-center justify-center p-4 lg:p-8">
                 {currentImage && (
-                  <div className="w-full h-full flex items-center justify-center">
+                  <div className="w-full h-full flex items-center justify-center min-h-0">
                     {currentImage.output ? (
-                      <div className="relative animate-in zoom-in-95 duration-500 flex items-center justify-center w-full h-full">
+                      <div 
+                        className="relative animate-in zoom-in-95 duration-500 flex items-center justify-center w-full h-full transition-transform duration-300 origin-center"
+                        style={{ transform: `scale(${zoom})` }}
+                      >
                         <img 
                           src={currentImage.output} 
                           alt="Cropped" 
                           style={{ 
-                            maxHeight: '100%', 
-                            maxWidth: '100%',
-                            transform: `scale(${zoom})`,
-                            objectFit: 'contain'
+                            maxHeight: '70vh', 
+                            maxWidth: '100%'
                           }}
-                          className="shadow-2xl rounded-xl border border-border transition-transform duration-300" 
+                          className="shadow-2xl rounded-xl border border-border" 
                         />
                         <button 
                           onClick={() => {
@@ -284,28 +311,31 @@ export default function ImageCropper() {
                         </button>
                       </div>
                     ) : (
-                      <div className="w-full h-full max-h-[60vh] lg:max-h-none flex items-center justify-center p-4">
-                        <ReactCrop
-                          crop={crop}
-                          onChange={(c) => setCrop(c)}
-                          onComplete={(c) => setCompletedCrop(c)}
-                          aspect={aspect}
-                          className="shadow-2xl rounded-sm max-h-full"
+                      <div className="w-full h-full max-h-[70vh] lg:max-h-none flex items-center justify-center p-4">
+                        <div 
+                          className="transition-transform duration-300 origin-center flex items-center justify-center"
+                          style={{ transform: `scale(${zoom})` }}
                         >
-                          <img 
-                            ref={imgRef} 
-                            src={currentImage.preview} 
-                            onLoad={onLoad} 
-                            alt="Crop target" 
-                            style={{ 
-                              maxHeight: '100%', 
-                              maxWidth: '100%',
-                              transform: `scale(${zoom})`,
-                              objectFit: 'contain'
-                            }}
-                            className="block w-auto h-auto transition-transform duration-300 origin-center" 
-                          />
-                        </ReactCrop>
+                          <ReactCrop
+                            crop={crop}
+                            onChange={(c) => setCrop(c)}
+                            onComplete={(c) => setCompletedCrop(c)}
+                            aspect={aspect}
+                            className="shadow-2xl rounded-sm max-h-full"
+                          >
+                            <img 
+                              ref={imgRef} 
+                              src={currentImage.preview} 
+                              onLoad={onLoad} 
+                              alt="Crop target" 
+                              style={{ 
+                                maxHeight: '70vh', 
+                                maxWidth: '100%'
+                              }}
+                              className="block w-auto h-auto" 
+                            />
+                          </ReactCrop>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -414,7 +444,7 @@ export default function ImageCropper() {
                         await downloadAll(); 
                         onComplete(); 
                       }} 
-                      className="btn bg w-full py-4 rounded-2xl gap-2 shadow-md text-xs font-black uppercase tracking-widest"
+                      className="btn bp w-full py-4 rounded-2xl gap-2 shadow-md text-xs font-black uppercase tracking-widest"
                     >
                       <Download className="w-4 h-4" />
                       Download {processedCount > 1 ? `All (${processedCount})` : 'Cropped'}

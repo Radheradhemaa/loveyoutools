@@ -309,8 +309,16 @@ export default function GifMaker() {
             setError(null);
             return;
           }
-          if (file) handleFiles(file);
-        }, [file, handleFiles]);
+          setFrames(prev => {
+            if (prev.length > 0) return prev;
+            const selected = Array.isArray(file) ? file : [file];
+            return selected.map((f: File) => ({
+              id: Math.random().toString(36).substr(2, 9),
+              file: f,
+              preview: URL.createObjectURL(f)
+            }));
+          });
+        }, [file]);
 
         return (
           <div className="max-w-[1400px] mx-auto w-full p-4 lg:p-6 flex flex-col gap-6 h-full">

@@ -131,7 +131,15 @@ export default function ImageColorPicker() {
             setImages([]);
             return;
           }
-          handleFiles(Array.isArray(file) ? file : [file]);
+          setImages(prev => {
+            if (prev.length > 0) return prev;
+            const initialFiles = Array.isArray(file) ? file : [file];
+            return initialFiles.map(f => ({
+              file: f,
+              preview: URL.createObjectURL(f)
+            }));
+          });
+          setCurrentIndex(0);
         }, [file]);
 
         if (images.length === 0) return null;
