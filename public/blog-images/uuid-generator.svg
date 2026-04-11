@@ -1,0 +1,74 @@
+<svg width="800" height="400" viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="rgba(219, 234, 254, 0.2)" />
+      <stop offset="100%" stop-color="rgba(219, 234, 254, 0.8)" />
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.95" />
+    </linearGradient>
+    <pattern id="dots" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#000000" fill-opacity="0.05" />
+    </pattern>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="10" stdDeviation="15" flood-color="#000000" flood-opacity="0.1" />
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="400" fill="#ffffff" />
+  <rect width="800" height="400" fill="url(#dots)" />
+  <rect width="800" height="400" fill="url(#bgGrad)" />
+
+  <!-- Abstract Decorative Elements -->
+  <circle cx="100" cy="50" r="150" fill="rgba(219, 234, 254, 0.4)" filter="blur(40px)" />
+  <circle cx="700" cy="350" r="200" fill="rgba(219, 234, 254, 0.3)" filter="blur(60px)" />
+
+  <!-- Browser Window Mockup -->
+  <g transform="translate(100, 40)" filter="url(#shadow)">
+    <!-- Window Body -->
+    <rect x="0" y="0" width="600" height="320" rx="16" fill="url(#cardGrad)" stroke="#e5e7eb" stroke-width="1" />
+    
+    <!-- Header -->
+    <path d="M0 16 C0 7.163 7.163 0 16 0 L584 0 C592.837 0 600 7.163 600 16 L600 48 L0 48 Z" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1" />
+    <line x1="0" y1="48" x2="600" y2="48" stroke="#e5e7eb" stroke-width="1" />
+    
+    <!-- Mac Dots -->
+    <circle cx="24" cy="24" r="6" fill="#ef4444" />
+    <circle cx="44" cy="24" r="6" fill="#f59e0b" />
+    <circle cx="64" cy="24" r="6" fill="#10b981" />
+    
+    <!-- Address Bar -->
+    <rect x="150" y="14" width="300" height="24" rx="12" fill="#ffffff" stroke="#e5e7eb" stroke-width="1" />
+    <text x="300" y="30" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#9ca3af" text-anchor="middle">loveyoutools.com/uuid-generator</text>
+
+    <!-- Content Area -->
+    <g transform="translate(0, 48)">
+      <!-- Sidebar Mockup -->
+      <rect x="0" y="0" width="160" height="272" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1" />
+      <rect x="24" y="24" width="112" height="8" rx="4" fill="#e5e7eb" />
+      <rect x="24" y="48" width="90" height="8" rx="4" fill="#e5e7eb" />
+      <rect x="24" y="72" width="100" height="8" rx="4" fill="#e5e7eb" />
+      <rect x="24" y="96" width="80" height="8" rx="4" fill="#e5e7eb" />
+      
+      <!-- Main Content Mockup -->
+      <g transform="translate(160, 0)">
+        <!-- Icon Container -->
+        <rect x="176" y="30" width="88" height="88" rx="24" fill="rgba(219, 234, 254, 0.3)" stroke="rgba(219, 234, 254, 0.5)" stroke-width="2" />
+        <text x="220" y="86" font-family="system-ui, -apple-system, sans-serif" font-size="48" text-anchor="middle">🆔</text>
+        
+        <!-- Title -->
+        <text x="220" y="150" font-family="system-ui, -apple-system, sans-serif" font-size="24" font-weight="800" fill="#111827" text-anchor="middle" letter-spacing="-0.5">UUID Generator</text>
+        
+        <!-- Description lines -->
+        <rect x="95" y="175" width="250" height="6" rx="3" fill="#d1d5db" />
+        <rect x="120" y="195" width="200" height="6" rx="3" fill="#d1d5db" />
+        
+        <!-- Action Button -->
+        <rect x="160" y="225" width="120" height="36" rx="18" fill="#111827" />
+        <text x="220" y="248" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#ffffff" text-anchor="middle">Open Tool</text>
+      </g>
+    </g>
+  </g>
+</svg>
