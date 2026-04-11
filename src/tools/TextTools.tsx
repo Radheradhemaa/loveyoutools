@@ -25,7 +25,7 @@ export default function TextTools({ toolId }: { toolId: string }) {
   const processText = (action: string) => {
     let res = '';
     switch (toolId) {
-      case 'case-conv':
+      case 'case-converter':
         if (action === 'upper') res = input.toUpperCase();
         if (action === 'lower') res = input.toLowerCase();
         if (action === 'title') res = input.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
@@ -34,18 +34,18 @@ export default function TextTools({ toolId }: { toolId: string }) {
         if (action === 'snake') res = input.match(/[A-Z]{2,}(?=[A-Z][a-z]+[0-9]*|\b)|[A-Z]?[a-z]+[0-9]*|[A-Z]|[0-9]+/g)?.map(x => x.toLowerCase()).join('_') || '';
         if (action === 'kebab') res = input.match(/[A-Z]{2,}(?=[A-Z][a-z]+[0-9]*|\b)|[A-Z]?[a-z]+[0-9]*|[A-Z]|[0-9]+/g)?.map(x => x.toLowerCase()).join('-') || '';
         break;
-      case 'remove-dupes':
+      case 'remove-duplicate-lines':
         const lines = input.split('\n');
         res = [...new Set(lines)].join('\n');
         break;
-      case 'text-sort':
+      case 'text-sorter':
         let arr = input.split('\n');
         if (action === 'az') res = arr.sort().join('\n');
         if (action === 'za') res = arr.sort().reverse().join('\n');
         if (action === 'len') res = arr.sort((a, b) => a.length - b.length).join('\n');
         if (action === 'rev') res = arr.reverse().join('\n');
         break;
-      case 'text-compare':
+      case 'text-compare-diff':
         // Simple diff
         const lines1 = input.split('\n');
         const lines2 = input2.split('\n');
@@ -60,23 +60,23 @@ export default function TextTools({ toolId }: { toolId: string }) {
         }
         res = diff;
         break;
-      case 'whitespace-rm':
+      case 'whitespace-remover':
         if (action === 'trim') res = input.split('\n').map(l => l.trim()).join('\n');
         if (action === 'extra') res = input.replace(/[ \t]{2,}/g, ' ');
         if (action === 'all') res = input.replace(/\s+/g, '');
         if (action === 'empty') res = input.replace(/^\s*[\r\n]/gm, '');
         break;
-      case 'lorem-gen':
+      case 'lorem-ipsum-generator':
         const paras = parseInt(options.paras || '3');
         const lorem = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.";
         res = Array(paras).fill(lorem).join('\n\n');
         break;
-      case 'text-reverse':
+      case 'text-reverser':
         if (action === 'chars') res = input.split('').reverse().join('');
         if (action === 'words') res = input.split(' ').reverse().join(' ');
         if (action === 'lines') res = input.split('\n').reverse().join('\n');
         break;
-      case 'text-encode':
+      case 'text-encoder-decoder':
         if (action === 'b64e') res = btoa(unescape(encodeURIComponent(input)));
         if (action === 'b64d') { try { res = decodeURIComponent(escape(atob(input))); } catch(e) { res = 'Invalid Base64'; } }
         if (action === 'urie') res = encodeURIComponent(input);
@@ -94,7 +94,7 @@ export default function TextTools({ toolId }: { toolId: string }) {
 
   return (
     <div className="space-y-6">
-      {toolId === 'text-compare' ? (
+      {toolId === 'text-compare-diff' ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="fg">
             <label className="fl">Original Text</label>
@@ -108,7 +108,7 @@ export default function TextTools({ toolId }: { toolId: string }) {
             <button onClick={() => processText('compare')} className="btn bp w-full">Compare Texts</button>
           </div>
         </div>
-      ) : toolId === 'lorem-gen' ? (
+      ) : toolId === 'lorem-ipsum-generator' ? (
         <div className="fg">
           <label className="fl">Number of Paragraphs</label>
           <input type="number" className="fi mb-4" value={options.paras || 3} onChange={e => setOptions({...options, paras: e.target.value})} min="1" max="100" />
@@ -125,7 +125,7 @@ export default function TextTools({ toolId }: { toolId: string }) {
           <textarea className="fta min-h-[60vh]" value={input} onChange={e => setInput(e.target.value)} placeholder="Enter text here..." />
           
           <div className="brow">
-            {toolId === 'case-conv' && (
+            {toolId === 'case-converter' && (
               <>
                 <button onClick={() => processText('upper')} className="btn bs2">UPPERCASE</button>
                 <button onClick={() => processText('lower')} className="btn bs2">lowercase</button>
@@ -136,10 +136,10 @@ export default function TextTools({ toolId }: { toolId: string }) {
                 <button onClick={() => processText('kebab')} className="btn bs2">kebab-case</button>
               </>
             )}
-            {toolId === 'remove-dupes' && (
+            {toolId === 'remove-duplicate-lines' && (
               <button onClick={() => processText('rm')} className="btn bp">Remove Duplicate Lines</button>
             )}
-            {toolId === 'text-sort' && (
+            {toolId === 'text-sorter' && (
               <>
                 <button onClick={() => processText('az')} className="btn bs2">Sort A-Z</button>
                 <button onClick={() => processText('za')} className="btn bs2">Sort Z-A</button>
@@ -147,7 +147,7 @@ export default function TextTools({ toolId }: { toolId: string }) {
                 <button onClick={() => processText('rev')} className="btn bs2">Reverse Order</button>
               </>
             )}
-            {toolId === 'whitespace-rm' && (
+            {toolId === 'whitespace-remover' && (
               <>
                 <button onClick={() => processText('trim')} className="btn bs2">Trim Lines</button>
                 <button onClick={() => processText('extra')} className="btn bs2">Remove Extra Spaces</button>
@@ -155,14 +155,14 @@ export default function TextTools({ toolId }: { toolId: string }) {
                 <button onClick={() => processText('all')} className="btn bs2">Remove All Whitespace</button>
               </>
             )}
-            {toolId === 'text-reverse' && (
+            {toolId === 'text-reverser' && (
               <>
                 <button onClick={() => processText('chars')} className="btn bs2">Reverse Characters</button>
                 <button onClick={() => processText('words')} className="btn bs2">Reverse Words</button>
                 <button onClick={() => processText('lines')} className="btn bs2">Reverse Lines</button>
               </>
             )}
-            {toolId === 'text-encode' && (
+            {toolId === 'text-encoder-decoder' && (
               <>
                 <button onClick={() => processText('b64e')} className="btn bs2">Base64 Encode</button>
                 <button onClick={() => processText('b64d')} className="btn bs2">Base64 Decode</button>

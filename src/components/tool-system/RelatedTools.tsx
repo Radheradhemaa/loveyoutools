@@ -37,7 +37,7 @@ export default function RelatedTools({ currentToolId, limit = 3 }: RelatedToolsP
         {related.map(tool => (
           <Link
             key={tool.id}
-            to={`/tool/${tool.id}`}
+            to={`/${tool.id}`}
             className="group flex items-center gap-3 p-2 rounded-xl border border-border/50 bg-bg-secondary/30 hover:bg-accent/5 hover:border-accent/20 transition-all"
           >
             <div 

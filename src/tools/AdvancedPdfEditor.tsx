@@ -297,7 +297,8 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
       const canvas = new Canvas(canvasRef.current, {
         width: viewport.width * state.zoom,
         height: viewport.height * state.zoom,
-        backgroundColor: 'white'
+        backgroundColor: 'white',
+        imageSmoothingEnabled: true
       });
       canvas.setZoom(state.zoom);
       
@@ -310,7 +311,7 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
       
       await (page as any).render({ canvasContext: context!, viewport }).promise;
       
-      const bgImage = await FabricImage.fromURL(tempCanvas.toDataURL());
+      const bgImage = await FabricImage.fromURL(tempCanvas.toDataURL('image/png'));
       bgImage.set({ selectable: false, evented: false });
       canvas.add(bgImage);
       canvas.sendObjectToBack(bgImage);
@@ -328,48 +329,68 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
           const fontSize = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3]) || item.height * viewport.scale;
           
           const fontName = item.fontName?.toLowerCase() || '';
-          const fontWeight = fontName.includes('bold') ? 'bold' : 'normal';
-          const fontStyle = fontName.includes('italic') ? 'italic' : 'normal';
+          const isBold = fontName.includes('bold') || item.fontWeight > 500;
+          const isItalic = fontName.includes('italic') || fontName.includes('oblique');
           
           let color = '#000000';
           if (item.color && Array.isArray(item.color)) {
             color = `rgb(${item.color[0]}, ${item.color[1]}, ${item.color[2]})`;
+          } else if (item.g) { // Some pdf.js versions use 'g' for color
+             color = `rgb(${item.g}, ${item.g}, ${item.g})`;
           }
-
+          
           const text = new IText(item.str, {
             left: tx[4],
             top: tx[5] - fontSize * 0.8,
             fontSize: fontSize,
-            fontFamily: 'sans-serif',
-            fontWeight: fontWeight,
-            fontStyle: fontStyle,
+            fontFamily: fontName.includes('serif') ? 'serif' : fontName.includes('mono') ? 'monospace' : 'sans-serif',
+            fontWeight: isBold ? 'bold' : 'normal',
+            fontStyle: isItalic ? 'italic' : 'normal',
             fill: 'transparent',
             data: { isOriginal: true, originalText: item.str, originalColor: color },
             hoverCursor: 'text',
             selectable: true,
+            hasControls: false,
+            lockRotation: true,
+            lockScalingX: true,
+            lockScalingY: true,
+          });
+
+          text.on('mouseover', () => {
+            if (text.fill === 'transparent') {
+              text.set({ backgroundColor: 'rgba(0, 123, 255, 0.1)' });
+              canvas.renderAll();
+            }
+          });
+
+          text.on('mouseout', () => {
+            if (text.fill === 'transparent') {
+              text.set({ backgroundColor: 'transparent' });
+              canvas.renderAll();
+            }
           });
 
           text.on('selected', () => {
-            text.set({ fill: text.data.originalColor, backgroundColor: 'rgba(255, 255, 255, 0.8)' });
+            text.set({ fill: (text as any).data.originalColor, backgroundColor: 'rgba(255, 255, 255, 0.9)' });
             canvas.renderAll();
           });
 
           text.on('deselected', () => {
-            if (text.text === text.data.originalText) {
+            if (text.text === (text as any).data.originalText) {
               text.set({ fill: 'transparent', backgroundColor: 'transparent' });
             } else {
-              text.set({ fill: text.data.originalColor, backgroundColor: '#ffffff' });
+              text.set({ fill: (text as any).data.originalColor, backgroundColor: 'rgba(255, 255, 255, 1)' });
             }
             canvas.renderAll();
           });
 
           text.on('editing:entered', () => {
-            text.set({ fill: text.data.originalColor, backgroundColor: '#ffffff' });
+            text.set({ fill: (text as any).data.originalColor, backgroundColor: 'rgba(255, 255, 255, 1)' });
             canvas.renderAll();
           });
           
           text.on('changed', () => {
-            text.set({ fill: text.data.originalColor, backgroundColor: '#ffffff' });
+            text.set({ fill: (text as any).data.originalColor, backgroundColor: 'rgba(255, 255, 255, 1)' });
             canvas.renderAll();
           });
 
@@ -395,7 +416,8 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
     if (initialFile) {
       const file = Array.isArray(initialFile) ? initialFile[0] : initialFile;
       setPdfFile(file);
-      loadPdf(file, state.password);
+      setState(prev => ({ ...prev, password: '' }));
+      loadPdf(file, '');
     } else {
       // Reset state when initialFile is null
       setPdfFile(null);
@@ -571,9 +593,10 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
     
     let count = 0;
     objects.forEach(obj => {
+      const originalColor = (obj as any).data?.originalColor || '#000000';
       if (obj.text.includes(state.searchQuery)) {
         obj.set('text', obj.text.replace(new RegExp(state.searchQuery, 'g'), state.replaceQuery));
-        obj.set({ fill: obj.data?.originalColor || '#000000', backgroundColor: '#ffffff' });
+        obj.set({ fill: originalColor, backgroundColor: '#ffffff' });
         count++;
       }
     });
@@ -782,36 +805,40 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
 
         <div className="preview-content-wrapper pt-20 p-4 lg:p-8 relative">
           {state.showSearch && (
-            <div className="absolute top-24 right-8 w-80 bg-surface border border-border rounded-2xl shadow-2xl p-4 z-50 animate-in fade-in slide-in-from-top-4">
+            <div className="absolute top-24 left-1/2 -translate-x-1/2 w-full max-w-md bg-surface border border-border rounded-2xl shadow-2xl p-6 z-50 animate-in fade-in slide-in-from-top-4">
               <div className="flex justify-between items-center mb-4">
-                <h4 className="text-xs font-black uppercase tracking-widest text-text-primary">Search & Replace</h4>
-                <button onClick={() => setState(prev => ({ ...prev, showSearch: false }))} className="p-1 hover:bg-bg-secondary rounded text-text-muted hover:text-text-primary transition-colors">
-                  <X className="w-4 h-4" />
+                <h4 className="text-sm font-black uppercase tracking-widest text-text-primary flex items-center gap-2">
+                  <Search className="w-4 h-4 text-accent" /> Search & Replace
+                </h4>
+                <button onClick={() => setState(prev => ({ ...prev, showSearch: false }))} className="p-2 hover:bg-bg-secondary rounded-xl text-text-muted hover:text-text-primary transition-colors">
+                  <X className="w-5 h-5" />
                 </button>
               </div>
               <div className="space-y-4">
-                <div className="fg">
-                  <label className="fl">Find</label>
-                  <input 
-                    type="text" 
-                    className="fi text-xs"
-                    value={state.searchQuery}
-                    onChange={(e) => setState(prev => ({ ...prev, searchQuery: e.target.value }))}
-                    placeholder="Search text..."
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="fg">
+                    <label className="fl">Find Text</label>
+                    <input 
+                      type="text" 
+                      className="fi text-sm"
+                      value={state.searchQuery}
+                      onChange={(e) => setState(prev => ({ ...prev, searchQuery: e.target.value }))}
+                      placeholder="Search for..."
+                    />
+                  </div>
+                  <div className="fg">
+                    <label className="fl">Replace with</label>
+                    <input 
+                      type="text" 
+                      className="fi text-sm"
+                      value={state.replaceQuery}
+                      onChange={(e) => setState(prev => ({ ...prev, replaceQuery: e.target.value }))}
+                      placeholder="Replace with..."
+                    />
+                  </div>
                 </div>
-                <div className="fg">
-                  <label className="fl">Replace with</label>
-                  <input 
-                    type="text" 
-                    className="fi text-xs"
-                    value={state.replaceQuery}
-                    onChange={(e) => setState(prev => ({ ...prev, replaceQuery: e.target.value }))}
-                    placeholder="Replacement text..."
-                  />
-                </div>
-                <button onClick={handleSearchReplace} className="btn bp w-full py-2 text-xs">
-                  Replace All
+                <button onClick={handleSearchReplace} className="btn bp w-full py-3 text-sm font-bold uppercase tracking-wider">
+                  Replace All Occurrences
                 </button>
               </div>
             </div>

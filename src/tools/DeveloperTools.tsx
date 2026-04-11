@@ -22,15 +22,15 @@ export default function DeveloperTools({ toolId }: { toolId: string }) {
     let res = '';
     try {
       switch (toolId) {
-        case 'base64':
+        case 'base64-encoder-decoder':
           if (action === 'enc') res = btoa(unescape(encodeURIComponent(input)));
           if (action === 'dec') res = decodeURIComponent(escape(atob(input)));
           break;
-        case 'url-codec':
+        case 'url-encoder-decoder':
           if (action === 'enc') res = encodeURIComponent(input);
           if (action === 'dec') res = decodeURIComponent(input);
           break;
-        case 'color-conv':
+        case 'color-converter-online':
           if (action === 'hex2rgb') {
             const hex = input.replace('#', '');
             const r = parseInt(hex.substring(0, 2), 16);
@@ -45,10 +45,10 @@ export default function DeveloperTools({ toolId }: { toolId: string }) {
             }
           }
           break;
-        case 'uuid-gen':
+        case 'uuid-generator-online':
           res = crypto.randomUUID();
           break;
-        case 'html-min':
+        case 'html-minifier-online':
           res = input.replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim();
           break;
       }
@@ -85,28 +85,28 @@ export default function DeveloperTools({ toolId }: { toolId: string }) {
             <textarea className="fta min-h-[200px]" value={input} onChange={e => setInput(e.target.value)} placeholder="Enter data here..." />
             
             <div className="brow">
-              {toolId === 'base64' && (
+              {toolId === 'base64-encoder-decoder' && (
                 <>
                   <button onClick={() => process('enc')} className="btn bp">Encode Base64</button>
                   <button onClick={() => process('dec')} className="btn bs2">Decode Base64</button>
                 </>
               )}
-              {toolId === 'url-codec' && (
+              {toolId === 'url-encoder-decoder' && (
                 <>
                   <button onClick={() => process('enc')} className="btn bp">URL Encode</button>
                   <button onClick={() => process('dec')} className="btn bs2">URL Decode</button>
                 </>
               )}
-              {toolId === 'color-conv' && (
+              {toolId === 'color-converter-online' && (
                 <>
                   <button onClick={() => process('hex2rgb')} className="btn bp">HEX to RGB</button>
                   <button onClick={() => process('rgb2hex')} className="btn bs2">RGB to HEX</button>
                 </>
               )}
-              {toolId === 'uuid-gen' && (
+              {toolId === 'uuid-generator-online' && (
                 <button onClick={() => process('gen')} className="btn bp w-full">Generate New UUID</button>
               )}
-              {toolId === 'html-min' && (
+              {toolId === 'html-minifier-online' && (
                 <button onClick={() => process('min')} className="btn bp w-full">Minify HTML</button>
               )}
             </div>

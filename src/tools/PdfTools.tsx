@@ -61,12 +61,12 @@ export default function PdfTools({ toolId }: { toolId: string }) {
         }
       }
 
-      if (['pdf-merge', 'jpg-to-pdf', 'png-to-pdf'].includes(toolId)) {
+      if (['merge-pdf', 'jpg-to-pdf', 'png-to-pdf'].includes(toolId)) {
         setFiles(prev => [...prev, ...selectedFiles]);
       } else {
         setFiles([selectedFiles[0]]);
         
-        if (toolId === 'pdf-metadata') {
+        if (toolId === 'pdf-metadata-viewer') {
           const file = selectedFiles[0];
           setMetadata({
             name: file.name,
@@ -219,7 +219,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
         const maxPages = pdfDoc.getPageCount();
 
         switch (toolId) {
-          case 'pdf-watermark': {
+          case 'add-watermark-to-pdf': {
             const pages = pdfDoc.getPages();
             for (const page of pages) {
               const { width, height } = page.getSize();
@@ -234,8 +234,8 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             }
             break;
           }
-          case 'pdf-split':
-          case 'pdf-extract': {
+          case 'split-pdf':
+          case 'extract-pages-from-pdf': {
             const newPdf = await PDFDocument.create();
             const pagesToExtract = parsePages(splitPage, maxPages);
             if (pagesToExtract.length === 0) {
@@ -248,7 +248,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             pdfDoc = newPdf;
             break;
           }
-          case 'pdf-delete-pages': {
+          case 'delete-pdf-pages': {
             const pagesToDelete = parsePages(splitPage, maxPages).sort((a, b) => b - a);
             if (pagesToDelete.length === 0) {
               setError("Invalid page numbers to delete.");
@@ -258,7 +258,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             pagesToDelete.forEach(p => pdfDoc.removePage(p));
             break;
           }
-          case 'pdf-reorder': {
+          case 'reorder-pdf-pages': {
             const newPdf = await PDFDocument.create();
             // Reorder expects exact sequence, e.g., "3,1,2"
             const order = splitPage.split(',').map(p => parseInt(p.trim()) - 1).filter(p => !isNaN(p) && p >= 0 && p < maxPages);
@@ -272,7 +272,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             pdfDoc = newPdf;
             break;
           }
-          case 'pdf-rotate': {
+          case 'rotate-pdf-pages': {
             const pages = pdfDoc.getPages();
             const angle = parseInt(rotationAngle) || 90;
             pages.forEach(p => {
@@ -281,7 +281,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             });
             break;
           }
-          case 'pdf-add-text': {
+          case 'add-text-to-pdf': {
             const pages = pdfDoc.getPages();
             if (pages.length > 0) {
               pages[0].drawText(watermark || 'Sample Text', { // reuse watermark state for text
@@ -293,7 +293,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             }
             break;
           }
-          case 'pdf-add-image': {
+          case 'add-image-to-pdf': {
             if (!watermarkImage) {
               setError("Please select an image to add.");
               setLoading(false);
@@ -324,7 +324,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             setWarning(`This PDF has ${maxPages} pages.`);
             break;
           }
-          case 'pdf-page-numbers': {
+          case 'add-page-numbers': {
             const pages = pdfDoc.getPages();
             pages.forEach((p, i) => {
               p.drawText(`${i + 1}`, {
@@ -336,7 +336,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             });
             break;
           }
-          case 'pdf-remove-metadata': {
+          case 'remove-pdf-metadata': {
             pdfDoc.setTitle('');
             pdfDoc.setAuthor('');
             pdfDoc.setSubject('');
@@ -345,17 +345,17 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             pdfDoc.setCreator('');
             break;
           }
-          case 'pdf-flatten': {
+          case 'flatten-pdf': {
             const form = pdfDoc.getForm();
             form.flatten();
             break;
           }
-          case 'pdf-protect': {
+          case 'pdf-password-protect': {
             pdfDoc.setAuthor('Protected Document');
             setWarning("Note: True encryption is not supported in the browser. The file will be saved without a password.");
             break;
           }
-          case 'pdf-compress': {
+          case 'compress-pdf': {
             pdfDoc.setCreator('PDF Compressor');
             break;
           }
@@ -415,7 +415,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
     document.body.removeChild(a);
   };
 
-  const isMultiFileTool = ['pdf-merge', 'jpg-to-pdf', 'png-to-pdf'].includes(toolId);
+  const isMultiFileTool = ['merge-pdf', 'jpg-to-pdf', 'png-to-pdf'].includes(toolId);
   const acceptedTypes = toolId === 'jpg-to-pdf' ? 'image/jpeg' : toolId === 'png-to-pdf' ? 'image/png' : 'application/pdf';
 
   return (
@@ -513,7 +513,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
               </div>
             )}
 
-            {toolId === 'pdf-metadata' && metadata && (
+            {toolId === 'pdf-metadata-viewer' && metadata && (
               <div className="space-y-2 text-sm">
                 {Object.entries(metadata).map(([k, v]) => (
                   <div key={k} className="flex justify-between border-b border-border pb-1">
@@ -524,7 +524,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
               </div>
             )}
 
-            {toolId !== 'pdf-metadata' && toolId !== 'pdf-reader' && (
+            {toolId !== 'pdf-metadata-viewer' && toolId !== 'pdf-reader-online' && (
               <button onClick={processPdf} disabled={loading || (isMultiFileTool && files.length < 1)} className="btn bp w-full mt-6 gap-2">
                 {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Settings className="w-4 h-4" />}
                 Process PDF
@@ -533,10 +533,10 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             {isMultiFileTool && files.length < 1 && (
               <p className="text-xs text-red-500 mt-2 text-center">Please select at least 1 file.</p>
             )}
-            {toolId === 'pdf-metadata' && (
+            {toolId === 'pdf-metadata-viewer' && (
               <p className="text-xs text-text-muted mt-2 text-center">Metadata is automatically extracted when you select a file.</p>
             )}
-            {toolId === 'pdf-reader' && (
+            {toolId === 'pdf-reader-online' && (
               <p className="text-xs text-text-muted mt-2 text-center">The PDF is displayed in the reader on the right.</p>
             )}
           </div>
@@ -586,7 +586,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
               )}
             </div>
             
-            {toolId === 'pdf-reader' && files.length > 0 && (
+            {toolId === 'pdf-reader-online' && files.length > 0 && (
               <div className="mt-6 flex-1 min-h-[60vh] lg:min-h-[600px]">
                 <iframe src={URL.createObjectURL(files[0])} className="w-full h-full rounded-lg border border-border" />
               </div>
