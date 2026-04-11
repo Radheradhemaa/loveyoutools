@@ -398,6 +398,23 @@ export default function PdfTools({ toolId }: { toolId: string }) {
     document.body.removeChild(a);
   };
 
+  const downloadAllAsZip = async () => {
+    if (outputFiles.length === 0) return;
+    const zip = new JSZip();
+    outputFiles.forEach(f => {
+      const base64Data = f.url.split(',')[1];
+      zip.file(f.name, base64Data, { base64: true });
+    });
+    const zipContent = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(zipContent);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `processed_${toolId}_${Date.now()}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   const isMultiFileTool = ['pdf-merge', 'jpg-to-pdf', 'png-to-pdf'].includes(toolId);
   const acceptedTypes = toolId === 'jpg-to-pdf' ? 'image/jpeg' : toolId === 'png-to-pdf' ? 'image/png' : 'application/pdf';
 
@@ -600,6 +617,11 @@ export default function PdfTools({ toolId }: { toolId: string }) {
               {output && (
                 <button onClick={downloadPdf} className="btn bp flex-1 gap-2">
                   <Download className="w-4 h-4" /> Download Result
+                </button>
+              )}
+              {outputFiles.length > 0 && (
+                <button onClick={downloadAllAsZip} className="btn bp flex-1 gap-2">
+                  <Download className="w-4 h-4" /> Download All as ZIP
                 </button>
               )}
             </div>

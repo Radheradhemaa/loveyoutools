@@ -56,7 +56,7 @@ import {
   Signature
 } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
-import { Canvas, IText, Rect, Circle, Image as FabricImage, Path, Group } from 'fabric';
+import { Canvas, IText, Rect, Circle, Image as FabricImage, Path, Group, PencilBrush } from 'fabric';
 import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
 import Tesseract from 'tesseract.js';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -254,6 +254,7 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
   const containerRef = useRef<HTMLDivElement>(null);
   const pdfDocRef = useRef<any>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const originalDimensions = useRef({ width: 0, height: 0 });
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -287,16 +288,18 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
     try {
       const page = await pdfDocRef.current.getPage(pageNum);
       const viewport = page.getViewport({ scale: 2.0 });
+      originalDimensions.current = { width: viewport.width, height: viewport.height };
       
       if (fabricCanvas.current) {
         fabricCanvas.current.dispose();
       }
       
       const canvas = new Canvas(canvasRef.current, {
-        width: viewport.width,
-        height: viewport.height,
+        width: viewport.width * state.zoom,
+        height: viewport.height * state.zoom,
         backgroundColor: 'white'
       });
+      canvas.setZoom(state.zoom);
       
       fabricCanvas.current = canvas;
 
@@ -310,7 +313,7 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
       const bgImage = await FabricImage.fromURL(tempCanvas.toDataURL());
       bgImage.set({ selectable: false, evented: false });
       canvas.add(bgImage);
-      (canvas as any).sendToBack(bgImage);
+      canvas.sendObjectToBack(bgImage);
 
       if (state.pageData[pageNum]) {
         await canvas.loadFromJSON(state.pageData[pageNum]);
@@ -319,15 +322,57 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
         const items = textContent.items as any[];
         
         items.forEach(item => {
+          if (!item.str.trim()) return;
+          
           const tx = pdfjs.Util.transform(viewport.transform, item.transform);
+          const fontSize = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3]) || item.height * viewport.scale;
+          
+          const fontName = item.fontName?.toLowerCase() || '';
+          const fontWeight = fontName.includes('bold') ? 'bold' : 'normal';
+          const fontStyle = fontName.includes('italic') ? 'italic' : 'normal';
+          
+          let color = '#000000';
+          if (item.color && Array.isArray(item.color)) {
+            color = `rgb(${item.color[0]}, ${item.color[1]}, ${item.color[2]})`;
+          }
+
           const text = new IText(item.str, {
             left: tx[4],
-            top: tx[5] - (item.height * viewport.scale),
-            fontSize: item.height * viewport.scale,
-            fontFamily: 'Arial',
-            fill: '#000000',
-            data: { isOriginal: true, id: Math.random().toString(36).substr(2, 9) }
+            top: tx[5] - fontSize * 0.8,
+            fontSize: fontSize,
+            fontFamily: 'sans-serif',
+            fontWeight: fontWeight,
+            fontStyle: fontStyle,
+            fill: 'transparent',
+            data: { isOriginal: true, originalText: item.str, originalColor: color },
+            hoverCursor: 'text',
+            selectable: true,
           });
+
+          text.on('selected', () => {
+            text.set({ fill: text.data.originalColor, backgroundColor: 'rgba(255, 255, 255, 0.8)' });
+            canvas.renderAll();
+          });
+
+          text.on('deselected', () => {
+            if (text.text === text.data.originalText) {
+              text.set({ fill: 'transparent', backgroundColor: 'transparent' });
+            } else {
+              text.set({ fill: text.data.originalColor, backgroundColor: '#ffffff' });
+            }
+            canvas.renderAll();
+          });
+
+          text.on('editing:entered', () => {
+            text.set({ fill: text.data.originalColor, backgroundColor: '#ffffff' });
+            canvas.renderAll();
+          });
+          
+          text.on('changed', () => {
+            text.set({ fill: text.data.originalColor, backgroundColor: '#ffffff' });
+            canvas.renderAll();
+          });
+
           canvas.add(text);
         });
       }
@@ -350,38 +395,7 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
     if (initialFile) {
       const file = Array.isArray(initialFile) ? initialFile[0] : initialFile;
       setPdfFile(file);
-      
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const loadingTask = pdfjs.getDocument(data);
-        const pdf = await loadingTask.promise;
-        pdfDocRef.current = pdf;
-        
-        const order = Array.from({ length: pdf.numPages }, (_, i) => i + 1);
-        setState(prev => ({ ...prev, pageOrder: order, isProcessing: true }));
-        
-        const newThumbnails = [];
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const viewport = page.getViewport({ scale: 0.3 });
-          const canvas = document.createElement('canvas');
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          await (page as any).render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
-          newThumbnails.push(canvas.toDataURL());
-        }
-        
-        setState(prev => ({ 
-          ...prev, 
-          thumbnails: newThumbnails, 
-          isProcessing: false,
-          currentPage: 1
-        }));
-        
-        renderPage(1);
-      };
-      reader.readAsArrayBuffer(file);
+      loadPdf(file, state.password);
     } else {
       // Reset state when initialFile is null
       setPdfFile(null);
@@ -414,11 +428,75 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
     }
   }, [initialFile]);
 
+  const loadPdf = (file: File, password?: string) => {
+    setState(prev => ({ ...prev, isProcessing: true, isPasswordProtected: false }));
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const loadingTask = pdfjs.getDocument({ data, password });
+        const pdf = await loadingTask.promise;
+        pdfDocRef.current = pdf;
+        
+        const order = Array.from({ length: pdf.numPages }, (_, i) => i + 1);
+        setState(prev => ({ ...prev, pageOrder: order }));
+        
+        const newThumbnails = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 0.3 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          await (page as any).render({ canvasContext: canvas.getContext('2d')!, viewport }).promise;
+          newThumbnails.push(canvas.toDataURL());
+        }
+        
+        setState(prev => ({ 
+          ...prev, 
+          thumbnails: newThumbnails, 
+          isProcessing: false,
+          currentPage: 1,
+          isPasswordProtected: false
+        }));
+        
+        renderPage(1);
+      } catch (error: any) {
+        if (error.name === 'PasswordException') {
+          setState(prev => ({ ...prev, isPasswordProtected: true, isProcessing: false }));
+        } else {
+          console.error('Error loading PDF:', error);
+          setState(prev => ({ ...prev, isProcessing: false }));
+        }
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pdfFile) {
+      loadPdf(pdfFile, state.password);
+    }
+  };
+
+  useEffect(() => {
+    if (fabricCanvas.current && originalDimensions.current.width > 0) {
+      const canvas = fabricCanvas.current;
+      canvas.setDimensions({
+        width: originalDimensions.current.width * state.zoom,
+        height: originalDimensions.current.height * state.zoom
+      });
+      canvas.setZoom(state.zoom);
+    }
+  }, [state.zoom]);
+
   const addText = () => {
     if (!fabricCanvas.current) return;
+    fabricCanvas.current.isDrawingMode = false;
     const text = new IText('Type something...', {
-      left: 100,
-      top: 100,
+      left: 100 / state.zoom,
+      top: 100 / state.zoom,
       fontFamily: 'Arial',
       fontSize: 24,
       fill: state.isDarkMode ? '#ffffff' : '#000000'
@@ -436,8 +514,11 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
     reader.onload = async (f) => {
       const img = await FabricImage.fromURL(f.target?.result as string);
       img.scaleToWidth(200);
+      fabricCanvas.current!.isDrawingMode = false;
       fabricCanvas.current?.add(img);
       fabricCanvas.current?.setActiveObject(img);
+      fabricCanvas.current?.renderAll();
+      setState(prev => ({ ...prev, tool: 'select' }));
     };
     reader.readAsDataURL(file);
   };
@@ -445,14 +526,31 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
   const togglePen = (isHighlight = false) => {
     if (!fabricCanvas.current) return;
     const canvas = fabricCanvas.current;
-    canvas.isDrawingMode = !canvas.isDrawingMode;
-    if (canvas.isDrawingMode) {
-      canvas.freeDrawingBrush!.width = isHighlight ? 20 : 5;
-      canvas.freeDrawingBrush!.color = isHighlight ? 'rgba(255, 255, 0, 0.3)' : (state.isDarkMode ? '#ffffff' : '#000000');
-      setState(prev => ({ ...prev, tool: isHighlight ? 'highlight' : 'pen' }));
-    } else {
-      setState(prev => ({ ...prev, tool: 'select' }));
+    canvas.isDrawingMode = true;
+    if (!canvas.freeDrawingBrush) {
+      canvas.freeDrawingBrush = new PencilBrush(canvas);
     }
+    canvas.freeDrawingBrush.width = isHighlight ? 20 : 5;
+    canvas.freeDrawingBrush.color = isHighlight ? 'rgba(255, 255, 0, 0.3)' : (state.isDarkMode ? '#ffffff' : '#000000');
+    setState(prev => ({ ...prev, tool: isHighlight ? 'highlight' : 'pen' }));
+  };
+
+  const toggleEraser = () => {
+    if (!fabricCanvas.current) return;
+    const canvas = fabricCanvas.current;
+    canvas.isDrawingMode = true;
+    if (!canvas.freeDrawingBrush) {
+      canvas.freeDrawingBrush = new PencilBrush(canvas);
+    }
+    canvas.freeDrawingBrush.width = 20;
+    canvas.freeDrawingBrush.color = '#ffffff';
+    setState(prev => ({ ...prev, tool: 'eraser' }));
+  };
+
+  const setSelectTool = () => {
+    if (!fabricCanvas.current) return;
+    fabricCanvas.current.isDrawingMode = false;
+    setState(prev => ({ ...prev, tool: 'select' }));
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -475,6 +573,7 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
     objects.forEach(obj => {
       if (obj.text.includes(state.searchQuery)) {
         obj.set('text', obj.text.replace(new RegExp(state.searchQuery, 'g'), state.replaceQuery));
+        obj.set({ fill: obj.data?.originalColor || '#000000', backgroundColor: '#ffffff' });
         count++;
       }
     });
@@ -482,6 +581,7 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
     if (count > 0) {
       canvas.renderAll();
       savePageState();
+      setState(prev => ({ ...prev, showSearch: false }));
     }
   };
 
@@ -564,7 +664,7 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
               <Settings2 className="w-4 h-4 text-accent" /> Editing Tools
             </h3>
             <div className="flex flex-wrap items-center gap-2 bg-bg-secondary p-2 rounded-xl border border-border">
-              <button onClick={() => setState(prev => ({ ...prev, tool: 'select' }))} className={`p-2 rounded-lg transition-all ${state.tool === 'select' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Select">
+              <button onClick={setSelectTool} className={`p-2 rounded-lg transition-all ${state.tool === 'select' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Select">
                 <MousePointer2 className="w-5 h-5" />
               </button>
               <button onClick={addText} className={`p-2 rounded-lg transition-all ${state.tool === 'text' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Add Text">
@@ -576,40 +676,17 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
               <button onClick={() => togglePen(true)} className={`p-2 rounded-lg transition-all ${state.tool === 'highlight' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Highlight">
                 <Highlighter className="w-5 h-5" />
               </button>
+              <button onClick={toggleEraser} className={`p-2 rounded-lg transition-all ${state.tool === 'eraser' ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Whiteout / Eraser">
+                <Eraser className="w-5 h-5" />
+              </button>
               <div className="h-6 w-px bg-border mx-1" />
-              <div className="relative group">
-                <button className={`p-2 rounded-lg transition-all ${state.showSearch ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} title="Search & Replace">
-                  <Search className="w-5 h-5" />
-                </button>
-                <div className="absolute top-full left-0 mt-2 w-72 bg-surface border border-border rounded-2xl shadow-2xl p-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                  <h4 className="text-xs font-black uppercase tracking-widest mb-4 text-text-primary">Search & Replace</h4>
-                  <div className="space-y-4">
-                    <div className="fg">
-                      <label className="fl">Find</label>
-                      <input 
-                        type="text" 
-                        className="fi text-xs"
-                        value={state.searchQuery}
-                        onChange={(e) => setState(prev => ({ ...prev, searchQuery: e.target.value }))}
-                        placeholder="Search text..."
-                      />
-                    </div>
-                    <div className="fg">
-                      <label className="fl">Replace with</label>
-                      <input 
-                        type="text" 
-                        className="fi text-xs"
-                        value={state.replaceQuery}
-                        onChange={(e) => setState(prev => ({ ...prev, replaceQuery: e.target.value }))}
-                        placeholder="Replacement text..."
-                      />
-                    </div>
-                    <button onClick={handleSearchReplace} className="btn bp w-full py-2 text-xs">
-                      Replace All
-                    </button>
-                  </div>
-                </div>
-              </div>
+              <button 
+                onClick={() => setState(prev => ({ ...prev, showSearch: !prev.showSearch }))}
+                className={`p-2 rounded-lg transition-all ${state.showSearch ? 'bg-accent text-white shadow-lg' : 'hover:bg-border text-text-muted'}`} 
+                title="Search & Replace"
+              >
+                <Search className="w-5 h-5" />
+              </button>
               <button onClick={() => imageInputRef.current?.click()} className="p-2 rounded-lg hover:bg-border text-text-muted transition-all" title="Add Image">
                 <ImageIcon className="w-5 h-5" />
               </button>
@@ -703,15 +780,45 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
           </div>
         </div>
 
-        <div className="preview-content-wrapper pt-20 p-4 lg:p-8">
-          <div className="flex-1 w-full h-full overflow-auto bg-bg-secondary/30 rounded-xl border border-border flex items-center justify-center p-4">
-            <div 
-              className="shadow-2xl bg-white transition-transform duration-200"
-              style={{ 
-                transform: `scale(${state.zoom})`,
-                transformOrigin: 'center center'
-              }}
-            >
+        <div className="preview-content-wrapper pt-20 p-4 lg:p-8 relative">
+          {state.showSearch && (
+            <div className="absolute top-24 right-8 w-80 bg-surface border border-border rounded-2xl shadow-2xl p-4 z-50 animate-in fade-in slide-in-from-top-4">
+              <div className="flex justify-between items-center mb-4">
+                <h4 className="text-xs font-black uppercase tracking-widest text-text-primary">Search & Replace</h4>
+                <button onClick={() => setState(prev => ({ ...prev, showSearch: false }))} className="p-1 hover:bg-bg-secondary rounded text-text-muted hover:text-text-primary transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="space-y-4">
+                <div className="fg">
+                  <label className="fl">Find</label>
+                  <input 
+                    type="text" 
+                    className="fi text-xs"
+                    value={state.searchQuery}
+                    onChange={(e) => setState(prev => ({ ...prev, searchQuery: e.target.value }))}
+                    placeholder="Search text..."
+                  />
+                </div>
+                <div className="fg">
+                  <label className="fl">Replace with</label>
+                  <input 
+                    type="text" 
+                    className="fi text-xs"
+                    value={state.replaceQuery}
+                    onChange={(e) => setState(prev => ({ ...prev, replaceQuery: e.target.value }))}
+                    placeholder="Replacement text..."
+                  />
+                </div>
+                <button onClick={handleSearchReplace} className="btn bp w-full py-2 text-xs">
+                  Replace All
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex-1 w-full h-full overflow-auto bg-bg-secondary/30 rounded-xl border border-border p-4">
+            <div className="shadow-2xl bg-white mx-auto w-max">
               <canvas ref={canvasRef} />
             </div>
           </div>
@@ -722,6 +829,28 @@ const PdfEditorWorkspace = React.forwardRef(({ initialFile, onComplete, onReset 
                 <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
                 <p className="font-bold text-accent text-sm uppercase tracking-widest">Processing Magic...</p>
               </div>
+            </div>
+          )}
+
+          {state.isPasswordProtected && (
+            <div className="absolute inset-0 bg-surface/90 backdrop-blur-sm flex items-center justify-center z-50">
+              <form onSubmit={handlePasswordSubmit} className="flex flex-col items-center gap-4 bg-surface p-8 rounded-2xl shadow-2xl border border-border max-w-md w-full">
+                <Lock className="w-12 h-12 text-amber-500 mb-2" />
+                <h3 className="font-bold text-xl text-center">Password Protected PDF</h3>
+                <p className="text-text-muted text-sm text-center mb-4">This document requires a password to open.</p>
+                <input 
+                  type="password" 
+                  className="fi w-full"
+                  value={state.password}
+                  onChange={(e) => setState(prev => ({ ...prev, password: e.target.value }))}
+                  placeholder="Enter password..."
+                  required
+                />
+                <div className="flex gap-4 w-full mt-2">
+                  <button type="button" onClick={onReset} className="btn bs flex-1">Cancel</button>
+                  <button type="submit" className="btn bp flex-1">Unlock</button>
+                </div>
+              </form>
             </div>
           )}
         </div>
