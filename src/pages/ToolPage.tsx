@@ -43,7 +43,8 @@ const ToolLoader = () => (
 
 export default function ToolPage() {
   const { id } = useParams<{ id: string }>();
-  const tool = tools.find(t => t.id === id);
+  const cleanId = id?.replace(/\/$/, '')?.trim()?.toLowerCase();
+  const tool = tools.find(t => t.id.toLowerCase() === cleanId);
   const [copied, setCopied] = useState(false);
   const toolRef = useRef<HTMLDivElement>(null);
   const { isFocusMode } = useFocusMode();

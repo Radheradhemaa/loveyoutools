@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo } from 'lucide-react';
+import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw } from 'lucide-react';
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
@@ -166,6 +166,7 @@ export default function PassportPhotoMaker() {
   
   // Processing State
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingError, setProcessingError] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [statusText, setStatusText] = useState('');
 
@@ -445,6 +446,7 @@ export default function PassportPhotoMaker() {
 
   const removeBackgroundFromSrc = async (src: string) => {
     setIsProcessing(true);
+    setProcessingError(null);
     setIsManualMode(false);
     setStatusText('Initializing AI Engine...');
     
@@ -463,6 +465,7 @@ export default function PassportPhotoMaker() {
 
     } catch (error) {
       console.error("BG Removal Error:", error);
+      setProcessingError(error instanceof Error ? error.message : "AI background removal failed.");
     } finally {
       setIsProcessing(false);
     }
@@ -1467,7 +1470,25 @@ export default function PassportPhotoMaker() {
                         </>
                       )}
                       
-                      {isProcessing && (
+                      {processingError && (
+                        <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center z-50 text-white p-6 transition-all duration-300 backdrop-blur-sm">
+                          <div className="bg-gray-900/95 backdrop-blur-md px-8 py-8 rounded-2xl shadow-2xl flex flex-col items-center text-center border border-red-500/30 max-w-sm">
+                            <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
+                              <X className="w-6 h-6 text-red-500" />
+                            </div>
+                            <h3 className="text-lg font-bold mb-2">Processing Failed</h3>
+                            <p className="text-sm text-gray-400 mb-6">{processingError}</p>
+                            <button 
+                              onClick={() => croppedImageSrc && removeBackgroundFromSrc(croppedImageSrc)}
+                              className="w-full py-3 bg-[#e8501a] text-white rounded-xl font-bold text-sm hover:bg-[#d04313] transition-colors flex items-center justify-center gap-2"
+                            >
+                              <RefreshCw className="w-4 h-4" /> Try Again
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {isProcessing && !processingError && (
                         <div className="absolute inset-0 bg-black/20 flex flex-col items-center justify-center z-50 text-white p-6 transition-all duration-300">
                           <div className="bg-gray-900/90 backdrop-blur-md px-8 py-6 rounded-2xl shadow-2xl flex flex-col items-center text-center border border-white/10">
                             <div className="relative mb-4">

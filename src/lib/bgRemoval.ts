@@ -31,14 +31,16 @@ export const hybridRemoveBackground = async (
   const startTime = Date.now();
   try {
     onProgress('Optimizing Image for Speed...');
-    // Resize to max 1920px to guarantee 2-4s processing speed
-    const resizedSrc = await resizeImageIfNeeded(imageSrc, 1920);
+    // Resize to max 1280px for optimal balance of speed and high-quality accuracy
+    const resizedSrc = await resizeImageIfNeeded(imageSrc, 1280);
 
     onProgress('Analyzing Image & Removing Background...');
     const maskBlob = await imglyRemoveBackground(resizedSrc, {
       model: 'isnet', 
       output: { format: 'image/png', quality: 1.0 },
       debug: false,
+      proxyToWorker: true,
+      progress: (status: string, p: number) => onProgress(`AI ${status}: ${Math.round(p * 100)}%`),
     });
 
     onProgress('Applying Strict 7-Step Cleaning Pipeline...');
@@ -121,24 +123,29 @@ async function executeStrictPipeline(origImg: HTMLImageElement, maskBlob: Blob):
   let currentLabel = 1;
   const areas = [0];
   
+  // Use a typed array for the BFS queue to avoid memory reallocations for large images
+  const queue = new Int32Array(len);
+
   for (let i = 0; i < len; i++) {
     if (alpha[i] > 0 && labels[i] === 0) {
       let area = 0;
-      const queue = [i];
-      labels[i] = currentLabel;
       let head = 0;
+      let tail = 0;
+      
+      queue[tail++] = i;
+      labels[i] = currentLabel;
 
       // Breadth-First Search to find connected components
-      while (head < queue.length) {
+      while (head < tail) {
         const curr = queue[head++];
         area++;
         const x = curr % width;
         const y = Math.floor(curr / width);
 
-        if (x > 0 && alpha[curr - 1] > 0 && labels[curr - 1] === 0) { labels[curr - 1] = currentLabel; queue.push(curr - 1); }
-        if (x < width - 1 && alpha[curr + 1] > 0 && labels[curr + 1] === 0) { labels[curr + 1] = currentLabel; queue.push(curr + 1); }
-        if (y > 0 && alpha[curr - width] > 0 && labels[curr - width] === 0) { labels[curr - width] = currentLabel; queue.push(curr - width); }
-        if (y < height - 1 && alpha[curr + width] > 0 && labels[curr + width] === 0) { labels[curr + width] = currentLabel; queue.push(curr + width); }
+        if (x > 0 && alpha[curr - 1] > 0 && labels[curr - 1] === 0) { labels[curr - 1] = currentLabel; queue[tail++] = curr - 1; }
+        if (x < width - 1 && alpha[curr + 1] > 0 && labels[curr + 1] === 0) { labels[curr + 1] = currentLabel; queue[tail++] = curr + 1; }
+        if (y > 0 && alpha[curr - width] > 0 && labels[curr - width] === 0) { labels[curr - width] = currentLabel; queue[tail++] = curr - width; }
+        if (y < height - 1 && alpha[curr + width] > 0 && labels[curr + width] === 0) { labels[curr + width] = currentLabel; queue[tail++] = curr + width; }
       }
       areas.push(area);
       currentLabel++;

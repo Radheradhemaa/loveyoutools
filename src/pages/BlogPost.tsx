@@ -6,7 +6,8 @@ import SEO from '../components/SEO';
 
 export default function BlogPost() {
   const { id } = useParams();
-  const post = blogPosts.find(p => p.id === id);
+  const cleanId = id?.replace(/\/$/, '')?.trim()?.toLowerCase();
+  const post = blogPosts.find(p => p.id.toLowerCase() === cleanId);
 
   if (!post) {
     return <Navigate to="/blog" replace />;

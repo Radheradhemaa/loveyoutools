@@ -1209,7 +1209,25 @@ export default function BackgroundRemover() {
                           }}
                         />
                         
-                        {isProcessing && (
+                        {processingError && (
+                          <div className="preview-loading-overlay backdrop-blur-sm bg-black/40 rounded-lg">
+                            <div className="flex flex-col items-center text-center max-w-xs w-full px-6 bg-gray-900/90 p-6 rounded-xl border border-red-500/50 shadow-2xl">
+                              <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
+                                <X className="w-6 h-6 text-red-500" />
+                              </div>
+                              <h3 className="text-white font-bold mb-2">Processing Failed</h3>
+                              <p className="text-gray-400 text-xs mb-6">{processingError}</p>
+                              <button 
+                                onClick={() => removeBackground()}
+                                className="w-full py-2 bg-accent text-white rounded-lg font-bold text-sm hover:bg-accent/80 transition-colors flex items-center justify-center gap-2"
+                              >
+                                <RefreshCw className="w-4 h-4" /> Try Again
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {isProcessing && !processingError && (
                           <div className="preview-loading-overlay backdrop-blur-sm bg-black/40 rounded-lg">
                             <div className="flex flex-col items-center text-center max-w-xs w-full px-6 bg-gray-900/80 p-6 rounded-xl border border-white/10 shadow-2xl">
                               <div className="relative mb-3">
