@@ -136,8 +136,8 @@ export const hybridRemoveBackground = async (
   try {
     onProgress('Optimizing Image for AI Processing...');
     
-    // 1. Resize for AI Models (1480px for maximum detail)
-    const aiResizedSrc = await resizeImageIfNeeded(imageSrc, 1480);
+    // 1. Resize for AI Models (1200px for optimal speed/quality balance)
+    const aiResizedSrc = await resizeImageIfNeeded(imageSrc, 1200);
     
     // 2. Preserve full original image dimensions for High-Res Output
     const highResSrc = imageSrc;
@@ -171,87 +171,65 @@ export const hybridRemoveBackground = async (
       throw new Error(`AI background removal engine failed to load. \nDetail: ${detail}\n\nPlease try refreshing the page or using a different browser.`);
     }
 
-    onProgress('Processing Mask...');
+    onProgress('Refining Edges & Enhancing Quality...');
+
+    // Load original high-res image
+    const origImg = await loadImage(highResSrc);
+
+    // Load low-res AI cutout
+    const maskImg = await loadImage(URL.createObjectURL(isnetMaskBlob));
+
+    // 3. Clean up the AI mask (Fast JS pass on low-res image)
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = maskImg.width;
+    maskCanvas.height = maskImg.height;
+    const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true })!;
+    maskCtx.drawImage(maskImg, 0, 0);
     
-    // 3. Extract pixel data from mask
-    const aiImg = await loadImage(aiResizedSrc);
-    const width = aiImg.width;
-    const height = aiImg.height;
+    const maskData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+    const pixels = maskData.data;
 
-    const isnetAlpha = await getAlphaFromBlob(isnetMaskBlob, width, height);
+    for (let i = 0; i < pixels.length; i += 4) {
+      let a = pixels[i + 3] / 255.0;
 
-    // 4. Clean up mask
-    let processedAlpha = new Uint8Array(isnetAlpha.length);
-    for (let i = 0; i < isnetAlpha.length; i++) {
-      const val = isnetAlpha[i] / 255.0;
-      // Eliminate grey patches in the background
-      if (val < 0.15) {
-        processedAlpha[i] = 0;
+      // Aggressive halo removal: clear faint background noise
+      if (a < 0.15) {
+        a = 0;
       } else {
-        processedAlpha[i] = Math.round(val * 255);
+        // Smoothstep to sharpen edges while preserving hair
+        let t = (a - 0.15) / 0.85;
+        a = t * t * (3 - 2 * t);
       }
+
+      pixels[i + 3] = Math.round(a * 255);
     }
+    maskCtx.putImageData(maskData, 0, 0);
 
-    // Expand mask outward for safety (prevent edge cutting)
-    processedAlpha = dilateMask(processedAlpha, width, height, 1);
+    // 4. Apply cleaned mask to High-Res Original
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = origImg.width;
+    finalCanvas.height = origImg.height;
+    const finalCtx = finalCanvas.getContext('2d')!;
 
-    // 5. Island Removal (Kill floating background objects)
-    const len = width * height;
-    const labels = new Int32Array(len);
-    let currentLabel = 1;
-    const areas = [0];
-    const queue = new Int32Array(len);
+    // Enable high-quality smoothing for the mask upscaling
+    finalCtx.imageSmoothingEnabled = true;
+    finalCtx.imageSmoothingQuality = 'high';
 
-    for (let i = 0; i < len; i++) {
-      if (processedAlpha[i] > 128 && labels[i] === 0) {
-        let area = 0;
-        let head = 0, tail = 0;
-        queue[tail++] = i;
-        labels[i] = currentLabel;
+    // Draw original high-res image
+    finalCtx.drawImage(origImg, 0, 0);
 
-        while (head < tail) {
-          const curr = queue[head++];
-          area++;
-          
-          const x = curr % width;
-          const y = Math.floor(curr / width);
-          if (x > 0 && processedAlpha[curr - 1] > 128 && labels[curr - 1] === 0) { labels[curr - 1] = currentLabel; queue[tail++] = curr - 1; }
-          if (x < width - 1 && processedAlpha[curr + 1] > 128 && labels[curr + 1] === 0) { labels[curr + 1] = currentLabel; queue[tail++] = curr + 1; }
-          if (y > 0 && processedAlpha[curr - width] > 128 && labels[curr - width] === 0) { labels[curr - width] = currentLabel; queue[tail++] = curr - width; }
-          if (y < height - 1 && processedAlpha[curr + width] > 128 && labels[curr + width] === 0) { labels[curr + width] = currentLabel; queue[tail++] = curr + width; }
-        }
-        areas.push(area);
-        currentLabel++;
-      }
-    }
+    // Apply the mask
+    finalCtx.globalCompositeOperation = 'destination-in';
+    finalCtx.drawImage(maskCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
 
-    let maxArea = 0;
-    let maxLabel = 0;
-    for (let i = 1; i < areas.length; i++) {
-      if (areas[i] > maxArea) { maxArea = areas[i]; maxLabel = i; }
-    }
+    // Reset composite operation
+    finalCtx.globalCompositeOperation = 'source-over';
 
-    for (let i = 0; i < len; i++) {
-      const label = labels[i];
-      if (label > 0 && label !== maxLabel) {
-        // Remove object if it's small compared to main subject
-        if (areas[label] < maxArea * 0.02) {
-          processedAlpha[i] = 0;
-        }
-      }
-    }
-
-    onProgress('Upscaling Mask & Refining Edges...');
-    
-    // 5. Upscale Mask to High-Res
-    const highResImg = await loadImage(highResSrc);
-    const hrWidth = highResImg.width;
-    const hrHeight = highResImg.height;
-    
-    const upscaledAlpha = await upscaleMask(processedAlpha, width, height, hrWidth, hrHeight);
-
-    // 6. High-Res Edge Refinement & Color Decontamination
-    let finalBlob = await processHighRes(highResImg, upscaledAlpha);
+    // 5. Final Output Generation
+    onProgress('Finalizing Image...');
+    let finalBlob = await new Promise<Blob>((resolve, reject) => {
+      finalCanvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Final render failed")), 'image/png');
+    });
 
     if (forceWhiteBackground) {
       onProgress('Applying Background...');
@@ -260,6 +238,8 @@ export const hybridRemoveBackground = async (
 
     const duration = (Date.now() - startTime) / 1000;
     console.log(`Background removal completed in ${duration.toFixed(2)}s`);
+    
+    URL.revokeObjectURL(maskImg.src);
     return finalBlob;
 
   } catch (error: any) {
@@ -372,22 +352,6 @@ async function runImglyModel(imageSrc: string, model: 'isnet', onProgress: (p: n
   throw new Error(`Failed to run background removal models. Tried ${triedCDNs.length} CDNs. Last error: ${errorMessage}`);
 }
 
-function dilateMask(alpha: Uint8Array, width: number, height: number, passes: number): Uint8Array {
-  let current = new Uint8Array(alpha);
-  const len = width * height;
-  for (let pass = 0; pass < passes; pass++) {
-    let temp = new Uint8Array(len);
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        let i = y * width + x;
-        temp[i] = Math.max(current[i], current[i-1], current[i+1], current[i-width], current[i+width]);
-      }
-    }
-    current = temp;
-  }
-  return current;
-}
-
 async function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -395,290 +359,6 @@ async function loadImage(src: string): Promise<HTMLImageElement> {
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error("Failed to load image"));
     img.src = src;
-  });
-}
-
-async function getAlphaFromBlob(blob: Blob, width: number, height: number): Promise<Uint8Array> {
-  const img = await loadImage(URL.createObjectURL(blob));
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(img, 0, 0, width, height);
-  const data = ctx.getImageData(0, 0, width, height).data;
-  const alpha = new Uint8Array(width * height);
-  for (let i = 0; i < alpha.length; i++) {
-    alpha[i] = data[i * 4 + 3];
-  }
-  URL.revokeObjectURL(img.src);
-  return alpha;
-}
-
-async function upscaleMask(alpha: Uint8Array, srcW: number, srcH: number, dstW: number, dstH: number): Promise<Uint8Array> {
-  const canvas = document.createElement('canvas');
-  canvas.width = srcW;
-  canvas.height = srcH;
-  const ctx = canvas.getContext('2d')!;
-  const imgData = ctx.createImageData(srcW, srcH);
-  for (let i = 0; i < alpha.length; i++) {
-    imgData.data[i * 4] = 255;
-    imgData.data[i * 4 + 1] = 255;
-    imgData.data[i * 4 + 2] = 255;
-    imgData.data[i * 4 + 3] = alpha[i];
-  }
-  ctx.putImageData(imgData, 0, 0);
-
-  const dstCanvas = document.createElement('canvas');
-  dstCanvas.width = dstW;
-  dstCanvas.height = dstH;
-  const dstCtx = dstCanvas.getContext('2d', { willReadFrequently: true })!;
-  dstCtx.imageSmoothingEnabled = true;
-  dstCtx.imageSmoothingQuality = 'high';
-  dstCtx.drawImage(canvas, 0, 0, dstW, dstH);
-  
-  const dstData = dstCtx.getImageData(0, 0, dstW, dstH).data;
-  const dstAlpha = new Uint8Array(dstW * dstH);
-  for (let i = 0; i < dstAlpha.length; i++) {
-    dstAlpha[i] = dstData[i * 4 + 3];
-  }
-  return dstAlpha;
-}
-
-async function processHighRes(origImg: HTMLImageElement, alpha: Uint8Array): Promise<Blob> {
-  const width = origImg.width;
-  const height = origImg.height;
-  const len = width * height;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(origImg, 0, 0);
-  const origPixels = ctx.getImageData(0, 0, width, height).data;
-
-  // 1. Minimal mask expansion to avoid background leakage
-  const expandPixels = Math.max(1, Math.round(width / 800)); 
-  let expandedAlpha = new Uint8Array(alpha);
-  
-  // Fast dilation
-  for (let pass = 0; pass < expandPixels; pass++) {
-    let temp = new Uint8Array(len);
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        let i = y * width + x;
-        temp[i] = Math.max(
-          expandedAlpha[i], 
-          expandedAlpha[i-1], 
-          expandedAlpha[i+1], 
-          expandedAlpha[i-width], 
-          expandedAlpha[i+width]
-        );
-      }
-    }
-    expandedAlpha = temp;
-  }
-  alpha = expandedAlpha;
-
-  // 2. Soft blending / Feathering (Blur the mask)
-  // This creates a smooth transition zone for the guided filter
-  const blurRadius = Math.max(2, Math.round(width / 400));
-  let blurredAlpha = new Uint8Array(len);
-  
-  // Fast box blur
-  for (let pass = 0; pass < 2; pass++) {
-    // Horizontal pass
-    let temp = new Uint8Array(len);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        let sum = 0, count = 0;
-        for (let dx = -blurRadius; dx <= blurRadius; dx++) {
-          let nx = x + dx;
-          if (nx >= 0 && nx < width) {
-            sum += alpha[y * width + nx];
-            count++;
-          }
-        }
-        temp[y * width + x] = sum / count;
-      }
-    }
-    // Vertical pass
-    for (let x = 0; x < width; x++) {
-      for (let y = 0; y < height; y++) {
-        let sum = 0, count = 0;
-        for (let dy = -blurRadius; dy <= blurRadius; dy++) {
-          let ny = y + dy;
-          if (ny >= 0 && ny < height) {
-            sum += temp[ny * width + x];
-            count++;
-          }
-        }
-        blurredAlpha[y * width + x] = sum / count;
-      }
-    }
-    alpha = blurredAlpha;
-  }
-
-  // 3. Alpha Matting Refinement (Guided Filter on Boundary Only)
-  let refinedAlpha = new Uint8Array(len);
-  const radius = 4; // Slightly smaller radius for sharper edges
-  const epsilon = 0.00001; // Extremely sensitive to fine hair details
-  for (let y = radius; y < height - radius; y++) {
-    for (let x = radius; x < width - radius; x++) {
-      let i = y * width + x;
-      
-      // Only process boundary pixels to save time and prevent artifacts
-      if (alpha[i] === 0 || alpha[i] === 255) {
-        refinedAlpha[i] = alpha[i];
-        continue;
-      }
-
-      let sumA = 0, sumI = 0, sumAI = 0, sumII = 0, count = 0;
-      for (let dy = -radius; dy <= radius; dy++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-          let ni = (y + dy) * width + (x + dx);
-          let intensity = (origPixels[ni*4] + origPixels[ni*4+1] + origPixels[ni*4+2]) / 3;
-          sumA += alpha[ni]; sumI += intensity; sumAI += alpha[ni] * intensity; sumII += intensity * intensity; count++;
-        }
-      }
-      let meanA = sumA / count, meanI = sumI / count, meanAI = sumAI / count, meanII = sumII / count;
-      let varI = meanII - meanI * meanI, covAI = meanAI - meanI * meanA;
-      let a = covAI / (varI + epsilon); 
-      let b = meanA - a * meanI;
-      let currentIntensity = (origPixels[i*4] + origPixels[i*4+1] + origPixels[i*4+2]) / 3;
-      refinedAlpha[i] = Math.max(0, Math.min(255, a * currentIntensity + b));
-    }
-  }
-  alpha = refinedAlpha;
-
-  // Halo & Color Decontamination
-  let r = new Uint8Array(len);
-  let g = new Uint8Array(len);
-  let b = new Uint8Array(len);
-  let weight = new Uint8Array(len);
-
-  for (let i = 0; i < len; i++) {
-    if (alpha[i] > 240) { // Increased threshold to ensure pure foreground colors for bleeding
-      r[i] = origPixels[i*4];
-      g[i] = origPixels[i*4+1];
-      b[i] = origPixels[i*4+2];
-      weight[i] = 1;
-    }
-  }
-
-  for (let pass = 0; pass < 10; pass++) { // More passes for deeper decontamination
-    let nextR = new Uint8Array(r);
-    let nextG = new Uint8Array(g);
-    let nextB = new Uint8Array(b);
-    let nextW = new Uint8Array(weight);
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        let i = y * width + x;
-        if (weight[i] === 0 && alpha[i] > 0) {
-          let sr=0, sg=0, sb=0, cnt=0;
-      for (let dy = -4; dy <= 4; dy++) { // Larger search radius for better color estimation
-        for (let dx = -4; dx <= 4; dx++) {
-          const ny = y + dy;
-          const nx = x + dx;
-          if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
-            let ni = ny * width + nx;
-            if (weight[ni] > 0) { 
-              // Weight by distance to preserve local color
-              const dist = Math.sqrt(dx*dx + dy*dy);
-              const w = 1.0 / (1.0 + dist);
-              sr+=r[ni] * w; sg+=g[ni] * w; sb+=b[ni] * w; cnt += w; 
-            }
-          }
-        }
-      }
-          if (cnt > 0) {
-            nextR[i] = sr/cnt; nextG[i] = sg/cnt; nextB[i] = sb/cnt; nextW[i] = 1;
-          }
-        }
-      }
-    }
-    r = nextR; g = nextG; b = nextB; weight = nextW;
-  }
-
-  // Final Composition & Feathering
-  const resultData = ctx.createImageData(width, height);
-  const resultPixels = resultData.data;
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      let i = y * width + x;
-      const idx = i * 4;
-      
-      // Feathering (3x3 kernel)
-      let sumAlpha = alpha[i] * 4 + 
-                (alpha[i-1] + alpha[i+1] + alpha[i-width] + alpha[i+width]) * 2 +
-                (alpha[i-width-1] + alpha[i-width+1] + alpha[i+width-1] + alpha[i+width+1]) * 1;
-      let featheredA = Math.round(sumAlpha / 16);
-      
-      // Final anti-aliasing smoothstep - sharper and cleaner
-      let finalV = featheredA / 255.0;
-      
-      // Aggressive background clearing for low alpha (halo removal)
-      if (finalV < 0.3) {
-        finalV = Math.pow(finalV, 1.8); 
-      }
-      
-      finalV = finalV * finalV * (3 - 2 * finalV);
-      finalV = Math.pow(finalV, 1.4); // Sharper transition
-      featheredA = Math.round(finalV * 255);
-
-      if (featheredA > 0) {
-        if (weight[i] === 0 || featheredA > 250) {
-          resultPixels[idx] = origPixels[idx];
-          resultPixels[idx+1] = origPixels[idx+1];
-          resultPixels[idx+2] = origPixels[idx+2];
-        } else {
-          // Stronger decontamination for edge pixels
-          let origW = (featheredA / 255);
-          let bleedW = Math.pow(1 - origW, 0.4); // More aggressive foreground replacement
-          let finalOrigW = 1 - bleedW;
-          
-          resultPixels[idx] = Math.round(origPixels[idx] * finalOrigW + r[i] * bleedW);
-          resultPixels[idx+1] = Math.round(origPixels[idx+1] * finalOrigW + g[i] * bleedW);
-          resultPixels[idx+2] = Math.round(origPixels[idx+2] * finalOrigW + b[i] * bleedW);
-        }
-        resultPixels[idx+3] = featheredA;
-      }
-    }
-  }
-
-  // 4. Final Sharpening Pass (High-Quality Unsharp Mask)
-  const finalPixels = resultData.data;
-  const sharpenedData = ctx.createImageData(width, height);
-  const sharpenedPixels = sharpenedData.data;
-  
-  const amount = 0.45; // Increased sharpening strength
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      let i = y * width + x;
-      let idx = i * 4;
-      
-      if (finalPixels[idx + 3] > 0) {
-        for (let c = 0; c < 3; c++) {
-          let center = finalPixels[idx + c];
-          // Use a 3x3 Laplacian-like kernel for better sharpening
-          let neighbors = (
-            finalPixels[idx - 4 + c] + finalPixels[idx + 4 + c] + 
-            finalPixels[idx - width * 4 + c] + finalPixels[idx + width * 4 + c] +
-            finalPixels[idx - width * 4 - 4 + c] + finalPixels[idx - width * 4 + 4 + c] +
-            finalPixels[idx + width * 4 - 4 + c] + finalPixels[idx + width * 4 + 4 + c]
-          ) / 8;
-          
-          let val = center + (center - neighbors) * amount;
-          sharpenedPixels[idx + c] = Math.max(0, Math.min(255, val));
-        }
-        sharpenedPixels[idx + 3] = finalPixels[idx + 3];
-      }
-    }
-  }
-
-  ctx.putImageData(sharpenedData, 0, 0);
-
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Pipeline failed")), 'image/png');
   });
 }
 
