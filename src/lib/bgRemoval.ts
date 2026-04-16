@@ -136,8 +136,8 @@ export const hybridRemoveBackground = async (
   try {
     onProgress('Optimizing Image for AI Processing...');
     
-    // 1. Resize for AI Models (1024px for speed)
-    const aiResizedSrc = await resizeImageIfNeeded(imageSrc, 1024);
+    // 1. Resize for AI Models (1480px for maximum detail)
+    const aiResizedSrc = await resizeImageIfNeeded(imageSrc, 1480);
     
     // 2. Preserve full original image dimensions for High-Res Output
     const highResSrc = imageSrc;
@@ -155,10 +155,20 @@ export const hybridRemoveBackground = async (
         throw new Error("You are offline. Background removal requires an internet connection to load AI models.");
       }
       const detail = isnetError instanceof Error ? isnetError.message : String(isnetError);
+      
       if (detail.includes('Failed to fetch') || detail.includes('NetworkError')) {
-        throw new Error("Network Error: Failed to load AI models. This may be due to a slow connection or an ad-blocker blocking our model CDNs. Please try disabling ad-blockers or using a different network.");
+        throw new Error("Network Error: The AI models could not be downloaded. This is often caused by a slow connection, a corporate firewall, or an ad-blocker (like uBlock Origin or AdGuard) blocking our model CDNs. \n\nTroubleshooting:\n1. Disable ad-blockers for this site.\n2. Check your internet connection.\n3. If you are on a VPN or corporate network, try a different connection.");
       }
-      throw new Error(`AI background removal engine failed to load. Detail: ${detail}`);
+      
+      if (detail.includes('WebAssembly') || detail.includes('WASM')) {
+        throw new Error("Compatibility Error: Your browser had trouble initializing the AI engine (WebAssembly). \n\nTroubleshooting:\n1. Ensure your browser is up to date.\n2. Try disabling 'Hardware Acceleration' in your browser settings.\n3. Try using a different browser (Chrome or Edge recommended).");
+      }
+
+      if (detail.includes('out of memory') || detail.includes('allocation failed')) {
+        throw new Error("Memory Error: The AI model failed due to insufficient memory. \n\nTroubleshooting:\n1. Close other browser tabs and apps.\n2. Try a smaller image.\n3. Try a device with more RAM.");
+      }
+
+      throw new Error(`AI background removal engine failed to load. \nDetail: ${detail}\n\nPlease try refreshing the page or using a different browser.`);
     }
 
     onProgress('Processing Mask...');
@@ -183,7 +193,7 @@ export const hybridRemoveBackground = async (
     }
 
     // Expand mask outward for safety (prevent edge cutting)
-    processedAlpha = dilateMask(processedAlpha, width, height, 2);
+    processedAlpha = dilateMask(processedAlpha, width, height, 1);
 
     // 5. Island Removal (Kill floating background objects)
     const len = width * height;
@@ -225,7 +235,7 @@ export const hybridRemoveBackground = async (
       const label = labels[i];
       if (label > 0 && label !== maxLabel) {
         // Remove object if it's small compared to main subject
-        if (areas[label] < maxArea * 0.1) {
+        if (areas[label] < maxArea * 0.02) {
           processedAlpha[i] = 0;
         }
       }
@@ -446,9 +456,8 @@ async function processHighRes(origImg: HTMLImageElement, alpha: Uint8Array): Pro
   ctx.drawImage(origImg, 0, 0);
   const origPixels = ctx.getImageData(0, 0, width, height).data;
 
-  // 1. Expand mask outward for safety (5-10 pixels depending on resolution)
-  // We apply a maximum filter (dilation) to expand the solid foreground
-  const expandPixels = Math.max(2, Math.round(width / 500)); // Scale expansion with image size
+  // 1. Minimal mask expansion to avoid background leakage
+  const expandPixels = Math.max(1, Math.round(width / 800)); 
   let expandedAlpha = new Uint8Array(alpha);
   
   // Fast dilation
@@ -511,7 +520,8 @@ async function processHighRes(origImg: HTMLImageElement, alpha: Uint8Array): Pro
 
   // 3. Alpha Matting Refinement (Guided Filter on Boundary Only)
   let refinedAlpha = new Uint8Array(len);
-  const radius = 2; // 5x5 window
+  const radius = 4; // Slightly smaller radius for sharper edges
+  const epsilon = 0.00001; // Extremely sensitive to fine hair details
   for (let y = radius; y < height - radius; y++) {
     for (let x = radius; x < width - radius; x++) {
       let i = y * width + x;
@@ -532,7 +542,7 @@ async function processHighRes(origImg: HTMLImageElement, alpha: Uint8Array): Pro
       }
       let meanA = sumA / count, meanI = sumI / count, meanAI = sumAI / count, meanII = sumII / count;
       let varI = meanII - meanI * meanI, covAI = meanAI - meanI * meanA;
-      let a = covAI / (varI + 0.001); 
+      let a = covAI / (varI + epsilon); 
       let b = meanA - a * meanI;
       let currentIntensity = (origPixels[i*4] + origPixels[i*4+1] + origPixels[i*4+2]) / 3;
       refinedAlpha[i] = Math.max(0, Math.min(255, a * currentIntensity + b));
@@ -547,7 +557,7 @@ async function processHighRes(origImg: HTMLImageElement, alpha: Uint8Array): Pro
   let weight = new Uint8Array(len);
 
   for (let i = 0; i < len; i++) {
-    if (alpha[i] > 220) { // Increased threshold to ensure pure foreground colors for bleeding
+    if (alpha[i] > 240) { // Increased threshold to ensure pure foreground colors for bleeding
       r[i] = origPixels[i*4];
       g[i] = origPixels[i*4+1];
       b[i] = origPixels[i*4+2];
@@ -555,7 +565,7 @@ async function processHighRes(origImg: HTMLImageElement, alpha: Uint8Array): Pro
     }
   }
 
-  for (let pass = 0; pass < 4; pass++) {
+  for (let pass = 0; pass < 10; pass++) { // More passes for deeper decontamination
     let nextR = new Uint8Array(r);
     let nextG = new Uint8Array(g);
     let nextB = new Uint8Array(b);
@@ -565,13 +575,18 @@ async function processHighRes(origImg: HTMLImageElement, alpha: Uint8Array): Pro
         let i = y * width + x;
         if (weight[i] === 0 && alpha[i] > 0) {
           let sr=0, sg=0, sb=0, cnt=0;
-      for (let dy = -2; dy <= 2; dy++) {
-        for (let dx = -2; dx <= 2; dx++) {
+      for (let dy = -4; dy <= 4; dy++) { // Larger search radius for better color estimation
+        for (let dx = -4; dx <= 4; dx++) {
           const ny = y + dy;
           const nx = x + dx;
           if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
             let ni = ny * width + nx;
-            if (weight[ni] > 0) { sr+=r[ni]; sg+=g[ni]; sb+=b[ni]; cnt++; }
+            if (weight[ni] > 0) { 
+              // Weight by distance to preserve local color
+              const dist = Math.sqrt(dx*dx + dy*dy);
+              const w = 1.0 / (1.0 + dist);
+              sr+=r[ni] * w; sg+=g[ni] * w; sb+=b[ni] * w; cnt += w; 
+            }
           }
         }
       }
@@ -598,31 +613,69 @@ async function processHighRes(origImg: HTMLImageElement, alpha: Uint8Array): Pro
                 (alpha[i-width-1] + alpha[i-width+1] + alpha[i+width-1] + alpha[i+width+1]) * 1;
       let featheredA = Math.round(sumAlpha / 16);
       
-      // Final anti-aliasing smoothstep
+      // Final anti-aliasing smoothstep - sharper and cleaner
       let finalV = featheredA / 255.0;
+      
+      // Aggressive background clearing for low alpha (halo removal)
+      if (finalV < 0.3) {
+        finalV = Math.pow(finalV, 1.8); 
+      }
+      
       finalV = finalV * finalV * (3 - 2 * finalV);
+      finalV = Math.pow(finalV, 1.4); // Sharper transition
       featheredA = Math.round(finalV * 255);
 
       if (featheredA > 0) {
-        if (weight[i] === 0 || featheredA > 240) {
+        if (weight[i] === 0 || featheredA > 250) {
           resultPixels[idx] = origPixels[idx];
           resultPixels[idx+1] = origPixels[idx+1];
           resultPixels[idx+2] = origPixels[idx+2];
         } else {
+          // Stronger decontamination for edge pixels
           let origW = (featheredA / 255);
-          let bleedW = Math.pow(1 - origW, 0.5); 
+          let bleedW = Math.pow(1 - origW, 0.4); // More aggressive foreground replacement
           let finalOrigW = 1 - bleedW;
           
-          resultPixels[idx] = origPixels[idx] * finalOrigW + r[i] * bleedW;
-          resultPixels[idx+1] = origPixels[idx+1] * finalOrigW + g[i] * bleedW;
-          resultPixels[idx+2] = origPixels[idx+2] * finalOrigW + b[i] * bleedW;
+          resultPixels[idx] = Math.round(origPixels[idx] * finalOrigW + r[i] * bleedW);
+          resultPixels[idx+1] = Math.round(origPixels[idx+1] * finalOrigW + g[i] * bleedW);
+          resultPixels[idx+2] = Math.round(origPixels[idx+2] * finalOrigW + b[i] * bleedW);
         }
         resultPixels[idx+3] = featheredA;
       }
     }
   }
 
-  ctx.putImageData(resultData, 0, 0);
+  // 4. Final Sharpening Pass (High-Quality Unsharp Mask)
+  const finalPixels = resultData.data;
+  const sharpenedData = ctx.createImageData(width, height);
+  const sharpenedPixels = sharpenedData.data;
+  
+  const amount = 0.45; // Increased sharpening strength
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      let i = y * width + x;
+      let idx = i * 4;
+      
+      if (finalPixels[idx + 3] > 0) {
+        for (let c = 0; c < 3; c++) {
+          let center = finalPixels[idx + c];
+          // Use a 3x3 Laplacian-like kernel for better sharpening
+          let neighbors = (
+            finalPixels[idx - 4 + c] + finalPixels[idx + 4 + c] + 
+            finalPixels[idx - width * 4 + c] + finalPixels[idx + width * 4 + c] +
+            finalPixels[idx - width * 4 - 4 + c] + finalPixels[idx - width * 4 + 4 + c] +
+            finalPixels[idx + width * 4 - 4 + c] + finalPixels[idx + width * 4 + 4 + c]
+          ) / 8;
+          
+          let val = center + (center - neighbors) * amount;
+          sharpenedPixels[idx + c] = Math.max(0, Math.min(255, val));
+        }
+        sharpenedPixels[idx + 3] = finalPixels[idx + 3];
+      }
+    }
+  }
+
+  ctx.putImageData(sharpenedData, 0, 0);
 
   return new Promise((resolve, reject) => {
     canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Pipeline failed")), 'image/png');
