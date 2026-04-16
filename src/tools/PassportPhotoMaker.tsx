@@ -465,9 +465,18 @@ export default function PassportPhotoMaker() {
 
     } catch (error) {
       console.error("BG Removal Error:", error);
-      setProcessingError(error instanceof Error ? error.message : "AI background removal failed.");
+      let errorMessage = error instanceof Error ? error.message : "AI background removal failed.";
+      if (errorMessage.includes('Failed to fetch')) {
+        errorMessage = "Network Error: Failed to download AI models. Please check your internet connection and try again. If the issue persists, try clearing your browser cache and refreshing the page.";
+      } else if (errorMessage.includes('Resource') && errorMessage.includes('not found')) {
+        errorMessage = "AI Model Error: Could not load background removal models. Please try refreshing the page or clearing your browser cache. If the issue persists, try a different browser or force-refresh (Ctrl+F5).";
+      } else if (errorMessage.includes('processing failed')) {
+        errorMessage = "AI Processing Error: The background removal process failed. Please try refreshing the page or clearing your browser cache.";
+      }
+      setProcessingError(errorMessage);
     } finally {
       setIsProcessing(false);
+      setStatusText(''); // Clear status text on completion or error
     }
   };
 
