@@ -34,30 +34,86 @@ export default function ImageCompressor() {
   const [isProcessingBatch, setIsProcessingBatch] = useState(false);
   const processedFilesRef = useRef<Set<File>>(new Set());
 
-  const [zoom, setZoom] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024 ? 1 : 0.5);
+  const zoomStateRef = useRef({ zoom: typeof window !== 'undefined' && window.innerWidth < 1024 ? 1 : 0.5, panX: 0, panY: 0 });
+  const [zoomParams, setZoomParams] = useState(zoomStateRef.current);
+  
   const previewContainerRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+  const dragStart = useRef({ x: 0, y: 0 });
 
-  const handleZoomIn = useCallback(() => setZoom(prev => Math.min(prev + 0.25, 5)), []);
-  const handleZoomOut = useCallback(() => setZoom(prev => Math.max(prev - 0.25, 0.1)), []);
+  const adjustZoom = useCallback((delta: number, isDelta = false, cursorX?: number, cursorY?: number) => {
+    const { zoom: prevZoom, panX: prevPanX, panY: prevPanY } = zoomStateRef.current;
+    
+    let newZoom = isDelta ? prevZoom + delta : delta;
+    newZoom = Math.max(0.1, Math.min(5, newZoom));
+    
+    if (newZoom === prevZoom) return;
+
+    let newPanX = prevPanX;
+    let newPanY = prevPanY;
+
+    if (cursorX !== undefined && cursorY !== undefined) {
+      const container = previewContainerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        // Mouse coordinate relative to the exact center of the container
+        const rx = cursorX - rect.left - rect.width / 2;
+        const ry = cursorY - rect.top - rect.height / 2;
+
+        const ratio = newZoom / prevZoom;
+        newPanX = rx - (rx - prevPanX) * ratio;
+        newPanY = ry - (ry - prevPanY) * ratio;
+      }
+    } else {
+      // Zooming by buttons - zoom from the center of the current view
+      const ratio = newZoom / prevZoom;
+      newPanX = prevPanX * ratio;
+      newPanY = prevPanY * ratio;
+    }
+
+    zoomStateRef.current = { zoom: newZoom, panX: newPanX, panY: newPanY };
+    setZoomParams(zoomStateRef.current);
+  }, []);
+
+  const handleZoomIn = useCallback(() => adjustZoom(0.25, true), [adjustZoom]);
+  const handleZoomOut = useCallback(() => adjustZoom(-0.25, true), [adjustZoom]);
 
   useEffect(() => {
     const container = previewContainerRef.current;
     if (!container) return;
 
     const handleWheel = (e: WheelEvent) => {
-      e.preventDefault(); // Prevent page/container scroll
-      if (e.deltaY < 0) {
-        handleZoomIn();
-      } else {
-        handleZoomOut();
-      }
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.25 : -0.25;
+      adjustZoom(delta, true, e.clientX, e.clientY);
     };
 
     container.addEventListener('wheel', handleWheel, { passive: false });
     return () => {
       container.removeEventListener('wheel', handleWheel);
     };
-  }, [handleZoomIn, handleZoomOut]);
+  }, [adjustZoom]);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    isDragging.current = true;
+    dragStart.current = { x: e.clientX - zoomStateRef.current.panX, y: e.clientY - zoomStateRef.current.panY };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, []);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!isDragging.current) return;
+    zoomStateRef.current = {
+      ...zoomStateRef.current,
+      panX: e.clientX - dragStart.current.x,
+      panY: e.clientY - dragStart.current.y
+    };
+    setZoomParams(zoomStateRef.current);
+  }, []);
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    isDragging.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  }, []);
 
   const faq = [
     { q: "What image formats are supported?", a: "We support all major formats including JPG, PNG, WEBP, GIF, BMP, and SVG." },
@@ -331,7 +387,11 @@ export default function ImageCompressor() {
 
               <div 
                 ref={previewContainerRef}
-                className="flex-1 relative overflow-auto p-4 lg:p-8 no-scrollbar"
+                className="flex-1 relative overflow-hidden p-4 lg:p-8 touch-none"
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
               >
                 {currentImage.isProcessing ? (
                   <div className="absolute inset-0 flex items-center justify-center bg-bg-primary/50 backdrop-blur-sm z-20">
@@ -339,18 +399,18 @@ export default function ImageCompressor() {
                   </div>
                 ) : null}
 
-                <div 
-                  className="flex items-center justify-center transition-all duration-200 ease-out min-w-full min-h-full"
-                  style={{ 
-                    width: `${zoom * 100}%`,
-                    height: `${zoom * 100}%`
-                  }}
-                >
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   {(currentImage.finalUrl || currentImage.originalUrl) && (
                     <img 
                       src={currentImage.finalUrl || currentImage.originalUrl} 
                       alt="Preview" 
-                      className="max-w-full max-h-full object-contain shadow-2xl rounded-xl border border-border m-auto" 
+                      draggable={false}
+                      className="max-w-[calc(100%-2rem)] max-h-[calc(100%-2rem)] object-contain shadow-[0_0_40px_rgba(0,0,0,0.1)] rounded-xl border border-border/50 pointer-events-auto cursor-grab active:cursor-grabbing bg-transparent" 
+                      style={{
+                        transform: `translate(${zoomParams.panX}px, ${zoomParams.panY}px) scale(${zoomParams.zoom})`,
+                        transformOrigin: 'center center',
+                        willChange: 'transform'
+                      }}
                     />
                   )}
                 </div>
@@ -396,14 +456,14 @@ export default function ImageCompressor() {
                     <label className="text-[10px] font-black uppercase tracking-widest text-text-muted">Zoom Preview</label>
                     <div className="flex items-center gap-2">
                       <button 
-                        onClick={() => setZoom(Math.max(0.1, zoom - 0.25))}
+                        onClick={handleZoomOut}
                         className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
                       >
                         <ZoomOut className="w-4 h-4" />
                       </button>
-                      <span className="text-[10px] font-black w-10 text-center">{Math.round(zoom * 100)}%</span>
+                      <span className="text-[10px] font-black w-10 text-center">{Math.round(zoomParams.zoom * 100)}%</span>
                       <button 
-                        onClick={() => setZoom(Math.min(5, zoom + 0.25))}
+                        onClick={handleZoomIn}
                         className="p-1.5 rounded-lg bg-bg-secondary hover:bg-border text-text-muted transition-colors"
                       >
                         <ZoomIn className="w-4 h-4" />
@@ -412,8 +472,8 @@ export default function ImageCompressor() {
                   </div>
                   <input 
                     type="range" min="0.1" max="5" step="0.25" 
-                    value={zoom} 
-                    onChange={(e) => setZoom(Number(e.target.value))}
+                    value={zoomParams.zoom} 
+                    onChange={(e) => adjustZoom(Number(e.target.value), false)}
                     className="w-full accent-accent h-1.5"
                   />
                 </div>

@@ -30,6 +30,7 @@ const KdpFixer = lazy(() => import('../tools/KdpFixer'));
 const ImageCropper = lazy(() => import('../tools/ImageCropper'));
 const ImageColorPicker = lazy(() => import('../tools/ImageColorPicker'));
 const GifMaker = lazy(() => import('../tools/GifMaker'));
+const FaviconGenerator = lazy(() => import('../tools/FaviconGenerator'));
 const SvgToPngConverter = lazy(() => import('../tools/SvgToPngConverter'));
 const DynamicPreviewer = lazy(() => import('../components/DynamicPreviewer'));
 const KeyboardShortcutGuide = lazy(() => import('../tools/KeyboardShortcutGuide'));
@@ -100,6 +101,7 @@ export default function ToolPage() {
     if (tool.id === 'image-cropper') return <ImageCropper />;
     if (tool.id === 'image-color-picker') return <ImageColorPicker />;
     if (tool.id === 'gif-maker') return <GifMaker />;
+    if (tool.id === 'favicon-generator') return <FaviconGenerator />;
     if (tool.id === 'svg-to-png') return <SvgToPngConverter />;
     if (tool.id === 'dynamic-previewer') return <DynamicPreviewer />;
     if (tool.id === 'keyboard-shortcut-guide') return <KeyboardShortcutGuide />;

@@ -269,7 +269,7 @@ export default function PhotoSignResizer() {
           
           newBytes[currentPos++] = 0xFF;
           newBytes[currentPos++] = 0xFE;
-          newBytes[currentPos++] = (segmentLen - 2 >> 8) & 0xFF; // Length field value
+          newBytes[currentPos++] = ((segmentLen - 2) >> 8) & 0xFF; // Length field value
           newBytes[currentPos++] = (segmentLen - 2) & 0xFF;
           
           // Fill payload with zeros
@@ -334,10 +334,15 @@ export default function PhotoSignResizer() {
     if (loading) return;
 
     if (!image || !percentCrop || !imgDimensions) return;
+
+    const { w, h } = getTargetPx();
+    if (w <= 0 || h <= 0) {
+      alert("Invalid target dimensions. Please ensure width and height are greater than zero.");
+      return;
+    }
+
     setLoading(true);
     try {
-      const { w, h } = getTargetPx();
-      
       // Calculate natural pixels from percentage crop
       const naturalCrop = {
         x: (percentCrop.x * imgDimensions.naturalWidth) / 100,
@@ -346,6 +351,12 @@ export default function PhotoSignResizer() {
         height: (percentCrop.height * imgDimensions.naturalHeight) / 100,
         unit: 'px' as const
       };
+
+      if (naturalCrop.width <= 0 || naturalCrop.height <= 0) {
+        alert("Invalid crop area. Please select a valid area of the image to crop.");
+        setLoading(false);
+        return;
+      }
 
       const res = await getCroppedImg(
         image,
@@ -369,9 +380,12 @@ export default function PhotoSignResizer() {
           document.body.removeChild(link);
         }
         if (onComplete) onComplete();
+      } else {
+        alert("Failed to process the image. Please try again.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      alert("An error occurred during image processing: " + (e.message || "Unknown error"));
     } finally {
       setLoading(false);
     }
