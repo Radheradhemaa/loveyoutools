@@ -734,7 +734,9 @@ export default function PassportPhotoMaker() {
         ctx.drawImage(printImageElement, 0, 0, photoWidth, photoHeight);
         
         const dataURLtoBlob = (dataurl: string) => {
+          if (!dataurl || typeof dataurl !== 'string') return new Blob();
           const arr = dataurl.split(',');
+          if (arr.length < 2) return new Blob();
           const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
           const bstr = atob(arr[1]);
           let n = bstr.length;

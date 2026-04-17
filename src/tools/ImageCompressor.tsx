@@ -295,8 +295,10 @@ export default function ImageCompressor() {
       if (img.finalUrl) {
         const a = document.createElement('a');
         a.href = img.finalUrl;
-        const ext = img.settings.format.split('/')[1];
-        a.download = `compressed_${img.file.name.split('.')[0]}.${ext}`;
+        const format = img.settings.format || 'image/jpeg';
+        const ext = format.split('/')[1] || 'jpeg';
+        const name = (img.file.name || 'image').split('.')[0] || 'image';
+        a.download = `compressed_${name}.${ext}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -306,8 +308,10 @@ export default function ImageCompressor() {
       for (let i = 0; i < processedImages.length; i++) {
         const img = processedImages[i];
         if (img.finalBlob) {
-          const ext = img.settings.format.split('/')[1];
-          zip.file(`compressed_${i}_${img.file.name.split('.')[0]}.${ext}`, img.finalBlob);
+          const format = img.settings.format || 'image/jpeg';
+          const ext = format.split('/')[1] || 'jpeg';
+          const name = (img.file.name || 'image').split('.')[0] || 'image';
+          zip.file(`compressed_${i}_${name}.${ext}`, img.finalBlob);
         }
       }
       const content = await zip.generateAsync({ type: 'blob' });

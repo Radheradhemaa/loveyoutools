@@ -158,10 +158,13 @@ export default function PdfTools({ toolId }: { toolId: string }) {
           const ext = toolId === 'pdf-to-png' ? 'png' : 'jpg';
           const dataUrl = canvas.toDataURL(format, 0.9);
           
-          if (zip) {
-            const base64Data = dataUrl.split(',')[1];
-            zip.file(`page_${i}.${ext}`, base64Data, { base64: true });
-          } else {
+          if (zip && dataUrl) {
+            const parts = dataUrl.split(',');
+            if (parts.length >= 2) {
+              const base64Data = parts[1];
+              zip.file(`page_${i}.${ext}`, base64Data, { base64: true });
+            }
+          } else if (dataUrl) {
             outFiles.push({ name: `page_${i}.${ext}`, url: dataUrl });
           }
         }
@@ -199,8 +202,10 @@ export default function PdfTools({ toolId }: { toolId: string }) {
 
         // Helper to parse page numbers
         const parsePages = (inputStr: string, maxPages: number) => {
+          if (!inputStr || typeof inputStr !== 'string') return new Set<number>();
           const pages = new Set<number>();
           inputStr.split(',').forEach(part => {
+            if (!part) return;
             const range = part.trim().split('-');
             if (range.length === 1) {
               const p = parseInt(range[0]) - 1;
@@ -237,7 +242,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
           case 'split-pdf':
           case 'extract-pages-from-pdf': {
             const newPdf = await PDFDocument.create();
-            const pagesToExtract = parsePages(splitPage, maxPages);
+            const pagesToExtract = Array.from(parsePages(splitPage, maxPages));
             if (pagesToExtract.length === 0) {
               setError("Invalid page numbers. Please enter valid page numbers separated by commas.");
               setLoading(false);
@@ -249,7 +254,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             break;
           }
           case 'delete-pdf-pages': {
-            const pagesToDelete = parsePages(splitPage, maxPages).sort((a, b) => b - a);
+            const pagesToDelete = Array.from(parsePages(splitPage, maxPages)).sort((a, b) => b - a);
             if (pagesToDelete.length === 0) {
               setError("Invalid page numbers to delete.");
               setLoading(false);
@@ -261,7 +266,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
           case 'reorder-pdf-pages': {
             const newPdf = await PDFDocument.create();
             // Reorder expects exact sequence, e.g., "3,1,2"
-            const order = splitPage.split(',').map(p => parseInt(p.trim()) - 1).filter(p => !isNaN(p) && p >= 0 && p < maxPages);
+            const order = (splitPage || '').split(',').map(p => parseInt(p.trim()) - 1).filter(p => !isNaN(p) && p >= 0 && p < maxPages);
             if (order.length === 0) {
               setError("Invalid page order.");
               setLoading(false);
@@ -402,8 +407,13 @@ export default function PdfTools({ toolId }: { toolId: string }) {
     if (outputFiles.length === 0) return;
     const zip = new JSZip();
     outputFiles.forEach(f => {
-      const base64Data = f.url.split(',')[1];
-      zip.file(f.name, base64Data, { base64: true });
+      if (f.url) {
+        const parts = f.url.split(',');
+        if (parts.length >= 2) {
+          const base64Data = parts[1];
+          zip.file(f.name, base64Data, { base64: true });
+        }
+      }
     });
     const zipContent = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(zipContent);

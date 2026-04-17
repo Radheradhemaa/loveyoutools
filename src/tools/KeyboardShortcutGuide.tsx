@@ -400,7 +400,7 @@ export default function KeyboardShortcutGuide() {
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-text-muted flex items-center gap-1"><Monitor className="w-3 h-3"/> Windows</span>
                         <div className="flex items-center gap-1 flex-wrap justify-end">
-                          {shortcut.windows.split('+').map((key, idx, arr) => (
+                          {(shortcut.windows || '').split('+').map((key, idx, arr) => (
                             <React.Fragment key={idx}>
                               <kbd className="px-2 py-1 bg-[#f5f3ef] dark:bg-surface border border-border rounded text-xs font-mono font-bold text-[#18120e] dark:text-text shadow-sm whitespace-nowrap">
                                 {key}
@@ -416,7 +416,7 @@ export default function KeyboardShortcutGuide() {
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-text-muted flex items-center gap-1"><Command className="w-3 h-3"/> Mac</span>
                         <div className="flex items-center gap-1 flex-wrap justify-end">
-                          {shortcut.mac.split('+').map((key, idx, arr) => (
+                          {(shortcut.mac || '').split('+').map((key, idx, arr) => (
                             <React.Fragment key={idx}>
                               <kbd className="px-2 py-1 bg-[#f5f3ef] dark:bg-surface border border-border rounded text-xs font-mono font-bold text-[#18120e] dark:text-text shadow-sm whitespace-nowrap">
                                 {key}

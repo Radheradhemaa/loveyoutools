@@ -106,10 +106,12 @@ export default function PhotoSignResizer() {
   };
 
   const handleFiles = (files: File[]) => {
-    if (files.length > 0) {
+    if (files && files.length > 0) {
       const file = files[0];
+      if (!file) return;
       
-      setOriginalFileName(file.name.split('.')[0]);
+      const nameParts = (file.name || 'image.jpg').split('.');
+      setOriginalFileName(nameParts.length > 1 ? nameParts.slice(0, -1).join('.') : nameParts[0]);
       const reader = new FileReader();
       reader.addEventListener('load', () => setImage(reader.result as string));
       reader.readAsDataURL(file);
@@ -162,7 +164,10 @@ export default function PhotoSignResizer() {
     });
 
   const getDataUrlSize = (dataUrl: string) => {
-    const base64String = dataUrl.split(',')[1];
+    if (!dataUrl || typeof dataUrl !== 'string') return 0;
+    const parts = dataUrl.split(',');
+    if (parts.length < 2) return 0;
+    const base64String = parts[1];
     if (!base64String) return 0;
     const padding = (base64String.endsWith('==') ? 2 : (base64String.endsWith('=') ? 1 : 0));
     return (base64String.length * 0.75) - padding;
@@ -536,11 +541,14 @@ export default function PhotoSignResizer() {
           if (!file) {
             setImage(null);
             setResult(null);
-            setOriginalFileName(null);
+            setOriginalFileName('');
             setLoading(false);
             return;
           }
-          handleFiles(Array.isArray(file) ? file : [file]);
+          const fileArray = Array.isArray(file) ? file : [file];
+          if (fileArray.length > 0) {
+            handleFiles(fileArray);
+          }
         }, [file]);
 
         if (!image) return null;

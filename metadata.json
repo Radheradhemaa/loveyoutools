@@ -1,5 +1,5 @@
 {
   "name": "LoveyouTools",
   "description": "A fully functional, professional, and production-ready multi-tools hub. Free online tools for images, PDFs, SEO, and more with real-time previews.",
-  "requestFramePermissions": []
+  "requestFramePermissions": ["camera"]
 }

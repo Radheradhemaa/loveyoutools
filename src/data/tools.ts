@@ -62,6 +62,7 @@ export const tools = [
   { id: 'flatten-pdf', c: 'pdf', n: 'Flatten PDF', d: 'Flatten PDF forms and layers.', i: '🥞', b: '#fef3c7' },
   { id: 'pdf-to-zip', c: 'pdf', n: 'PDF to ZIP', d: 'Extract PDF pages to ZIP.', i: '🗜️', b: '#fef3c7' },
   { id: 'pdf-reader-online', c: 'pdf', n: 'PDF Reader Online', d: 'Read PDF files online.', i: '👁️', b: '#fef3c7' },
+  { id: 'document-scanner', c: 'pdf', n: 'Document Scanner', d: 'Scan documents using your camera and export as PDF or JPG with professional filters.', i: '📸', b: '#fef3c7', popular: true },
   { id: 'kdp-margin-bleed-fixer', c: 'pdf', n: 'Amazon KDP Book Margin & Bleed Fixer', d: 'Fix margins, trim size, and bleed for Amazon KDP books.', i: '📚', b: '#fef3c7' },
 
   // SEO TOOLS (bg: #d1fae5)
@@ -101,6 +102,7 @@ export const tools = [
   { id: 'html-css-js-minifier', c: 'developer', n: 'HTML/CSS/JS Minifier', d: 'Minify web code.', i: '⚡', b: '#dbeafe' },
   { id: 'html-live-preview', c: 'developer', n: 'HTML Live Preview', d: 'Preview HTML code live.', i: '🖥️', b: '#dbeafe' },
   { id: 'hash-generator', c: 'developer', n: 'Hash Generator', d: 'Generate MD5, SHA hashes.', i: '#', b: '#dbeafe' },
+  { id: 'internet-speed-test', c: 'developer', n: 'Internet Speed Test', d: 'Measure your internet connection speed, ping, and jitter with high accuracy.', i: '🚀', b: '#dbeafe', popular: true },
 
   // GENERATOR TOOLS (bg: #ecfdf5)
   { id: 'qr-code-generator', c: 'generator', n: 'QR Code Generator', d: 'Generate QR codes easily.', i: '⬛', b: '#ecfdf5' },

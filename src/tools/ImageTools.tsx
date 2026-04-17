@@ -206,34 +206,35 @@ export default function ImageTools({ toolId }: { toolId: string }) {
               if (currentBytes < targetBytes) {
                 const diff = targetBytes - currentBytes;
                 if (diff >= 4) {
-                  const base64Data = dataUrl.split(',')[1];
-                  const binaryString = atob(base64Data);
-                  const bytes = new Uint8Array(binaryString.length);
-                  for (let k = 0; k < binaryString.length; k++) {
-                    bytes[k] = binaryString.charCodeAt(k);
-                  }
+                  const parts = dataUrl.split(',');
+                  if (parts.length >= 2) {
+                    const base64Data = parts[1];
+                    const binaryString = atob(base64Data);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let k = 0; k < binaryString.length; k++) {
+                      bytes[k] = binaryString.charCodeAt(k);
+                    }
 
-                  const newBytes = new Uint8Array(bytes.length + diff);
-                  newBytes.set(bytes.slice(0, bytes.length - 2));
-                  
-                  const comHeader = [0xFF, 0xFE];
-                  const payloadLen = diff - 2;
-                  const lenField = [(payloadLen >> 8) & 0xFF, payloadLen & 0xFF];
-                  
-                  newBytes.set(comHeader, bytes.length - 2);
-                  newBytes.set(lenField, bytes.length);
-                  newBytes.set([0xFF, 0xD9], bytes.length + diff - 2);
-                  
-                  const blob = new Blob([newBytes], { type: 'image/jpeg' });
-                  dataUrl = await new Promise((resolve) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => resolve(reader.result as string);
-                    reader.readAsDataURL(blob);
-                  });
+                    const newBytes = new Uint8Array(bytes.length + diff);
+                    newBytes.set(bytes.slice(0, bytes.length - 2));
+                    
+                    const comHeader = [0xFF, 0xFE];
+                    const payloadLen = diff - 2;
+                    const lenField = [(payloadLen >> 8) & 0xFF, payloadLen & 0xFF];
+                    
+                    newBytes.set(comHeader, bytes.length - 2);
+                    newBytes.set(lenField, bytes.length);
+                    newBytes.set([0xFF, 0xD9], bytes.length + diff - 2);
+                    
+                    const blob = new Blob([newBytes], { type: 'image/jpeg' });
+                    dataUrl = await new Promise((resolveReader) => {
+                      const reader = new FileReader();
+                      reader.onloadend = () => resolveReader(reader.result as string);
+                      reader.readAsDataURL(blob);
+                    });
+                  }
                 }
               }
-            } else {
-              dataUrl = canvas.toDataURL(outFormat, 0.9);
             }
             
             updatedImages[i].output = dataUrl;
@@ -256,7 +257,9 @@ export default function ImageTools({ toolId }: { toolId: string }) {
   };
 
   const dataURLtoBlob = (dataurl: string) => {
+    if (!dataurl || typeof dataurl !== 'string') return new Blob();
     const arr = dataurl.split(',');
+    if (arr.length < 2) return new Blob();
     const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
     const bstr = atob(arr[1]);
     let n = bstr.length;
@@ -280,8 +283,10 @@ export default function ImageTools({ toolId }: { toolId: string }) {
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      const ext = (toolId === 'image-converter' ? format : processedImages[0].file.type || 'image/jpeg').split('/')[1];
-      a.download = `processed_${processedImages[0].file.name.split('.')[0]}.${ext}`;
+      const type = (toolId === 'image-converter' ? format : processedImages[0].file.type || 'image/jpeg') || 'image/jpeg';
+      const ext = type.split('/')[1] || 'jpeg';
+      const fileName = (processedImages[0].file.name || 'image').split('.')[0] || 'image';
+      a.download = `processed_${fileName}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -294,8 +299,10 @@ export default function ImageTools({ toolId }: { toolId: string }) {
     for (const img of processedImages) {
       const response = await fetch(img.output!);
       const blob = await response.blob();
-      const ext = (toolId === 'image-converter' ? format : img.file.type || 'image/jpeg').split('/')[1];
-      zip.file(`processed_${img.file.name.split('.')[0]}.${ext}`, blob);
+      const type = (toolId === 'image-converter' ? format : img.file.type || 'image/jpeg') || 'image/jpeg';
+      const ext = type.split('/')[1] || 'jpeg';
+      const fileName = (img.file.name || 'image').split('.')[0] || 'image';
+      zip.file(`processed_${fileName}.${ext}`, blob);
     }
 
     const content = await zip.generateAsync({ type: 'blob' });
@@ -312,7 +319,10 @@ export default function ImageTools({ toolId }: { toolId: string }) {
   const allProcessed = images.length > 0 && images.every(img => img.output);
 
   const getDataUrlSize = (dataUrl: string) => {
-    const base64String = dataUrl.split(',')[1];
+    if (!dataUrl || typeof dataUrl !== 'string') return 0;
+    const parts = dataUrl.split(',');
+    if (parts.length < 2) return 0;
+    const base64String = parts[1];
     if (!base64String) return 0;
     const padding = (base64String.match(/=/g) || []).length;
     return (base64String.length * 0.75) - padding;

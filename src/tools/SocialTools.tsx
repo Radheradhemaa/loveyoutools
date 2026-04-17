@@ -558,7 +558,7 @@ export default function SocialTools({ toolId }: { toolId: string }) {
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
             <div className="bg-bg-secondary p-4 rounded-xl text-center">
-              <div className="text-2xl font-bold text-text-primary">{tweetText.length === 0 ? 0 : tweetText.trim().split(/\s+/).length}</div>
+              <div className="text-2xl font-bold text-text-primary">{!tweetText || tweetText.length === 0 ? 0 : tweetText.trim().split(/\s+/).length}</div>
               <div className="text-xs text-text-muted uppercase tracking-wider font-bold mt-1">Words</div>
             </div>
             <div className="bg-bg-secondary p-4 rounded-xl text-center">
