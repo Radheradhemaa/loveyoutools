@@ -36,6 +36,14 @@ const DynamicPreviewer = lazy(() => import('../components/DynamicPreviewer'));
 const KeyboardShortcutGuide = lazy(() => import('../tools/KeyboardShortcutGuide'));
 const InternetSpeedTest = lazy(() => import('../tools/InternetSpeedTest'));
 const DocumentScanner = lazy(() => import('../tools/DocumentScanner'));
+const PregnancyCalculator = lazy(() => import('../tools/PregnancyCalculator'));
+const DueDateCalculator = lazy(() => import('../tools/DueDateCalculator'));
+const OvulationCalculator = lazy(() => import('../tools/OvulationCalculator'));
+const PeriodCalculator = lazy(() => import('../tools/PeriodCalculator'));
+const PregnancyWeightGainCalculator = lazy(() => import('../tools/PregnancyWeightGainCalculator'));
+const PregnancyConceptionCalculator = lazy(() => import('../tools/PregnancyConceptionCalculator'));
+const ConceptionCalculator = lazy(() => import('../tools/ConceptionCalculator'));
+const SalaryCalculator = lazy(() => import('../tools/SalaryCalculator'));
 
 const ToolLoader = () => (
   <div className="flex flex-col items-center justify-center py-20 animate-pulse">
@@ -109,6 +117,14 @@ export default function ToolPage() {
     if (tool.id === 'keyboard-shortcut-guide') return <KeyboardShortcutGuide />;
     if (tool.id === 'internet-speed-test') return <InternetSpeedTest />;
     if (tool.id === 'document-scanner') return <DocumentScanner />;
+    if (tool.id === 'pregnancy-calculator') return <PregnancyCalculator />;
+    if (tool.id === 'due-date-calculator') return <DueDateCalculator />;
+    if (tool.id === 'ovulation-calculator') return <OvulationCalculator />;
+    if (tool.id === 'period-calculator') return <PeriodCalculator />;
+    if (tool.id === 'pregnancy-weight-gain-calculator') return <PregnancyWeightGainCalculator />;
+    if (tool.id === 'pregnancy-conception-calculator') return <PregnancyConceptionCalculator />;
+    if (tool.id === 'conception-calculator') return <ConceptionCalculator />;
+    if (tool.id === 'salary-calculator') return <SalaryCalculator />;
 
     // Category handlers
     if (tool.c === 'text') return <TextTools toolId={tool.id} />;

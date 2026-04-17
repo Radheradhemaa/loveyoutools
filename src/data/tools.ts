@@ -124,6 +124,14 @@ export const tools = [
   { id: 'emoji-picker', c: 'social', n: 'Emoji Picker', d: 'Find and copy emojis for your posts.', i: '😊', b: '#ffedd5' },
 
   // CALCULATOR TOOLS (bg: #fef9c3)
+  { id: 'salary-calculator', c: 'calculator', n: 'Salary Calculator', d: 'Advanced salary calculator with tax deductions and multi-frequency breakdown.', i: '💰', b: '#fef9c3', popular: true },
+  { id: 'pregnancy-calculator', c: 'calculator', n: 'Pregnancy Calculator', d: 'Comprehensive pregnancy timeline, baby size, and milestone tracker.', i: '👶', b: '#fef9c3', popular: true },
+  { id: 'due-date-calculator', c: 'calculator', n: 'Due Date Calculator', d: "Estimate your baby's due date using LMP, IVF, or Ultrasound.", i: '📅', b: '#fef9c3', popular: true },
+  { id: 'ovulation-calculator', c: 'calculator', n: 'Ovulation Calculator', d: 'Find your most fertile days and maximize your chances of pregnancy.', i: '🌸', b: '#fef9c3', popular: true },
+  { id: 'period-calculator', c: 'calculator', n: 'Period Calculator', d: 'Track your menstrual cycle calendar and predict future periods.', i: '🩸', b: '#fef9c3', popular: true },
+  { id: 'pregnancy-weight-gain-calculator', c: 'calculator', n: 'Pregnancy Weight Gain Calculator', d: 'Track healthy weight gain during pregnancy based on BMI.', i: '⚖️', b: '#fef9c3' },
+  { id: 'pregnancy-conception-calculator', c: 'calculator', n: 'Pregnancy Conception Calculator', d: 'Identify your conception date and gestational age.', i: '❤️', b: '#fef9c3' },
+  { id: 'conception-calculator', c: 'calculator', n: 'Conception Calculator', d: 'Reverse-calculate conception date from your estimated due date.', i: '🎯', b: '#fef9c3' },
   { id: 'age-calculator', c: 'calculator', n: 'Age Calculator', d: 'Calculate exact age.', i: '🎂', b: '#fef9c3', popular: true },
   { id: 'percentage-calculator', c: 'calculator', n: 'Percentage Calculator', d: 'Calculate percentages.', i: '%', b: '#fef9c3', popular: true },
   { id: 'loan-emi-calculator', c: 'calculator', n: 'Loan EMI Calculator', d: 'Calculate loan EMI.', i: '🏦', b: '#fef9c3' },
