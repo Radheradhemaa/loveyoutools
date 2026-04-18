@@ -1,13 +1,140 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ImageIcon, Download, Settings, RefreshCw, Trash2, CheckCircle2 } from 'lucide-react';
+import { ImageIcon, Download, Settings, RefreshCw, Trash2, CheckCircle2, ZoomIn, ZoomOut } from 'lucide-react';
 import JSZip from 'jszip';
 import ToolLayout from '../components/tool-system/ToolLayout';
+import Toolbar from '../components/tool-system/Toolbar';
 
 interface ProcessedImage {
   file: File;
   preview: string;
   output: string | null;
   metadata?: any;
+}
+
+function PanZoomImage({ src, alt, className, style }: { src: string; alt: string; className?: string; style?: React.CSSProperties }) {
+  const [scale, setScale] = useState(1);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const targetScrollRef = useRef<{left: number, top: number} | null>(null);
+
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
+
+  const changeScale = (updater: (s: number) => number) => {
+    setScale(oldScale => {
+        const newScale = updater(oldScale);
+        if (oldScale === newScale) return oldScale;
+        
+        const container = scrollRef.current;
+        if (container) {
+          const containerWidth = container.clientWidth;
+          const containerHeight = container.clientHeight;
+          
+          const centerX = container.scrollLeft + containerWidth / 2;
+          const centerY = container.scrollTop + containerHeight / 2;
+          const ratio = newScale / oldScale;
+          
+          targetScrollRef.current = {
+             left: (centerX * ratio) - (containerWidth / 2),
+             top: (centerY * ratio) - (containerHeight / 2)
+          };
+        }
+        return newScale;
+    });
+  };
+
+  useEffect(() => {
+     if (targetScrollRef.current && scrollRef.current) {
+         scrollRef.current.scrollLeft = targetScrollRef.current.left;
+         scrollRef.current.scrollTop = targetScrollRef.current.top;
+         targetScrollRef.current = null;
+     }
+  }, [scale]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // Zoom on wheel ONLY if Ctrl/Cmd is pressed
+      // Normal wheel will natively scroll the container without prevention!
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        e.preventDefault();
+        const zoomDelta = e.deltaY < 0 ? 0.25 : -0.25;
+        changeScale(s => Math.min(8, Math.max(0.25, s + zoomDelta)));
+      }
+    };
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!scrollRef.current || scale <= 1) return;
+    setIsDragging(true);
+    setDragStart({
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: scrollRef.current.scrollLeft,
+      scrollTop: scrollRef.current.scrollTop
+    });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || !scrollRef.current) return;
+    e.preventDefault();
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+    scrollRef.current.scrollLeft = dragStart.scrollLeft - dx;
+    scrollRef.current.scrollTop = dragStart.scrollTop - dy;
+  };
+
+  const handleMouseUp = () => setIsDragging(false);
+
+  return (
+    <div className="relative w-full h-full overflow-hidden flex flex-col group bg-transparent" ref={containerRef}>
+      <div 
+        ref={scrollRef}
+        className={`w-full h-full overflow-auto scrollbar-hide ${scale > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}`}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+      >
+        <div 
+           className="flex items-center justify-center" 
+           style={{ 
+             width: scale > 1 ? `${scale * 100}%` : '100%', 
+             height: scale > 1 ? `${scale * 100}%` : '100%',
+             minWidth: '100%',
+             minHeight: '100%'
+           }}
+        >
+          <img 
+            src={src} 
+            alt={alt} 
+            className={className} 
+            style={{ 
+              ...style, 
+              maxWidth: '100%',
+              maxHeight: '100%',
+              width: scale > 1 ? 'auto' : undefined,
+              height: scale > 1 ? 'auto' : undefined,
+              objectFit: 'contain',
+            }} 
+            draggable={false}
+          />
+        </div>
+      </div>
+      
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 rounded-full px-3 py-1.5 flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity z-20 backdrop-blur-sm shadow-xl pointer-events-auto">
+        <button onClick={() => changeScale(s => Math.max(0.25, s - 0.5))} className="text-white hover:text-blue-400 p-1 bg-white/10 rounded-full transition-colors" title="Zoom Out"><ZoomOut className="w-4 h-4"/></button>
+        <button onClick={() => { changeScale(() => 1); if(scrollRef.current) {scrollRef.current.scrollTop = 0; scrollRef.current.scrollLeft = 0;} }} className="text-white hover:text-blue-400 font-bold text-xs min-w-[3ch] text-center" title="Reset Zoom">
+           {Math.round(scale * 100)}%
+        </button>
+        <button onClick={() => changeScale(s => Math.min(8, s + 0.5))} className="text-white hover:text-blue-400 p-1 bg-white/10 rounded-full transition-colors" title="Zoom In"><ZoomIn className="w-4 h-4"/></button>
+      </div>
+    </div>
+  );
 }
 
 export default function ImageTools({ toolId }: { toolId: string }) {
@@ -33,21 +160,32 @@ export default function ImageTools({ toolId }: { toolId: string }) {
   const [flipH, setFlipH] = useState(false);
   const [flipV, setFlipV] = useState(false);
   const [filter, setFilter] = useState('none');
+  const [filterMode, setFilterMode] = useState<'preset' | 'custom'>('preset');
+  const [brightness, setBrightness] = useState(100);
+  const [contrast, setContrast] = useState(100);
+  const [saturation, setSaturation] = useState(100);
+  const [sepia, setSepia] = useState(0);
+  const [blur, setBlur] = useState(0);
+  const [hueRotate, setHueRotate] = useState(0);
+  const [invert, setInvert] = useState(0);
+  const [grayscale, setGrayscale] = useState(0);
   const [watermarkText, setWatermarkText] = useState('Watermark');
+
+  const computedFilter = filterMode === 'preset' ? filter : `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%) sepia(${sepia}%) blur(${blur}px) hue-rotate(${hueRotate}deg) invert(${invert}%) grayscale(${grayscale}%)`;
 
   useEffect(() => {
     // Reset state when tool changes
     setImages([]);
   }, [toolId]);
 
-  const handleFiles = (files: File | File[]) => {
+  const handleFiles = (files: File | File[], replace = false) => {
     const selectedFiles = Array.isArray(files) ? files : [files];
     if (selectedFiles.length > 0) {
       const newImages: ProcessedImage[] = [];
       
       selectedFiles.forEach((file: File) => {
         // Check if file already exists in state
-        const isDuplicate = images.some(img => 
+        const isDuplicate = !replace && images.some(img => 
           img.file.name === file.name && 
           img.file.size === file.size && 
           img.file.lastModified === file.lastModified
@@ -91,7 +229,7 @@ export default function ImageTools({ toolId }: { toolId: string }) {
       });
 
       if (newImages.length > 0) {
-        setImages(prev => [...prev, ...newImages]);
+        setImages(prev => replace ? newImages : [...prev, ...newImages]);
       }
     }
   };
@@ -156,7 +294,7 @@ export default function ImageTools({ toolId }: { toolId: string }) {
               ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
             } else {
               if (toolId === 'photo-filters') {
-                ctx.filter = filter;
+                ctx.filter = computedFilter;
               }
               ctx.drawImage(img, 0, 0, targetW, targetH);
             }
@@ -360,6 +498,23 @@ export default function ImageTools({ toolId }: { toolId: string }) {
       acceptedFileTypes={['image/*']}
       multiple={true}
       onDownload={downloadAll}
+      renderToolbar={({ fileName, onBack, onComplete }) => (
+        <Toolbar 
+          fileName={fileName} 
+          onBack={onBack}
+          onComplete={async () => {
+             setLoading(true);
+             try {
+                await processImages();
+                onComplete();
+             } catch(err) {
+                console.error(err);
+             } finally {
+                setLoading(false);
+             }
+          }}
+        />
+      )}
     >
       {({ file, onComplete, onReset }) => {
         useEffect(() => {
@@ -476,17 +631,73 @@ export default function ImageTools({ toolId }: { toolId: string }) {
                   )}
 
                   {toolId === 'photo-filters' && (
-                    <div className="fg">
-                      <label className="fl">Select Filter</label>
-                      <select className="fi" value={filter} onChange={e => setFilter(e.target.value)}>
-                        <option value="none">Normal</option>
-                        <option value="grayscale(100%)">Grayscale</option>
-                        <option value="sepia(100%)">Sepia</option>
-                        <option value="invert(100%)">Invert</option>
-                        <option value="blur(5px)">Blur</option>
-                        <option value="brightness(150%)">Brighten</option>
-                        <option value="contrast(200%)">High Contrast</option>
-                      </select>
+                    <div className="space-y-4">
+                      <div className="flex bg-slate-100 p-1 rounded-xl">
+                        <button onClick={() => setFilterMode('preset')} className={`flex-1 py-1.5 text-sm font-bold rounded-lg transition-all ${filterMode === 'preset' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}>Presets</button>
+                        <button onClick={() => setFilterMode('custom')} className={`flex-1 py-1.5 text-sm font-bold rounded-lg transition-all ${filterMode === 'custom' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}>Custom Setup</button>
+                      </div>
+
+                      {filterMode === 'preset' ? (
+                        <div className="fg">
+                          <label className="fl">Select Preset</label>
+                          <select className="fi" value={filter} onChange={e => setFilter(e.target.value)}>
+                            <option value="none">Normal / Original</option>
+                            <option value="grayscale(100%)">Classic Grayscale</option>
+                            <option value="sepia(100%)">Vintage Sepia</option>
+                            <option value="invert(100%)">Invert Colors</option>
+                            <option value="blur(4px)">Soft Blur</option>
+                            <option value="brightness(150%) saturate(120%)">Bright & Vibrant</option>
+                            <option value="contrast(150%) saturate(110%)">High Contrast</option>
+                            <option value="hue-rotate(90deg)">Alien Colors (90°)</option>
+                            <option value="sepia(50%) hue-rotate(-30deg) saturate(140%)">Autumn Warmth</option>
+                            <option value="grayscale(100%) contrast(150%)">Noir (B&W High Contrast)</option>
+                            <option value="brightness(110%) saturate(150%) hue-rotate(10deg)">Summer Glow</option>
+                            <option value="grayscale(100%) sepia(80%) hue-rotate(180deg) blur(1px)">Eerie Dream</option>
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="space-y-3 mt-4">
+                          <div className="fg">
+                            <label className="fl flex justify-between"><span>Brightness</span><span>{brightness}%</span></label>
+                            <input type="range" min="0" max="200" value={brightness} onChange={e => setBrightness(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+                          </div>
+                          <div className="fg">
+                            <label className="fl flex justify-between"><span>Contrast</span><span>{contrast}%</span></label>
+                            <input type="range" min="0" max="200" value={contrast} onChange={e => setContrast(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+                          </div>
+                          <div className="fg">
+                            <label className="fl flex justify-between"><span>Saturation</span><span>{saturation}%</span></label>
+                            <input type="range" min="0" max="300" value={saturation} onChange={e => setSaturation(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+                          </div>
+                          <div className="fg">
+                            <label className="fl flex justify-between"><span>Blur</span><span>{blur}px</span></label>
+                            <input type="range" min="0" max="20" step="0.5" value={blur} onChange={e => setBlur(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+                          </div>
+                          <div className="fg">
+                            <label className="fl flex justify-between"><span>Hue Rotate</span><span>{hueRotate}°</span></label>
+                            <input type="range" min="0" max="360" value={hueRotate} onChange={e => setHueRotate(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="fg">
+                              <label className="fl flex justify-between"><span>Sepia</span><span>{sepia}%</span></label>
+                              <input type="range" min="0" max="100" value={sepia} onChange={e => setSepia(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+                            </div>
+                            <div className="fg">
+                              <label className="fl flex justify-between"><span>Grayscale</span><span>{grayscale}%</span></label>
+                              <input type="range" min="0" max="100" value={grayscale} onChange={e => setGrayscale(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+                            </div>
+                          </div>
+                          <div className="fg">
+                            <label className="fl flex justify-between"><span>Invert</span><span>{invert}%</span></label>
+                            <input type="range" min="0" max="100" value={invert} onChange={e => setInvert(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+                          </div>
+                          <button onClick={() => {
+                            setBrightness(100); setContrast(100); setSaturation(100); setBlur(0); setHueRotate(0); setSepia(0); setGrayscale(0); setInvert(0);
+                          }} className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-lg transition-colors mt-2">
+                            Reset Adjustments
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -539,13 +750,13 @@ export default function ImageTools({ toolId }: { toolId: string }) {
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-bold flex items-center gap-2"><ImageIcon className="w-5 h-5 text-accent" /> Images ({images.length})</h3>
                   <label className="text-sm text-accent hover:underline cursor-pointer">
-                    + Add More
+                    {toolId === 'photo-filters' || toolId === 'image-metadata-viewer' ? 'Change Image' : '+ Add More'}
                     <input 
                       type="file" 
                       accept="image/*" 
-                      multiple
+                      multiple={toolId !== 'photo-filters' && toolId !== 'image-metadata-viewer'}
                       onChange={(e) => {
-                        if (e.target.files) handleFiles(Array.from(e.target.files));
+                        if (e.target.files) handleFiles(Array.from(e.target.files), toolId === 'photo-filters' || toolId === 'image-metadata-viewer');
                       }} 
                       className="hidden" 
                     />
@@ -577,26 +788,32 @@ export default function ImageTools({ toolId }: { toolId: string }) {
                     ))}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-h-[60vh] lg:max-h-[85vh] overflow-y-auto pr-2">
+                  <div className={`gap-4 max-h-[60vh] lg:max-h-[85vh] overflow-y-auto pr-2 ${images.length === 1 || toolId === 'photo-filters' ? 'flex flex-col h-full min-h-[400px]' : 'grid grid-cols-2 sm:grid-cols-3'}`}>
                     {images.map((img, idx) => (
-                      <div key={idx} className="relative group rounded-lg overflow-hidden border border-border bg-surface aspect-square flex flex-col">
-                        <div className="flex-1 relative flex items-center justify-center p-2">
-                          <img 
+                      <div key={idx} className={`relative group rounded-xl overflow-hidden border border-border bg-surface flex flex-col ${images.length === 1 || toolId === 'photo-filters' ? 'flex-1 min-h-[400px]' : 'aspect-square'}`}>
+                        <div 
+                          className="flex-1 relative flex items-center justify-center p-4 bg-repeat overflow-hidden group"
+                          style={{
+                            backgroundImage: "url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCI+CiAgPHJlY3Qgd2lkdGg9IjIwIiBoZWlnaHQ9IjIwIiBmaWxsPSIjZmZmIi8+CiAgPHJlY3Qgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjZjNmNGY2Ii8+CiAgPHJlY3QgeD0iMTAiIHk9IjEwIiB3aWR0aD0iMTAiIGhlaWdodD0iMTAiIGZpbGw9IiNmM2Y0ZjYiLz4KPC9zdmc+')",
+                            backgroundPosition: '0 0, 10px 10px'
+                          }}
+                        >
+                          <PanZoomImage 
                             src={img.output || img.preview} 
                             alt={img.file.name} 
-                            className="max-w-full max-h-full object-contain" 
-                            style={{ filter: toolId === 'photo-filters' && !img.output ? filter : 'none' }} 
+                            className={`max-w-full max-h-full object-contain pointer-events-none ${images.length === 1 || toolId === 'photo-filters' ? 'drop-shadow-lg rounded-md' : 'drop-shadow-sm'}`} 
+                            style={{ filter: toolId === 'photo-filters' && !img.output ? computedFilter : 'none', transformOrigin: 'center' }} 
                           />
                           <button 
                             onClick={() => removeImage(idx)}
-                            className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="absolute top-3 right-3 bg-red-500/90 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-xl z-30"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-5 h-5" />
                           </button>
                         </div>
-                        <div className="bg-bg-secondary p-2 text-xs border-t border-border flex justify-between items-center">
-                          <p className="truncate font-medium" title={img.file.name}>{img.file.name}</p>
-                          {img.output && <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />}
+                        <div className="bg-bg-secondary p-3 text-sm font-medium border-t border-border flex justify-between items-center z-10">
+                          <p className="truncate text-text-primary" title={img.file.name}>{img.file.name}</p>
+                          {img.output && <CheckCircle2 className="w-5 h-5 text-success flex-shrink-0" />}
                         </div>
                       </div>
                     ))}
