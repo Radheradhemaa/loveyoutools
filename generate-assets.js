@@ -53,11 +53,26 @@ async function generateAssets() {
   // Generate the transparent logo used in Layout.tsx
   await sharp(trimmedBuffer).resize({ width: 512 }).toFile('public/logo-transparent.png');
 
+  // --- FAVICON GENERATION (ICON ONLY, NO TEXT) ---
+  const transparentIconSvg = `<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(10, 10)">
+    <!-- Toolbox Handle (Orange Arc) -->
+    <path d="M 65 75 C 65 45, 115 45, 115 75" fill="none" stroke="#E8621A" stroke-width="16" stroke-linecap="round"/>
+    <!-- Toolbox Body (Orange Rect) -->
+    <rect x="30" y="80" width="120" height="85" rx="12" fill="#E8621A"/>
+    <!-- Subtle Divider Line -->
+    <line x1="30" y1="118" x2="150" y2="118" stroke="white" stroke-width="2" opacity="0.3"/>
+    <!-- Large Heart Shape (White) -->
+    <path d="M 90 150 C 70 133, 50 117, 50 100 C 50 87, 62 77, 75 77 C 83 77, 88 81, 90 85 C 92 81, 97 77, 105 77 C 118 77, 130 87, 130 100 C 130 117, 110 133, 90 150 Z" fill="white"/>
+  </g>
+</svg>`;
+  const iconBuffer = Buffer.from(transparentIconSvg);
+
   console.log('Generating Favicon Pack...');
-  await sharp(trimmedBuffer).resize(16, 16).toFile('public/favicon/favicon-16x16.png');
-  await sharp(trimmedBuffer).resize(32, 32).toFile('public/favicon/favicon-32x32.png');
-  await sharp(trimmedBuffer).resize(48, 48).toFile('public/favicon/favicon-48x48.png');
-  await sharp(trimmedBuffer).resize(64, 64).toFile('public/favicon/favicon-64x64.png');
+  await sharp(iconBuffer).resize(16, 16).png().toFile('public/favicon/favicon-16x16.png');
+  await sharp(iconBuffer).resize(32, 32).png().toFile('public/favicon/favicon-32x32.png');
+  await sharp(iconBuffer).resize(48, 48).png().toFile('public/favicon/favicon-48x48.png');
+  await sharp(iconBuffer).resize(64, 64).png().toFile('public/favicon/favicon-64x64.png');
   
   try {
     const icoBuffer = await pngToIco('public/favicon/favicon-32x32.png');
@@ -68,12 +83,32 @@ async function generateAssets() {
   }
 
   console.log('Generating Apple Touch Icon...');
-  await sharp(trimmedBuffer).resize(180, 180).toFile('public/favicon/apple-touch-icon.png');
-  await sharp(trimmedBuffer).resize(180, 180).toFile('public/apple-touch-icon.png'); // Also in root
+  // Apple recommends 180x180 png for touch icons
+  // Add a white background since apple-touch-icon usually doesn't gracefully handle transparency
+  await sharp({
+    create: {
+      width: 180,
+      height: 180,
+      channels: 4,
+      background: { r: 255, g: 255, b: 255, alpha: 1 }
+    }
+  }).composite([{ input: await sharp(iconBuffer).resize(160, 160).toBuffer(), gravity: 'center' }])
+    .png().toFile('public/favicon/apple-touch-icon.png');
+    
+  await sharp({
+    create: {
+      width: 180,
+      height: 180,
+      channels: 4,
+      background: { r: 255, g: 255, b: 255, alpha: 1 }
+    }
+  }).composite([{ input: await sharp(iconBuffer).resize(160, 160).toBuffer(), gravity: 'center' }])
+    .png().toFile('public/apple-touch-icon.png'); // Also in root
 
   console.log('Generating PWA Icons...');
-  await sharp(trimmedBuffer).resize(192, 192).toFile('public/pwa-icons/icon-192x192.png');
-  await sharp(trimmedBuffer).resize(512, 512).toFile('public/pwa-icons/icon-512x512.png');
+  // Use pure icon for PWA icons too
+  await sharp(iconBuffer).resize(192, 192).png().toFile('public/pwa-icons/icon-192x192.png');
+  await sharp(iconBuffer).resize(512, 512).png().toFile('public/pwa-icons/icon-512x512.png');
 
   console.log('Generating Social Media Preview...');
   // Create a 1200x630 canvas with transparent background
@@ -109,7 +144,7 @@ async function generateAssets() {
   .toFile('public/social-preview/og-image.png');
 
   console.log('Generating Google Search Favicon...');
-  await sharp(trimmedBuffer).resize(48, 48).toFile('public/favicon/google-favicon-48x48.png');
+  await sharp(iconBuffer).resize(48, 48).png().toFile('public/favicon/google-favicon-48x48.png');
 
   console.log('All assets generated successfully!');
 }
