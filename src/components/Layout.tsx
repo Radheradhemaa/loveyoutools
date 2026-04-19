@@ -293,6 +293,7 @@ export default function Layout() {
                   <li><Link to="/blog" className="hover:text-accent transition-colors">Blog</Link></li>
                   <li><Link to="/privacy" className="hover:text-accent transition-colors">Privacy Policy</Link></li>
                   <li><Link to="/terms" className="hover:text-accent transition-colors">Terms of Service</Link></li>
+                  <li><Link to="/disclaimer" className="hover:text-accent transition-colors">Disclaimer</Link></li>
                 </ul>
               </div>
             </div>

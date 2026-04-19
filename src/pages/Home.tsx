@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { categories, tools } from '../data/tools';
 import { ArrowRight, Sparkles, Zap, Shield, CheckCircle2, History } from 'lucide-react';
 import SEO from '../components/SEO';
+import AdSlot from '../components/AdSlot';
 
 export default function Home() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -61,12 +62,12 @@ export default function Home() {
   return (
     <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-12">
       <SEO 
-        title="LoveyouTools - Professional Multi-Tools Hub" 
-        description="A fully functional, professional, and production-ready multi-tools hub. Free online tools for images, PDFs, SEO, and more with real-time previews."
+        title="LoveyouTools - Free Online Professional Multi-Tools Hub" 
+        description="LoveyouTools is a free online platform offering 100+ professional tools for image editing, PDF conversion, SEO analysis, and more with zero signup."
         url={window.location.href}
       />
       {/* Hero Section */}
-      <section className="text-center py-4 relative overflow-hidden">
+      <section className="text-center py-4 relative overflow-hidden mb-12">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,var(--color-accent)_0%,transparent_40%)] opacity-5 pointer-events-none"></div>
         
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-accent/10 text-accent font-medium text-sm mb-4">
@@ -74,24 +75,30 @@ export default function Home() {
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
           </span>
-          New Tools Added
+          New Tools Added Daily
         </div>
 
-        <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-text-primary mb-4 max-w-4xl mx-auto leading-tight">
-          Professional Tools to Simplify Your Digital Tasks.
+        <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-text-primary mb-6 max-w-4xl mx-auto leading-tight">
+          Professional Online Tools Designed to Simplify Your Digital Tasks
         </h1>
 
-        <div className="flex flex-wrap justify-center gap-6 text-sm font-medium text-text-muted mb-4">
+        <p className="text-lg text-text-secondary max-w-2xl mx-auto mb-8">
+          Access a comprehensive suite of free utilities ranging from advanced PDF editors and image compressors to robust developer scripts. No signups, completely responsive, and powered locally on your device for absolute privacy.
+        </p>
+
+        <div className="flex flex-wrap justify-center gap-6 text-sm font-medium text-text-muted">
           <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 100+ Tools</div>
           <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 8 Categories</div>
-          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 0 Signup Required</div>
-          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 100% Free</div>
+          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> No Signup Required</div>
+          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 100% Free Forever</div>
         </div>
       </section>
 
+      <AdSlot adSlot="home-top-section" />
+
       {/* Recently Used Section */}
       {recentTools.length > 0 && (
-        <section className="mb-24">
+        <section className="mb-24 mt-12">
           <div className="flex items-center justify-between mb-8">
             <h2 className="text-2xl font-bold flex items-center gap-2">
               <History className="text-accent" /> Recently Used
@@ -118,10 +125,10 @@ export default function Home() {
 
       {/* Trending Section */}
       {trendingTools.length > 0 && (
-        <section id="trending-section" className="mb-24 scroll-mt-24">
+        <section id="trending-section" className="mb-24 scroll-mt-24 mt-12">
           <div className="flex items-center justify-between mb-8">
             <h2 className="text-2xl font-bold flex items-center gap-2">
-              <Sparkles className="text-accent" /> {activeCategory === 'all' ? 'Trending Tools' : `Popular ${activeCategoryName} Tools`}
+              <Sparkles className="text-accent" /> {activeCategory === 'all' ? 'Trending SEO & Utility Tools' : `Popular ${activeCategoryName} Tools`}
             </h2>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -144,11 +151,13 @@ export default function Home() {
       </section>
       )}
 
+      <AdSlot adSlot="home-middle-section" />
+
       {/* All Tools Grid */}
-      <section id="tools-grid" className="scroll-mt-24">
+      <section id="tools-grid" className="scroll-mt-24 mt-12">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
           <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Zap className="text-accent" /> Browse All Tools
+            <Zap className="text-accent" /> Browse All Online Tools
           </h2>
           <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 w-full sm:w-auto hide-scrollbar">
             {categories.map(cat => (
@@ -171,7 +180,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-16">
           {filteredTools.map(tool => (
             <Link 
               key={tool.id} 
@@ -199,6 +208,15 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {/* SEO Content Block for Homepage */}
+      <section className="bg-surface border border-border rounded-[14px] p-8 md:p-12 mt-16 max-w-5xl mx-auto text-center prose prose-lg dark:prose-invert">
+        <h2 className="text-3xl font-extrabold mb-6">Why LoveyouTools is the #1 Digital Utility Platform</h2>
+        <p>LoveyouTools offers users around the globe unparalleled access to over 100+ fully-functional digital utilities absolutely free. Unlike traditional web services, the majority of our tools operate strictly on the client side—which means your processing happens directly in your browser without ever communicating with external servers. This leads to exceptional data privacy, no internet lag, and blistering fast processing times.</p>
+        <p>Whether you need to manipulate a PDF, compress high-resolution images, generate web-ready icons, format code, or quickly perform an SEO structure analysis, we have the precise tool tailored for your needs. We are constantly expanding our library of utilities to ensure you never have to sign up for expensive software suites again.</p>
+      </section>
+      
+      <AdSlot adSlot="home-bottom-section" className="mt-12" />
     </div>
   );
 }

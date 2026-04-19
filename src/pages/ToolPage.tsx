@@ -6,6 +6,9 @@ import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import SEO from '../components/SEO';
 import { useFocusMode } from '../contexts/FocusModeContext';
 
+import ToolSeoContent from '../components/ToolSeoContent';
+import AdSlot from '../components/AdSlot';
+
 // Lazy load tool components
 const WordCounter = lazy(() => import('../tools/WordCounter'));
 const JsonFormatter = lazy(() => import('../tools/JsonFormatter'));
@@ -352,82 +355,12 @@ export default function ToolPage() {
 
           {/* SEO Content Block */}
           {!isFocusMode && (
-            <div className="mt-16 space-y-12">
-              <section>
-                <h2 className="text-2xl font-bold mb-4">How to use {tool.n}</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-surface border border-border rounded-[14px] p-6">
-                    <div className="w-8 h-8 rounded-full bg-accent/10 text-accent flex items-center justify-center font-bold mb-4">1</div>
-                    <h3 className="font-bold mb-2">Input Data</h3>
-                    <p className="text-text-secondary text-sm">Upload your file or paste your text into the tool interface above.</p>
-                  </div>
-                  <div className="bg-surface border border-border rounded-[14px] p-6">
-                    <div className="w-8 h-8 rounded-full bg-accent/10 text-accent flex items-center justify-center font-bold mb-4">2</div>
-                    <h3 className="font-bold mb-2">Configure</h3>
-                    <p className="text-text-secondary text-sm">Adjust the settings and options according to your specific needs.</p>
-                  </div>
-                  <div className="bg-surface border border-border rounded-[14px] p-6">
-                    <div className="w-8 h-8 rounded-full bg-accent/10 text-accent flex items-center justify-center font-bold mb-4">3</div>
-                    <h3 className="font-bold mb-2">Get Results</h3>
-                    <p className="text-text-secondary text-sm">Click the process button to instantly get your optimized results.</p>
-                  </div>
-                </div>
-              </section>
-
-              <section className="bg-surface border border-border rounded-[14px] p-8">
-                <h2 className="text-2xl font-bold mb-6">Why use our {tool.n}?</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                  <div className="flex gap-4">
-                    <div className="mt-1 text-accent"><Zap className="w-6 h-6" /></div>
-                    <div>
-                      <h3 className="font-bold mb-1">Lightning Fast</h3>
-                      <p className="text-text-secondary text-sm">Everything is processed locally in your browser, meaning zero upload time and instant results.</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-4">
-                    <div className="mt-1 text-accent"><Shield className="w-6 h-6" /></div>
-                    <div>
-                      <h3 className="font-bold mb-1">100% Secure</h3>
-                      <p className="text-text-secondary text-sm">Your data never leaves your device. We don't store or upload your files to any servers.</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-4">
-                    <div className="mt-1 text-accent"><CheckCircle2 className="w-6 h-6" /></div>
-                    <div>
-                      <h3 className="font-bold mb-1">Always Free</h3>
-                      <p className="text-text-secondary text-sm">No hidden fees, no subscriptions, and no limits on how many times you can use the tool.</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-4">
-                    <div className="mt-1 text-accent"><ThumbsUp className="w-6 h-6" /></div>
-                    <div>
-                      <h3 className="font-bold mb-1">Easy to Use</h3>
-                      <p className="text-text-secondary text-sm">Designed with a clean, intuitive interface that anyone can understand and use immediately.</p>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {/* FAQ Section */}
-              <section>
-                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-                  <HelpCircle className="text-accent" /> Frequently Asked Questions
-                </h2>
-                <div className="space-y-4">
-                  <div className="bg-surface border border-border rounded-[14px] p-6">
-                    <h3 className="font-bold text-lg mb-2">Is {tool.n} free to use?</h3>
-                    <p className="text-text-secondary">Yes, {tool.n} is completely free to use. There are no hidden charges, subscriptions, or limits.</p>
-                  </div>
-                  <div className="bg-surface border border-border rounded-[14px] p-6">
-                    <h3 className="font-bold text-lg mb-2">Is my data secure?</h3>
-                    <p className="text-text-secondary">Absolutely. All processing happens directly in your browser. We do not upload your files or data to any external servers.</p>
-                  </div>
-                  <div className="bg-surface border border-border rounded-[14px] p-6">
-                    <h3 className="font-bold text-lg mb-2">How do I use the {tool.n}?</h3>
-                    <p className="text-text-secondary">Simply upload your file or enter your input in the tool area above, configure any available options, and click the process button to get your results instantly.</p>
-                  </div>
-                </div>
-              </section>
+            <>
+              <ToolSeoContent 
+                tool={tool} 
+                categoryName={category?.name} 
+                relatedTools={relatedTools} 
+              />
 
               {/* SEO Blog Content */}
               {blogPost && (
@@ -447,7 +380,7 @@ export default function ToolPage() {
                   />
                 </section>
               )}
-            </div>
+            </>
           )}
         </div>
 
@@ -506,8 +439,14 @@ export default function ToolPage() {
                 <Info className="w-5 h-5" /> Did you know?
               </h3>
               <p className="text-sm text-text-secondary">
-                LoveTools runs entirely in your browser using modern Web APIs. This means it's lightning fast and your data never leaves your device.
+                LoveyouTools runs entirely in your browser using modern Web APIs. This means it's lightning fast and your data never leaves your device.
               </p>
+            </div>
+
+            {/* Sidebar Ad */}
+            <div className="sticky top-24">
+              <span className="text-[10px] text-text-muted uppercase tracking-widest mb-2 block text-center">Advertisement</span>
+              <AdSlot adSlot="sidebar-ad" adFormat="rectangle" />
             </div>
           </div>
         )}

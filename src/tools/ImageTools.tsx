@@ -56,8 +56,8 @@ function PanZoomImage({ src, alt, className, style }: { src: string; alt: string
     if (!container) return;
 
     const handleWheel = (e: WheelEvent) => {
-      // Zoom on wheel ONLY if Ctrl/Cmd is pressed
-      // Normal wheel will natively scroll the container without prevention!
+      // Zoom on wheel: natively if ctrl/meta is pressed, or if hovering over image and scrolling (we can use deltaY for zoom without ctrlKey, but let's just make it zoom instead of scroll if we prefer. But the user said "make sure pan and zoom features to be there and scroll syestem to view image properly")
+      // Instead of relying on container scroll natively, let's allow native scroll if not zooming.
       if (e.ctrlKey || e.metaKey || e.altKey) {
         e.preventDefault();
         const zoomDelta = e.deltaY < 0 ? 0.25 : -0.25;
@@ -94,19 +94,17 @@ function PanZoomImage({ src, alt, className, style }: { src: string; alt: string
     <div className="relative w-full h-full overflow-hidden flex flex-col group bg-transparent" ref={containerRef}>
       <div 
         ref={scrollRef}
-        className={`w-full h-full overflow-auto scrollbar-hide ${scale > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}`}
+        className={`w-full h-full overflow-auto ${scale > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'}`}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
       >
         <div 
-           className="flex items-center justify-center" 
+           className="flex items-center justify-center p-4 min-w-max min-h-max" 
            style={{ 
              width: scale > 1 ? `${scale * 100}%` : '100%', 
-             height: scale > 1 ? `${scale * 100}%` : '100%',
-             minWidth: '100%',
-             minHeight: '100%'
+             height: scale > 1 ? `${scale * 100}%` : '100%'
            }}
         >
           <img 
@@ -115,10 +113,10 @@ function PanZoomImage({ src, alt, className, style }: { src: string; alt: string
             className={className} 
             style={{ 
               ...style, 
-              maxWidth: '100%',
-              maxHeight: '100%',
-              width: scale > 1 ? 'auto' : undefined,
-              height: scale > 1 ? 'auto' : undefined,
+              maxWidth: scale > 1 ? 'none' : '100%',
+              maxHeight: scale > 1 ? 'none' : '100%',
+              width: scale > 1 ? 'auto' : '100%',
+              height: scale > 1 ? 'auto' : '100%',
               objectFit: 'contain',
             }} 
             draggable={false}
@@ -749,14 +747,17 @@ export default function ImageTools({ toolId }: { toolId: string }) {
               <main className="bg-surface border border-border rounded-2xl flex flex-col shadow-sm order-1 lg:order-2 overflow-hidden min-h-[400px] lg:min-h-[600px] relative p-4 gap-4">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-bold flex items-center gap-2"><ImageIcon className="w-5 h-5 text-accent" /> Images ({images.length})</h3>
-                  <label className="text-sm text-accent hover:underline cursor-pointer">
+                  <label className="text-sm text-accent hover:underline cursor-pointer font-medium p-1 bg-accent/10 rounded-lg px-3">
                     {toolId === 'photo-filters' || toolId === 'image-metadata-viewer' ? 'Change Image' : '+ Add More'}
                     <input 
                       type="file" 
                       accept="image/*" 
                       multiple={toolId !== 'photo-filters' && toolId !== 'image-metadata-viewer'}
+                      onClick={(e) => { (e.target as HTMLInputElement).value = '' }}
                       onChange={(e) => {
-                        if (e.target.files) handleFiles(Array.from(e.target.files), toolId === 'photo-filters' || toolId === 'image-metadata-viewer');
+                        if (e.target.files && e.target.files.length > 0) {
+                           handleFiles(Array.from(e.target.files), toolId === 'photo-filters' || toolId === 'image-metadata-viewer');
+                        }
                       }} 
                       className="hidden" 
                     />
@@ -798,11 +799,11 @@ export default function ImageTools({ toolId }: { toolId: string }) {
                             backgroundPosition: '0 0, 10px 10px'
                           }}
                         >
-                          <PanZoomImage 
-                            src={img.output || img.preview} 
+                           <PanZoomImage 
+                            src={toolId === 'photo-filters' ? img.preview : (img.output || img.preview)} 
                             alt={img.file.name} 
-                            className={`max-w-full max-h-full object-contain pointer-events-none ${images.length === 1 || toolId === 'photo-filters' ? 'drop-shadow-lg rounded-md' : 'drop-shadow-sm'}`} 
-                            style={{ filter: toolId === 'photo-filters' && !img.output ? computedFilter : 'none', transformOrigin: 'center' }} 
+                            className={`pointer-events-none ${images.length === 1 || toolId === 'photo-filters' ? 'drop-shadow-lg rounded-md border border-border' : 'drop-shadow-sm'}`} 
+                            style={{ filter: toolId === 'photo-filters' ? computedFilter : 'none', transformOrigin: 'center' }} 
                           />
                           <button 
                             onClick={() => removeImage(idx)}

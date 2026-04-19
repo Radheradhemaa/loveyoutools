@@ -9,7 +9,9 @@ import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
+import Disclaimer from './pages/Disclaimer';
 import ScrollToTop from './components/ScrollToTop';
+import FeedbackWidget from './components/FeedbackWidget';
 import { FocusModeProvider } from './contexts/FocusModeContext';
 
 export default function App() {
@@ -25,12 +27,14 @@ export default function App() {
               <Route path="contact" element={<Contact />} />
               <Route path="privacy" element={<Privacy />} />
               <Route path="terms" element={<Terms />} />
+              <Route path="disclaimer" element={<Disclaimer />} />
               <Route path="blog" element={<Blog />} />
               <Route path="blog/:id" element={<BlogPost />} />
               <Route path=":id" element={<ToolPage />} />
               <Route path="tool/:id" element={<ToolPage />} />
             </Route>
           </Routes>
+          <FeedbackWidget />
         </Router>
       </FocusModeProvider>
     </HelmetProvider>
