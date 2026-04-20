@@ -180,7 +180,7 @@ export default function GeneratorTools({ toolId }: { toolId: string }) {
                   <label className="text-sm font-medium">Password Length</label>
                   <span className="text-accent font-bold">{options.len}</span>
                 </div>
-                <input type="range" min="4" max="128" value={options.len || 16} onChange={e => setOptions({...options, len: parseInt(e.target.value)})} className="w-full accent-accent" />
+                <input type="range" min="4" max="128" value={options.len || 16} onChange={e => setOptions({...options, len: parseInt(e.target.value) || 16})} className="w-full accent-accent" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <label className="flex items-center gap-2 p-2 bg-bg-primary rounded-lg border border-border cursor-pointer hover:border-accent transition-colors">

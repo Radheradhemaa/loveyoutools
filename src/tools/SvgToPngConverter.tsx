@@ -628,16 +628,16 @@ export default function SvgToPngConverter() {
                         </div>
                         <div className="space-y-1">
                           <div className="flex justify-between text-[10px] font-bold text-text-muted uppercase"><span>Blur</span><span>{currentState.shadow.blur}px</span></div>
-                          <input type="range" min="0" max="50" value={currentState.shadow.blur} onChange={(e) => updateState({ shadow: { ...currentState.shadow, blur: parseInt(e.target.value) } })} className="w-full accent-accent" />
+                          <input type="range" min="0" max="50" value={currentState.shadow.blur} onChange={(e) => updateState({ shadow: { ...currentState.shadow, blur: parseInt(e.target.value) || 0 } })} className="w-full accent-accent" />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <div className="space-y-1">
                             <span className="text-[10px] font-bold text-text-muted uppercase block">Offset X</span>
-                            <input type="number" value={currentState.shadow.offsetX} onChange={(e) => updateState({ shadow: { ...currentState.shadow, offsetX: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+                            <input type="number" value={currentState.shadow.offsetX || 0} onChange={(e) => updateState({ shadow: { ...currentState.shadow, offsetX: parseInt(e.target.value) || 0 } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
                           </div>
                           <div className="space-y-1">
                             <span className="text-[10px] font-bold text-text-muted uppercase block">Offset Y</span>
-                            <input type="number" value={currentState.shadow.offsetY} onChange={(e) => updateState({ shadow: { ...currentState.shadow, offsetY: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+                            <input type="number" value={currentState.shadow.offsetY || 0} onChange={(e) => updateState({ shadow: { ...currentState.shadow, offsetY: parseInt(e.target.value) || 0 } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
                           </div>
                         </div>
                       </div>
@@ -664,7 +664,7 @@ export default function SvgToPngConverter() {
                         </div>
                         <div className="space-y-1">
                           <div className="flex justify-between text-[10px] font-bold text-text-muted uppercase"><span>Width</span><span>{currentState.border.width}px</span></div>
-                          <input type="range" min="1" max="50" value={currentState.border.width} onChange={(e) => updateState({ border: { ...currentState.border, width: parseInt(e.target.value) } })} className="w-full accent-accent" />
+                          <input type="range" min="1" max="50" value={currentState.border.width} onChange={(e) => updateState({ border: { ...currentState.border, width: parseInt(e.target.value) || 1 } })} className="w-full accent-accent" />
                         </div>
                       </div>
                     )}
@@ -697,7 +697,7 @@ export default function SvgToPngConverter() {
                         </div>
                         <div className="space-y-1">
                           <div className="flex justify-between text-[10px] font-bold text-text-muted uppercase"><span>Font Size</span><span>{currentState.watermark.fontSize}px</span></div>
-                          <input type="range" min="10" max="200" value={currentState.watermark.fontSize} onChange={(e) => updateState({ watermark: { ...currentState.watermark, fontSize: parseInt(e.target.value) } })} className="w-full accent-accent" />
+                          <input type="range" min="10" max="200" value={currentState.watermark.fontSize} onChange={(e) => updateState({ watermark: { ...currentState.watermark, fontSize: parseInt(e.target.value) || 20 } })} className="w-full accent-accent" />
                         </div>
                         <div className="space-y-1">
                           <span className="text-[10px] font-bold text-text-muted uppercase block">Font Family</span>
@@ -717,11 +717,11 @@ export default function SvgToPngConverter() {
                         <div className="grid grid-cols-2 gap-3">
                           <div className="space-y-1">
                             <span className="text-[10px] font-bold text-text-muted uppercase block">Pos X</span>
-                            <input type="number" value={Math.round(currentState.watermark.x)} onChange={(e) => updateState({ watermark: { ...currentState.watermark, x: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+                            <input type="number" value={Math.round(currentState.watermark.x || 0)} onChange={(e) => updateState({ watermark: { ...currentState.watermark, x: parseInt(e.target.value) || 0 } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
                           </div>
                           <div className="space-y-1">
                             <span className="text-[10px] font-bold text-text-muted uppercase block">Pos Y</span>
-                            <input type="number" value={Math.round(currentState.watermark.y)} onChange={(e) => updateState({ watermark: { ...currentState.watermark, y: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+                            <input type="number" value={Math.round(currentState.watermark.y || 0)} onChange={(e) => updateState({ watermark: { ...currentState.watermark, y: parseInt(e.target.value) || 0 } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
                           </div>
                         </div>
                       </div>

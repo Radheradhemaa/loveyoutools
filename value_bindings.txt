@@ -1,0 +1,223 @@
+src/components/Layout.tsx:                  value={searchQuery}
+src/components/Layout.tsx:                value={searchQuery}
+src/tools/JsonFormatter.tsx:            value={input}
+src/tools/JsonFormatter.tsx:              value={output}
+src/tools/SalaryCalculator.tsx:                  value={baseInput}
+src/tools/SalaryCalculator.tsx:                      value={selectedMonth}
+src/tools/SalaryCalculator.tsx:                        <option key={i} value={i}>{m} {results.currentYear}</option>
+src/tools/SalaryCalculator.tsx:                    value={holidays}
+src/tools/SalaryCalculator.tsx:                    value={hoursPerDay}
+src/tools/DocumentScanner.tsx:            value={selectedDeviceId}
+src/tools/DocumentScanner.tsx:              <option key={device.deviceId} value={device.deviceId}>
+src/tools/PassportPhotoMaker.tsx:                              value={brushSize}
+src/tools/PassportPhotoMaker.tsx:                            value={customColor} 
+src/tools/PassportPhotoMaker.tsx:                              value={adj.val} 
+src/tools/PassportPhotoMaker.tsx:                            <input type="number" value={customPaper.width} onChange={e => setCustomPaper({...customPaper, width: Number(e.target.value)})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
+src/tools/PassportPhotoMaker.tsx:                            <input type="number" value={customPaper.height} onChange={e => setCustomPaper({...customPaper, height: Number(e.target.value)})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
+src/tools/PassportPhotoMaker.tsx:                            <input type="number" min="1" value={customGrid.cols} onChange={e => setCustomGrid({...customGrid, cols: Math.max(1, Number(e.target.value))})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
+src/tools/PassportPhotoMaker.tsx:                            <input type="number" min="1" value={customGrid.rows} onChange={e => setCustomGrid({...customGrid, rows: Math.max(1, Number(e.target.value))})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
+src/tools/PassportPhotoMaker.tsx:                          value={dpi} 
+src/tools/PassportPhotoMaker.tsx:                    value={zoom} 
+src/tools/GeneratorTools.tsx:                <input type="range" min="4" max="128" value={options.len || 16} onChange={e => setOptions({...options, len: parseInt(e.target.value)})} className="w-full accent-accent" />
+src/tools/GeneratorTools.tsx:                  <input type="number" className="w-full p-2 bg-bg-primary border border-border rounded-lg focus:ring-2 focus:ring-accent outline-none" value={options.min || 1} onChange={e => setOptions({...options, min: e.target.value})} />
+src/tools/GeneratorTools.tsx:                  <input type="number" className="w-full p-2 bg-bg-primary border border-border rounded-lg focus:ring-2 focus:ring-accent outline-none" value={options.max || 100} onChange={e => setOptions({...options, max: e.target.value})} />
+src/tools/GeneratorTools.tsx:                  <input type="number" min="1" max="10000" className="w-full p-2 bg-bg-primary border border-border rounded-lg focus:ring-2 focus:ring-accent outline-none" value={options.count || 1} onChange={e => setOptions({...options, count: e.target.value})} />
+src/tools/GeneratorTools.tsx:                  <input type="number" min="0" max="10" className="w-full p-2 bg-bg-primary border border-border rounded-lg focus:ring-2 focus:ring-accent outline-none" value={options.decimal || 0} onChange={e => setOptions({...options, decimal: e.target.value})} />
+src/tools/GeneratorTools.tsx:                <select className="p-2 bg-bg-primary border border-border rounded-lg focus:ring-2 focus:ring-accent outline-none" value={options.sort || 'none'} onChange={e => setOptions({...options, sort: e.target.value})}>
+src/tools/GeneratorTools.tsx:                  value={options.names || ''} 
+src/tools/GeneratorTools.tsx:                  <input type="number" min="1" className="w-full p-2 bg-bg-primary border border-border rounded-lg focus:ring-2 focus:ring-accent outline-none" value={options.count || 1} onChange={e => setOptions({...options, count: e.target.value})} />
+src/tools/GeneratorTools.tsx:                <select className="w-full p-2 bg-bg-primary border border-border rounded-lg focus:ring-2 focus:ring-accent outline-none" value={options.country || 'US'} onChange={e => setOptions({...options, country: e.target.value})}>
+src/tools/GeneratorTools.tsx:                value={output}
+src/tools/ImageCompressor.tsx:                    value={zoomParams.zoom} 
+src/tools/ImageCompressor.tsx:                      value={currentImage.settings.quality} 
+src/tools/ImageCompressor.tsx:                      value={currentImage.settings.format}
+src/tools/KdpFixer.tsx:                            value={customWidth}
+src/tools/KdpFixer.tsx:                            value={customHeight}
+src/tools/OvulationCalculator.tsx:              value={lmpDate}
+src/tools/OvulationCalculator.tsx:                value={cycleLength}
+src/tools/OvulationCalculator.tsx:                value={lutealPhase}
+src/tools/GifMaker.tsx:                          value={gifWidth} 
+src/tools/GifMaker.tsx:                          value={gifHeight} 
+src/tools/GifMaker.tsx:                        value={interval} 
+src/tools/GifMaker.tsx:                        value={text}
+src/tools/GifMaker.tsx:                            value={fontFamily}
+src/tools/GifMaker.tsx:                            value={fontSize} 
+src/tools/GifMaker.tsx:                              value={fontColor} 
+src/tools/GifMaker.tsx:                              value={fontColor} 
+src/tools/GifMaker.tsx:                              value={textStrokeColor} 
+src/tools/GifMaker.tsx:                              value={textStrokeColor} 
+src/tools/GifMaker.tsx:                            value={textStrokeWidth} 
+src/tools/GifMaker.tsx:                            value={textAlign}
+src/tools/GifMaker.tsx:                          value={textBaseline}
+src/tools/GifMaker.tsx:                          value={backgroundColor} 
+src/tools/GifMaker.tsx:                          value={backgroundColor} 
+src/tools/GifMaker.tsx:                        value={loop}
+src/tools/GifMaker.tsx:                        <option value={0}>Infinite Loop</option>
+src/tools/GifMaker.tsx:                        <option value={1}>Play Once</option>
+src/tools/GifMaker.tsx:                        <option value={2}>Play Twice</option>
+src/tools/GifMaker.tsx:                        <option value={5}>Play 5 Times</option>
+src/tools/GifMaker.tsx:                        <option value={10}>Play 10 Times</option>
+src/tools/GifMaker.tsx:                        value={quality} 
+src/tools/SeoTools.tsx:              <input type="text" className="fi pl-10" value={inputs.keyword || ''} onChange={e => setInputs({...inputs, keyword: e.target.value})} placeholder="e.g. digital marketing" />
+src/tools/SeoTools.tsx:              <input type="url" className="fi pl-10" value={inputs.url || ''} onChange={e => setInputs({...inputs, url: e.target.value})} placeholder="https://example.com" />
+src/tools/SeoTools.tsx:            <textarea className="fta min-h-[200px]" value={inputs.text || ''} onChange={e => setInputs({...inputs, text: e.target.value})} placeholder="Paste your article or text here..." />
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">Site Title</label><input type="text" className="fi" value={inputs.title || ''} onChange={e => setInputs({...inputs, title: e.target.value})} /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">Site Description</label><textarea className="fta min-h-[80px]" value={inputs.desc || ''} onChange={e => setInputs({...inputs, desc: e.target.value})} /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">Keywords (comma separated)</label><input type="text" className="fi" value={inputs.keys || ''} onChange={e => setInputs({...inputs, keys: e.target.value})} /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">Author Name</label><input type="text" className="fi" value={inputs.author || ''} onChange={e => setInputs({...inputs, author: e.target.value})} /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">Site URL</label><input type="url" className="fi" value={inputs.url || ''} onChange={e => setInputs({...inputs, url: e.target.value})} /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">OG Image URL</label><input type="url" className="fi" value={inputs.img || ''} onChange={e => setInputs({...inputs, img: e.target.value})} /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">Disallow Path</label><input type="text" className="fi" value={inputs.disallow || ''} onChange={e => setInputs({...inputs, disallow: e.target.value})} placeholder="/private/" /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">Sitemap URL</label><input type="url" className="fi" value={inputs.sitemap || ''} onChange={e => setInputs({...inputs, sitemap: e.target.value})} placeholder="https://example.com/sitemap.xml" /></div>
+src/tools/SeoTools.tsx:          <div className="fg mb-4"><label className="fl">Enter Text to Slugify</label><input type="text" className="fi" value={inputs.text || ''} onChange={e => setInputs({...inputs, text: e.target.value})} placeholder="My Awesome Blog Post Title!" /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">OG Title</label><input type="text" className="fi" value={inputs.title || ''} onChange={e => setInputs({...inputs, title: e.target.value})} /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">OG Description</label><textarea className="fta min-h-[80px]" value={inputs.desc || ''} onChange={e => setInputs({...inputs, desc: e.target.value})} /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">OG Image URL</label><input type="url" className="fi" value={inputs.img || ''} onChange={e => setInputs({...inputs, img: e.target.value})} /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">OG URL</label><input type="url" className="fi" value={inputs.url || ''} onChange={e => setInputs({...inputs, url: e.target.value})} /></div>
+src/tools/SeoTools.tsx:            <div className="fg mb-4"><label className="fl">OG Type</label><select className="fi" value={inputs.type || 'website'} onChange={e => setInputs({...inputs, type: e.target.value})}>
+src/tools/SeoTools.tsx:          <div className="fg mb-4"><label className="fl">Enter Content</label><textarea className="fta min-h-[200px]" value={inputs.text || ''} onChange={e => setInputs({...inputs, text: e.target.value})} /></div>
+src/tools/SeoTools.tsx:          <div className="fg mb-4"><label className="fl">Main Keyword / Topic</label><input type="text" className="fi" value={inputs.topic || ''} onChange={e => setInputs({...inputs, topic: e.target.value})} placeholder="e.g. Digital Marketing" /></div>
+src/tools/SeoTools.tsx:                value={output} 
+src/tools/PhotoSignResizer.tsx:                        value={unit} 
+src/tools/PhotoSignResizer.tsx:                          value={dpi} 
+src/tools/PhotoSignResizer.tsx:                          value={targetWidth || ''} 
+src/tools/PhotoSignResizer.tsx:                          value={targetHeight || ''} 
+src/tools/PhotoSignResizer.tsx:                        value={targetKB || ''} 
+src/tools/PhotoSignResizer.tsx:                      value={zoom} 
+src/tools/ImageTools.tsx:                          <input type="number" className="fi" value={dpi} onChange={e => setDpi(Number(e.target.value))} />
+src/tools/ImageTools.tsx:                          <input type="number" className="fi" value={width || ''} onChange={e => setWidth(Number(e.target.value))} />
+src/tools/ImageTools.tsx:                          <input type="number" className="fi" value={height || ''} onChange={e => setHeight(Number(e.target.value))} />
+src/tools/ImageTools.tsx:                            value={targetKB || ''} 
+src/tools/ImageTools.tsx:                      <select className="fi" value={format} onChange={e => setFormat(e.target.value)}>
+src/tools/ImageTools.tsx:                          <select className="fi" value={filter} onChange={e => setFilter(e.target.value)}>
+src/tools/ImageTools.tsx:                            <input type="range" min="0" max="200" value={brightness} onChange={e => setBrightness(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+src/tools/ImageTools.tsx:                            <input type="range" min="0" max="200" value={contrast} onChange={e => setContrast(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+src/tools/ImageTools.tsx:                            <input type="range" min="0" max="300" value={saturation} onChange={e => setSaturation(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+src/tools/ImageTools.tsx:                            <input type="range" min="0" max="20" step="0.5" value={blur} onChange={e => setBlur(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+src/tools/ImageTools.tsx:                            <input type="range" min="0" max="360" value={hueRotate} onChange={e => setHueRotate(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+src/tools/ImageTools.tsx:                              <input type="range" min="0" max="100" value={sepia} onChange={e => setSepia(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+src/tools/ImageTools.tsx:                              <input type="range" min="0" max="100" value={grayscale} onChange={e => setGrayscale(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+src/tools/ImageTools.tsx:                            <input type="range" min="0" max="100" value={invert} onChange={e => setInvert(Number(e.target.value))} className="w-full accent-blue-600 outline-none" />
+src/tools/ImageTools.tsx:                      <input type="text" className="fi" value={watermarkText} onChange={e => setWatermarkText(e.target.value)} />
+src/tools/PregnancyCalculator.tsx:            value={lmpDate}
+src/tools/TextTools.tsx:            <textarea className="fta min-h-[60vh]" value={input} onChange={e => setInput(e.target.value)} />
+src/tools/TextTools.tsx:            <textarea className="fta min-h-[60vh]" value={input2} onChange={e => setInput2(e.target.value)} />
+src/tools/TextTools.tsx:          <input type="number" className="fi mb-4" value={options.paras || 3} onChange={e => setOptions({...options, paras: e.target.value})} min="1" max="100" />
+src/tools/TextTools.tsx:          <textarea className="fta min-h-[60vh]" value={input} onChange={e => setInput(e.target.value)} placeholder="Enter text here..." />
+src/tools/TextTools.tsx:        <textarea className="fta min-h-[60vh] bg-bg-secondary" value={output} readOnly placeholder="Result will appear here..." />
+src/tools/ConceptionCalculator.tsx:              value={dueDateStr}
+src/tools/PdfTools.tsx:                  value={documentPassword || ''} 
+src/tools/PdfTools.tsx:                <input type="password" className="fi" value={password || ''} onChange={e => setPassword(e.target.value)} placeholder="Enter password to secure PDF" />
+src/tools/PdfTools.tsx:                <input type="text" className="fi" value={watermark || ''} onChange={e => setWatermark(e.target.value)} />
+src/tools/PdfTools.tsx:                <input type="text" className="fi" value={splitPage || ''} onChange={e => setSplitPage(e.target.value)} placeholder="1, 3-5" />
+src/tools/PdfTools.tsx:                <input type="text" className="fi" value={splitPage || ''} onChange={e => setSplitPage(e.target.value)} placeholder="3, 1, 2" />
+src/tools/PdfTools.tsx:                <select className="fi" value={rotationAngle || '90'} onChange={e => setRotationAngle(e.target.value)}>
+src/tools/DeveloperTools.tsx:            <textarea className="fta min-h-[400px] font-mono text-sm" value={input} onChange={e => setInput(e.target.value)} placeholder="<h1>Hello World</h1>" />
+src/tools/DeveloperTools.tsx:            <textarea className="fta min-h-[200px]" value={input} onChange={e => setInput(e.target.value)} placeholder="Enter data here..." />
+src/tools/DeveloperTools.tsx:            <textarea className="fta min-h-[200px] bg-bg-secondary" value={output} readOnly placeholder="Result will appear here..." />
+src/tools/BackgroundRemover.tsx:                              value={brushSize} 
+src/tools/BackgroundRemover.tsx:                                <input type="color" value={customColor} onChange={(e) => setCustomColor(e.target.value)} className="w-12 h-10 rounded-lg cursor-pointer bg-transparent border-none" />
+src/tools/BackgroundRemover.tsx:                                <input type="text" value={customColor} onChange={(e) => setCustomColor(e.target.value)} className="fi flex-1" />
+src/tools/BackgroundRemover.tsx:                                    value={adj.val} 
+src/tools/WordCounter.tsx:          value={text}
+src/tools/DueDateCalculator.tsx:                    value={dateInput}
+src/tools/DueDateCalculator.tsx:                    value={cycleLength}
+src/tools/DueDateCalculator.tsx:                  value={dateInput}
+src/tools/DueDateCalculator.tsx:                    value={dateInput}
+src/tools/DueDateCalculator.tsx:                    value={ivfType}
+src/tools/DueDateCalculator.tsx:                    value={dateInput}
+src/tools/DueDateCalculator.tsx:                          value={usWeeks}
+src/tools/DueDateCalculator.tsx:                          value={usDays}
+src/tools/AdvancedPdfEditor.tsx:                      value={state.searchQuery}
+src/tools/AdvancedPdfEditor.tsx:                      value={state.replaceQuery}
+src/tools/AdvancedPdfEditor.tsx:                  value={state.password}
+src/tools/AdvancedPdfCropper.tsx:                      value={passwordInput}
+src/tools/AdvancedPdfCropper.tsx:                      value={currentFileIdx}
+src/tools/AdvancedPdfCropper.tsx:                        <option key={i} value={i}>{f.name}</option>
+src/tools/AdvancedPdfCropper.tsx:                        value={pageData ? Math.round(pageData.cropBox.width) : ''}
+src/tools/AdvancedPdfCropper.tsx:                        value={pageData ? Math.round(pageData.cropBox.height) : ''}
+src/tools/KeyboardShortcutGuide.tsx:              value={searchQuery}
+src/tools/AgeCalculator.tsx:                  value={dob}
+src/tools/AgeCalculator.tsx:                  value={targetDate}
+src/tools/SocialTools.tsx:            <input type="url" className="fi pl-10" value={input} onChange={e => setInput(e.target.value)} placeholder="https://youtube.com/watch?v=..." />
+src/tools/SocialTools.tsx:            <input type="url" className="fi pl-10" value={input} onChange={e => setInput(e.target.value)} placeholder="https://instagram.f...cdninstagram.com/..." />
+src/tools/SocialTools.tsx:            <input type="text" className="fi pl-10" value={input} onChange={e => setInput(e.target.value)} placeholder="e.g. travel, fitness, food..." />
+src/tools/SocialTools.tsx:            value={output} 
+src/tools/SocialTools.tsx:            value={captionCategory}
+src/tools/SocialTools.tsx:              <option key={cat} value={cat}>{cat}</option>
+src/tools/SocialTools.tsx:            <input type="text" className="fi pl-10" value={input} onChange={e => setInput(e.target.value)} placeholder="e.g. react tutorial, fitness vlog..." />
+src/tools/SocialTools.tsx:              value={tweetText}
+src/tools/SocialTools.tsx:          <input type="text" className="fi" value={bioName} onChange={e => setBioName(e.target.value)} placeholder="e.g. Alex Doe" />
+src/tools/SocialTools.tsx:          <input type="text" className="fi" value={bioNiche} onChange={e => setBioNiche(e.target.value)} placeholder="e.g. Web Developer, Photographer" />
+src/tools/SocialTools.tsx:          <select className="fi" value={bioTone} onChange={e => setBioTone(e.target.value)}>
+src/tools/SocialTools.tsx:                value={emojiSearch} 
+src/tools/SocialTools.tsx:                value={selectedEmojis} 
+src/tools/SvgToPngConverter.tsx:                          value={currentState.bgColor}
+src/tools/SvgToPngConverter.tsx:                          <input type="color" value={currentState.shadow.color} onChange={(e) => updateState({ shadow: { ...currentState.shadow, color: e.target.value } })} className="w-6 h-6 rounded-md cursor-pointer border-0 p-0" />
+src/tools/SvgToPngConverter.tsx:                          <input type="range" min="0" max="50" value={currentState.shadow.blur} onChange={(e) => updateState({ shadow: { ...currentState.shadow, blur: parseInt(e.target.value) } })} className="w-full accent-accent" />
+src/tools/SvgToPngConverter.tsx:                            <input type="number" value={currentState.shadow.offsetX} onChange={(e) => updateState({ shadow: { ...currentState.shadow, offsetX: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+src/tools/SvgToPngConverter.tsx:                            <input type="number" value={currentState.shadow.offsetY} onChange={(e) => updateState({ shadow: { ...currentState.shadow, offsetY: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+src/tools/SvgToPngConverter.tsx:                          <input type="color" value={currentState.border.color} onChange={(e) => updateState({ border: { ...currentState.border, color: e.target.value } })} className="w-6 h-6 rounded-md cursor-pointer border-0 p-0" />
+src/tools/SvgToPngConverter.tsx:                          <input type="range" min="1" max="50" value={currentState.border.width} onChange={(e) => updateState({ border: { ...currentState.border, width: parseInt(e.target.value) } })} className="w-full accent-accent" />
+src/tools/SvgToPngConverter.tsx:                          value={currentState.watermark.text}
+src/tools/SvgToPngConverter.tsx:                          <input type="color" value={currentState.watermark.color.length === 7 ? currentState.watermark.color : '#ffffff'} onChange={(e) => updateState({ watermark: { ...currentState.watermark, color: e.target.value } })} className="w-6 h-6 rounded-md cursor-pointer border-0 p-0" />
+src/tools/SvgToPngConverter.tsx:                          <input type="range" min="10" max="200" value={currentState.watermark.fontSize} onChange={(e) => updateState({ watermark: { ...currentState.watermark, fontSize: parseInt(e.target.value) } })} className="w-full accent-accent" />
+src/tools/SvgToPngConverter.tsx:                            value={currentState.watermark.fontFamily}
+src/tools/SvgToPngConverter.tsx:                            <input type="number" value={Math.round(currentState.watermark.x)} onChange={(e) => updateState({ watermark: { ...currentState.watermark, x: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+src/tools/SvgToPngConverter.tsx:                            <input type="number" value={Math.round(currentState.watermark.y)} onChange={(e) => updateState({ watermark: { ...currentState.watermark, y: parseInt(e.target.value) } })} className="w-full bg-bg-surface border border-border rounded-lg px-2 py-1.5 text-xs" />
+src/tools/SvgToPngConverter.tsx:                          value={currentState.customWidth} 
+src/tools/PeriodCalculator.tsx:              value={lmpDate}
+src/tools/PeriodCalculator.tsx:                value={cycleLength}
+src/tools/PeriodCalculator.tsx:                value={periodDuration}
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.v1 || ''} onChange={e => setInputs({...inputs, v1: e.target.value})} placeholder="0" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.v2 || ''} onChange={e => setInputs({...inputs, v2: e.target.value})} placeholder="0" />
+src/tools/CalculatorTools.tsx:                  <input type="number" className="fi" value={inputs.p || ''} onChange={e => setInputs({...inputs, p: e.target.value})} placeholder="e.g. 500000" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.r || ''} onChange={e => setInputs({...inputs, r: e.target.value})} placeholder="e.g. 8.5" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.n || ''} onChange={e => setInputs({...inputs, n: e.target.value})} placeholder="e.g. 5" />
+src/tools/CalculatorTools.tsx:                  <input type="number" className="fi" value={inputs.amt || ''} onChange={e => setInputs({...inputs, amt: e.target.value})} placeholder="0" />
+src/tools/CalculatorTools.tsx:                  <select className="fi" value={inputs.rate || '18'} onChange={e => setInputs({...inputs, rate: e.target.value})}>
+src/tools/CalculatorTools.tsx:                    {[5, 12, 18, 28].map(r => <option key={r} value={r}>{r}%</option>)}
+src/tools/CalculatorTools.tsx:                  <input type="number" className="fi" value={inputs.price || ''} onChange={e => setInputs({...inputs, price: e.target.value})} placeholder="0" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.disc || ''} onChange={e => setInputs({...inputs, disc: e.target.value})} placeholder="0" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.tax || ''} onChange={e => setInputs({...inputs, tax: e.target.value})} placeholder="0" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.w || ''} onChange={e => setInputs({...inputs, w: e.target.value})} placeholder="e.g. 70" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.h || ''} onChange={e => setInputs({...inputs, h: e.target.value})} placeholder="e.g. 175" />
+src/tools/CalculatorTools.tsx:                  <input type="date" className="fi" value={inputs.d1 || ''} onChange={e => setInputs({...inputs, d1: e.target.value})} />
+src/tools/CalculatorTools.tsx:                  <input type="date" className="fi" value={inputs.d2 || ''} onChange={e => setInputs({...inputs, d2: e.target.value})} />
+src/tools/CalculatorTools.tsx:                  <input type="number" className="fi" value={inputs.p || ''} onChange={e => setInputs({...inputs, p: e.target.value})} placeholder="0" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.r || ''} onChange={e => setInputs({...inputs, r: e.target.value})} placeholder="0" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.t || ''} onChange={e => setInputs({...inputs, t: e.target.value})} placeholder="0" />
+src/tools/CalculatorTools.tsx:                  <select className="fi" value={inputs.f || '1'} onChange={e => setInputs({...inputs, f: e.target.value})}>
+src/tools/CalculatorTools.tsx:                  <input type="number" className="fi" value={inputs.bill || ''} onChange={e => setInputs({...inputs, bill: e.target.value})} placeholder="0" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.tip || ''} onChange={e => setInputs({...inputs, tip: e.target.value})} placeholder="e.g. 10" />
+src/tools/CalculatorTools.tsx:                    <input type="number" className="fi" value={inputs.ppl || ''} onChange={e => setInputs({...inputs, ppl: e.target.value})} placeholder="1" />
+src/tools/PregnancyConceptionCalculator.tsx:              value={lmpDateStr}
+src/tools/PregnancyConceptionCalculator.tsx:              value={cycleLength}
+src/tools/ImageCropper.tsx:                      value={aspect || ''} 
+src/tools/ImageCropper.tsx:                      <option value={1}>1:1 (Square)</option>
+src/tools/ImageCropper.tsx:                      <option value={16/9}>16:9 (Landscape)</option>
+src/tools/ImageCropper.tsx:                      <option value={4/3}>4:3</option>
+src/tools/ImageCropper.tsx:                      <option value={9/16}>9:16 (Portrait)</option>
+src/tools/ImageCropper.tsx:                    value={zoom} 
+src/tools/QrGenerator.tsx:            <input type="url" className="fi" value={value} onChange={(e) => setValue(e.target.value)} placeholder="loveyoutools.in" />
+src/tools/QrGenerator.tsx:            <textarea className="fta min-h-[100px]" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Enter your text here..." />
+src/tools/QrGenerator.tsx:            <input type="tel" className="fi" value={value.replace('tel:', '')} onChange={(e) => setValue(`tel:${e.target.value}`)} placeholder="+1234567890" />
+src/tools/QrGenerator.tsx:            <input type="email" className="fi" value={value.replace('mailto:', '')} onChange={(e) => setValue(`mailto:${e.target.value}`)} placeholder="hello@example.com" />
+src/tools/QrGenerator.tsx:            <input type="tel" className="fi mb-2" value={value.match(/smsto:(.*?):/)?.[1] || ''} onChange={(e) => {
+src/tools/QrGenerator.tsx:            <textarea className="fta" value={value.split(':').slice(2).join(':') || ''} onChange={(e) => {
+src/tools/QrGenerator.tsx:              value={value.match(/S:(.*?);/)?.[1] || ''} 
+src/tools/QrGenerator.tsx:              value={value.match(/P:(.*?);/)?.[1] || ''} 
+src/tools/QrGenerator.tsx:                    <input type="color" value={fgColor} onChange={(e) => setFgColor(e.target.value)} className="w-10 h-10 rounded cursor-pointer border-0 p-0" />
+src/tools/QrGenerator.tsx:                    <input type="text" value={fgColor} onChange={(e) => setFgColor(e.target.value)} className="fi flex-1 font-mono uppercase text-xs py-2" />
+src/tools/QrGenerator.tsx:                    <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="w-10 h-10 rounded cursor-pointer border-0 p-0" />
+src/tools/QrGenerator.tsx:                    <input type="text" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="fi flex-1 font-mono uppercase text-xs py-2" />
+src/tools/QrGenerator.tsx:                    value={logoSize} 
+src/tools/QrGenerator.tsx:                  value={value || ' '} 
+src/tools/QrGenerator.tsx:                  value={value || ' '} 
+src/tools/QrGenerator.tsx:                value={size} 
+src/tools/PregnancyWeightGainCalculator.tsx:                  type="number" min="3" max="7" value={heightFt}
+src/tools/PregnancyWeightGainCalculator.tsx:                  type="number" min="0" max="11" value={heightIn}
+src/tools/PregnancyWeightGainCalculator.tsx:              type="number" value={preWeight}
+src/tools/PregnancyWeightGainCalculator.tsx:              type="number" value={currentWeight}
+src/tools/PregnancyWeightGainCalculator.tsx:              type="number" min="1" max="42" value={currentWeek}
+src/contexts/FocusModeContext.tsx:    <FocusModeContext.Provider value={{ isFocusMode, setIsFocusMode }}>
