@@ -60,31 +60,19 @@ export default function Home() {
     .filter(Boolean) as typeof tools;
 
   return (
-    <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 pt-12 pb-12">
+    <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-12">
       <SEO 
         title="LoveyouTools - Free Online Professional Multi-Tools Hub" 
         description="LoveyouTools is a free online platform offering 100+ professional tools for image editing, PDF conversion, SEO analysis, and more with zero signup."
         url={window.location.href}
       />
       {/* Hero Section */}
-      <section className="text-center py-4 relative overflow-hidden mb-12">
+      <section className="text-center pt-2 pb-4 relative overflow-hidden mb-8">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,var(--color-accent)_0%,transparent_40%)] opacity-5 pointer-events-none"></div>
         
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-accent/10 text-accent font-medium text-sm mb-4">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
-          </span>
-          New Tools Added Daily
-        </div>
-
-        <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-text-primary mb-6 max-w-4xl mx-auto leading-tight">
+        <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl xl:text-[2.4rem] 2xl:text-[2.6rem] font-extrabold tracking-tight text-text-primary mt-0 mb-6 w-full mx-auto leading-tight sm:whitespace-nowrap">
           Professional Online Tools Designed to Simplify Your Digital Tasks
         </h1>
-
-        <p className="text-lg text-text-secondary max-w-2xl mx-auto mb-8">
-          Access a comprehensive suite of free utilities ranging from advanced PDF editors and image compressors to robust developer scripts. No signups, completely responsive, and powered locally on your device for absolute privacy.
-        </p>
 
         <div className="flex flex-wrap justify-center gap-6 text-sm font-medium text-text-muted">
           <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 100+ Tools</div>

@@ -36,7 +36,7 @@ const svgContent = `<svg width="1200" height="200" viewBox="0 0 1200 200" xmlns=
   </g>
 </svg>`;
 
-const squareSvgContent = `<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+const squareSvgContent = `<svg width="200" height="200" viewBox="5 5 190 190" xmlns="http://www.w3.org/2000/svg">
   <g transform="translate(10, 10)">
     <rect x="0" y="0" width="180" height="180" rx="45" fill="#E8621A" stroke="black" stroke-width="10"/>
     <path d="M 65 75 C 65 45, 115 45, 115 75" fill="none" stroke="white" stroke-width="14" stroke-linecap="round"/>

@@ -2,7 +2,7 @@ import fs from 'fs';
 import sharp from 'sharp';
 import pngToIco from 'png-to-ico';
 
-const transparentIconSvg = `<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+const transparentIconSvg = `<svg width="200" height="200" viewBox="35 43 130 136" xmlns="http://www.w3.org/2000/svg">
   <g transform="translate(10, 10)">
     <!-- Toolbox Handle (Orange Arc) -->
     <path d="M 65 75 C 65 45, 115 45, 115 75" fill="none" stroke="#E8621A" stroke-width="16" stroke-linecap="round"/>
