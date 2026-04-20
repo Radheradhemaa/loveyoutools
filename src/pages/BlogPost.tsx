@@ -103,16 +103,47 @@ export default function BlogPost() {
           <div className="flex items-center gap-4">
             <span className="text-sm font-bold text-text-muted uppercase tracking-widest">Share</span>
             <div className="flex gap-2">
-              <button className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center hover:bg-accent hover:text-white hover:border-accent transition-all">
+              <button 
+                onClick={() => window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(window.location.href)}`, '_blank')}
+                className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center hover:bg-accent hover:text-white hover:border-accent transition-all"
+                title="Share on Facebook"
+              >
                 <Facebook className="w-4 h-4" />
               </button>
-              <button className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center hover:bg-accent hover:text-white hover:border-accent transition-all">
+              <button 
+                onClick={() => window.open(`https://twitter.com/intent/tweet?url=${encodeURIComponent(window.location.href)}&text=${encodeURIComponent(post.title)}`, '_blank')}
+                className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center hover:bg-accent hover:text-white hover:border-accent transition-all"
+                title="Share on Twitter"
+              >
                 <Twitter className="w-4 h-4" />
               </button>
-              <button className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center hover:bg-accent hover:text-white hover:border-accent transition-all">
+              <button 
+                onClick={() => window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(window.location.href)}`, '_blank')}
+                className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center hover:bg-accent hover:text-white hover:border-accent transition-all"
+                title="Share on LinkedIn"
+              >
                 <Linkedin className="w-4 h-4" />
               </button>
-              <button className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center hover:bg-accent hover:text-white hover:border-accent transition-all">
+              <button 
+                onClick={async () => {
+                  try {
+                    if (navigator.share) {
+                      await navigator.share({
+                        title: post.title,
+                        text: post.excerpt,
+                        url: window.location.href,
+                      });
+                    } else {
+                      await navigator.clipboard.writeText(window.location.href);
+                      alert('Link copied to clipboard!');
+                    }
+                  } catch (err) {
+                    console.error('Error sharing:', err);
+                  }
+                }}
+                className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center hover:bg-accent hover:text-white hover:border-accent transition-all"
+                title="Share link"
+              >
                 <Share2 className="w-4 h-4" />
               </button>
             </div>
