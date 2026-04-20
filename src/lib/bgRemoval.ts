@@ -225,6 +225,45 @@ export const hybridRemoveBackground = async (
     // Reset composite operation
     finalCtx.globalCompositeOperation = 'source-over';
 
+    // DEFRINGE / HALO REMOVAL (White Color Decontamination)
+    // Fixes the issue where hair edges show white color when placed on a new background
+    const finalData = finalCtx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+    const finalPixels = finalData.data;
+
+    for (let i = 0; i < finalPixels.length; i += 4) {
+      const alpha = finalPixels[i + 3];
+      
+      // Target semi-transparent edge pixels (the "halo" area)
+      if (alpha > 0 && alpha < 245) {
+        // Assume the halo is caused by a bright/white original background.
+        // We darken the edge pixels based on their transparency to cancel out the white light bleed.
+        // A lower alpha means more background was mixed in, so we darken it more.
+        const mixRatio = alpha / 255.0; // 0.0 to 1.0
+        
+        // We pull the RGB values down. A factor between 0.5 (heavy dark) and 1.0 (no dark).
+        // For very transparent pixels (e.g. 0.2), factor is 0.5
+        // For opaque pixels (e.g. 0.9), factor is ~0.9
+        const factor = Math.max(0.5, mixRatio * 1.1); 
+
+        // Also if the pixel is dangerously close to white (high luminance), we aggressively un-whiten it
+        const r = finalPixels[i];
+        const g = finalPixels[i + 1];
+        const b = finalPixels[i + 2];
+        const luminance = (r * 0.299 + g * 0.587 + b * 0.114);
+        
+        // If it's a very bright pixel on the edge, it's almost certainly background bleed
+        let applyFactor = factor;
+        if (luminance > 180) {
+            applyFactor = applyFactor * 0.8; // extra darkening for pure white fringes
+        }
+
+        finalPixels[i] = r * applyFactor;
+        finalPixels[i + 1] = g * applyFactor;
+        finalPixels[i + 2] = b * applyFactor;
+      }
+    }
+    finalCtx.putImageData(finalData, 0, 0);
+
     // 5. Final Output Generation
     onProgress('Finalizing Image...');
     let finalBlob = await new Promise<Blob>((resolve, reject) => {
