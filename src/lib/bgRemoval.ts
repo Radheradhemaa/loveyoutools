@@ -142,9 +142,9 @@ export const hybridRemoveBackground = async (
     // 2. Preserve full original image dimensions for High-Res Output
     const highResSrc = imageSrc;
 
-    onProgress('Running AI Model (IS-Net)...');
+    onProgress('Running AI Model...');
     let isnetError = null;
-    const isnetMaskBlob = await withTimeout(runImglyModel(aiResizedSrc, 'isnet', (p) => onProgress(`IS-Net: ${Math.round(p * 100)}%`)), 180000, "IS-Net Timeout").catch(e => { 
+    const isnetMaskBlob = await withTimeout(runImglyModel(aiResizedSrc, 'isnet', (p) => onProgress(`Processing: ${Math.round(p * 100)}%`)), 180000, "AI Model Timeout").catch(e => { 
       console.error("ISNet failed:", e); 
       isnetError = e;
       return null; 
