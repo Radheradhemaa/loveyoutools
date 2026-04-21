@@ -176,12 +176,12 @@ export const hybridRemoveBackground = async (
     for (let i = 0; i < pixels.length; i += 4) {
       let a = pixels[i + 3] / 255.0;
 
-      // Aggressive halo removal: clear faint background noise
-      if (a < 0.15) {
+      // Aggressive mask cleanup: clear faint background noise and transparent ghosts
+      if (a < 0.45) {
         a = 0;
       } else {
-        // Smoothstep to sharpen edges while preserving hair
-        let t = (a - 0.15) / 0.85;
+        // Steep smoothstep to sharpen edges and completely cut out weak background artifacts
+        let t = (a - 0.45) / 0.55;
         a = t * t * (3 - 2 * t);
       }
 
