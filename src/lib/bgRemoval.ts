@@ -16,58 +16,27 @@ const CDNS = [
 async function checkCDN(publicPath: string): Promise<boolean> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
     
-    // Check manifest and verify WASM magic word to prevent HTML-as-WASM errors
-    const [manifestRes, wasmSimdRes, wasmRes] = await Promise.all([
-      fetch(`${publicPath}isnet.json`, { method: 'GET', mode: 'cors', cache: 'no-cache', signal: controller.signal }),
-      fetch(`${publicPath}ort-wasm-simd.wasm`, { 
-        method: 'GET', 
-        mode: 'cors', 
-        cache: 'no-cache', 
-        signal: controller.signal,
-        headers: { 'Range': 'bytes=0-3' } // Only fetch first 4 bytes
-      }).catch(() => null),
-      fetch(`${publicPath}ort-wasm.wasm`, { 
-        method: 'GET', 
-        mode: 'cors', 
-        cache: 'no-cache', 
-        signal: controller.signal,
-        headers: { 'Range': 'bytes=0-3' } // Only fetch first 4 bytes
-      }).catch(() => null)
-    ]);
+    // Simplest possible check: Is the manifest JSON file reachable?
+    const manifestRes = await fetch(`${publicPath}isnet.json`, { 
+      method: 'GET', 
+      mode: 'cors', 
+      cache: 'no-cache', 
+      signal: controller.signal 
+    });
     
     clearTimeout(timeoutId);
     
     if (!manifestRes.ok) return false;
     
-    // Verify manifest is actually JSON
+    // Verify it doesn't look like an HTML error page (common on redirects or 404s)
     const contentType = manifestRes.headers.get('content-type') || '';
     if (contentType.includes('text/html')) return false;
     
     const text = await manifestRes.text();
-    if (text.trim().startsWith('<!doctype') || text.trim().startsWith('<html') || !text.trim().startsWith('{')) return false;
-
-    // Verify WASM magic word (0x00 0x61 0x73 0x6D)
-    const checkWasm = async (res: Response | null) => {
-      if (res && res.ok) {
-        const buffer = await res.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        if (bytes.length < 4 || bytes[0] !== 0x00 || bytes[1] !== 0x61 || bytes[2] !== 0x73 || bytes[3] !== 0x6D) {
-          return false;
-        }
-        return true;
-      }
-      return false;
-    };
-
-    const isSimdValid = await checkWasm(wasmSimdRes);
-    const isWasmValid = await checkWasm(wasmRes);
-
-    if (!isSimdValid && !isWasmValid) {
-      console.warn(`CDN ${publicPath} returned invalid WASM magic word for both SIMD and non-SIMD. Likely an HTML 404 page.`);
-      return false;
-    }
+    const cleanText = text.trim();
+    if (cleanText.startsWith('<!') || cleanText.startsWith('<html') || !cleanText.startsWith('{')) return false;
     
     return true;
   } catch (e) {
@@ -77,6 +46,20 @@ async function checkCDN(publicPath: string): Promise<boolean> {
 
 let isPreloaded = false;
 let preloadPromise: Promise<void> | null = null;
+let cachedPublicPath: string | null = null;
+
+async function getFastestCDN(): Promise<string> {
+  if (cachedPublicPath) return cachedPublicPath;
+  
+  // Try to find the first working CDN
+  for (const publicPath of CDNS) {
+    if (await checkCDN(publicPath)) {
+      cachedPublicPath = publicPath;
+      return publicPath;
+    }
+  }
+  return CDNS[0]; // Fallback
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -136,8 +119,9 @@ export const hybridRemoveBackground = async (
   try {
     onProgress('Optimizing Image for AI Processing...');
     
-    // 1. Resize for AI Models (1200px for optimal speed/quality balance)
-    const aiResizedSrc = await resizeImageIfNeeded(imageSrc, 1200);
+    // 1. Resize for AI Models (512px is the industry standard for fast inference masks)
+    // The refinement step handles upscaling to the high-res original.
+    const aiResizedSrc = await resizeImageIfNeeded(imageSrc, 512);
     
     // 2. Preserve full original image dimensions for High-Res Output
     const highResSrc = imageSrc;
@@ -288,107 +272,69 @@ export const hybridRemoveBackground = async (
 };
 
 async function runImglyModel(imageSrc: string, model: 'isnet', onProgress: (p: number) => void): Promise<Blob> {
-  const modelsToTry = [model, 'isnet_fp16', 'isnet_quint8'] as const;
+  // Prioritize smaller models (quint8 ~11MB, fp16 ~22MB) over full isnet (~44MB) for slow networks
+  const modelsToTry = ['isnet_quint8', 'isnet_fp16', model] as const;
   let lastError: Error | null = null;
-  const triedCDNs: string[] = [];
+  
+  const publicPath = await getFastestCDN();
 
-  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
+  // 1. Try identified mirrors with prioritized model sizes
   for (const modelName of modelsToTry) {
-    // Try with explicit CDNs first
-    for (const publicPath of CDNS) {
-      triedCDNs.push(publicPath);
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          console.log(`Attempting ${modelName} from ${publicPath} (Worker: true, Attempt: ${attempt})...`);
-          
-          const isAvailable = await checkCDN(publicPath);
-          if (!isAvailable && attempt === 1) {
-            console.warn(`CDN check failed for ${publicPath}. Skipping.`);
-            break; 
-          }
-
-          ort.env.wasm.wasmPaths = publicPath;
-          return await imglyRemoveBackground(imageSrc, {
-            model: modelName as any,
-            output: { format: 'image/png', quality: 1.0 },
-            debug: true,
-            proxyToWorker: true,
-            publicPath,
-            device: 'cpu', // Force CPU for better compatibility and to avoid ta[c] errors
-            fetchArgs: { 
-              mode: 'cors',
-              cache: 'default'
-            },
-            progress: (key: string, current: number, total: number) => {
-              if (total > 0) {
-                onProgress(current / total);
-              }
-            },
-          });
-        } catch (e) {
-          const err = e instanceof Error ? e : new Error(String(e));
-          console.warn(`${modelName} Worker failed (Attempt ${attempt}) for ${publicPath}:`, err);
-          lastError = err;
-          
-          if (err.message.includes('Resource metadata not found')) {
-            break; 
-          }
-
-          if (attempt < 2) {
-            await sleep(1500);
-            continue;
-          }
-
-          // Try without worker as a last resort for this CDN
-          try {
-            console.log(`Attempting ${modelName} from ${publicPath} (Worker: false)...`);
-            ort.env.wasm.wasmPaths = publicPath;
-            return await imglyRemoveBackground(imageSrc, {
-              model: modelName as any,
-              output: { format: 'image/png', quality: 1.0 },
-              debug: true,
-              proxyToWorker: false,
-              publicPath,
-              device: 'cpu',
-              fetchArgs: { 
-                mode: 'cors',
-                cache: 'default'
-              },
-              progress: (key: string, current: number, total: number) => {
-                if (total > 0) {
-                  onProgress(current / total);
-                }
-              },
-            });
-          } catch (e2) {
-            console.warn(`${modelName} Main Thread failed for ${publicPath}`, e2);
-            lastError = e2 instanceof Error ? e2 : new Error(String(e2));
-          }
-        }
-      }
-    }
-
-    // Final fallback: Try without publicPath (let library use its defaults)
     try {
-      console.log(`Attempting ${modelName} with library defaults (no publicPath)...`);
+      console.log(`Running optimized model ${modelName} (Fast Path)...`);
+      ort.env.wasm.wasmPaths = publicPath;
       return await imglyRemoveBackground(imageSrc, {
         model: modelName as any,
-        output: { format: 'image/png', quality: 1.0 },
-        debug: true,
+        output: { format: 'image/png', quality: 0.7 },
         proxyToWorker: true,
-        progress: (key: string, current: number, total: number) => {
-          if (total > 0) onProgress(current / total);
-        },
+        publicPath,
+        device: 'cpu',
+        fetchArgs: { mode: 'cors', cache: 'force-cache' },
+        progress: (_key, current, total) => { if (total > 0) onProgress(current / total); },
       });
-    } catch (e3) {
-      console.warn(`${modelName} Default attempt failed`, e3);
-      lastError = e3 instanceof Error ? e3 : new Error(String(e3));
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      // If it's a fetch error, move to next model/CDN quickly
+      continue;
     }
   }
+
+  // 2. Fallback to other CDNs if the fastest one failed for all model variants
+  for (const altPath of CDNS) {
+    if (altPath === publicPath) continue;
+    try {
+      console.log(`Trying alternative CDN: ${altPath}`);
+      return await imglyRemoveBackground(imageSrc, {
+        model: 'isnet_quint8' as any, // Only try the smallest model on fallback CDNs
+        output: { format: 'image/png', quality: 0.7 },
+        proxyToWorker: true,
+        publicPath: altPath,
+        device: 'cpu',
+        fetchArgs: { mode: 'cors', cache: 'force-cache' },
+        progress: (_key, current, total) => { if (total > 0) onProgress(current / total); },
+      });
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+
+  // 2. Final Desperate Fallback: No dedicated publicPath (let library use its internal default)
+  try {
+    console.log("Desperate Fallback: Using library defaults...");
+    return await imglyRemoveBackground(imageSrc, {
+      model: 'isnet' as any,
+      output: { format: 'image/png', quality: 0.8 },
+      proxyToWorker: false, // Try main thread in case worker fetch is blocked
+      device: 'cpu',
+      progress: (_key, current, total) => { if (total > 0) onProgress(current / total); },
+    });
+  } catch (e) {
+    lastError = e instanceof Error ? e : new Error(String(e));
+  }
   
-  const errorMessage = lastError ? (lastError.message || String(lastError)) : "Unknown error";
-  throw new Error(`Failed to run background removal models. Tried ${triedCDNs.length} CDNs. Last error: ${errorMessage}`);
+  const finalError = lastError || new Error("AI Processing failed");
+  console.error("Critical Failure: All CDNs and fallback models failed.", finalError);
+  throw finalError;
 }
 
 async function loadImage(src: string): Promise<HTMLImageElement> {
