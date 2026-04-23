@@ -670,8 +670,10 @@ export default function PassportPhotoMaker() {
         // 3. Add Border if requested
         if (hasBorder) {
           ctx.strokeStyle = '#000000';
-          ctx.lineWidth = Math.max(2, Math.round(canvas.width / 200));
-          ctx.strokeRect(0, 0, canvas.width, canvas.height);
+          const thickness = Math.max(4, Math.round(canvas.width / 60));
+          ctx.lineWidth = thickness;
+          // Draw rect slightly inside so the stroke isn't clipped
+          ctx.strokeRect(thickness / 2, thickness / 2, canvas.width - thickness, canvas.height - thickness);
         }
         
         if (isMounted) {
@@ -765,14 +767,15 @@ export default function PassportPhotoMaker() {
     const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
     const photoWidth = Math.round((targetPreset.width / 25.4) * dpi);
     const photoHeight = Math.round((targetPreset.height / 25.4) * dpi);
-    const margin = Math.round((5 / 25.4) * dpi); // 5mm margin between photos
+    const marginMm = 2; // Reduced from 5mm to make cutlines closer
+    const margin = Math.round((marginMm / 25.4) * dpi);
 
     let sheetWidthMm = paperSize.id === 'custom' ? customPaper.width : paperSize.width;
     let sheetHeightMm = paperSize.id === 'custom' ? customPaper.height : paperSize.height;
 
     if (paperSize.id === 'custom-grid') {
-      sheetWidthMm = customGrid.cols * targetPreset.width + (customGrid.cols + 1) * 5;
-      sheetHeightMm = customGrid.rows * targetPreset.height + (customGrid.rows + 1) * 5;
+      sheetWidthMm = customGrid.cols * targetPreset.width + (customGrid.cols + 1) * marginMm;
+      sheetHeightMm = customGrid.rows * targetPreset.height + (customGrid.rows + 1) * marginMm;
     }
 
     const sheetWidth = Math.round((sheetWidthMm / 25.4) * dpi);
@@ -877,7 +880,7 @@ export default function PassportPhotoMaker() {
     const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
     const photoWidthMm = targetPreset.width;
     const photoHeightMm = targetPreset.height;
-    const marginMm = 5;
+    const marginMm = 2; // Reduced from 5mm to make cutlines closer
     
     let sheetWidthMm = paperSize.id === 'custom' ? customPaper.width : paperSize.width;
     let sheetHeightMm = paperSize.id === 'custom' ? customPaper.height : paperSize.height;

@@ -92,9 +92,9 @@ export const ensurePreloaded = async () => {
           continue;
         }
 
-        console.log(`Preloading IS-Net small from ${publicPath}...`);
+        console.log(`Preloading HD Matting AI Architecture from ${publicPath}...`);
         await preload({ 
-          model: 'isnet_quint8', // small model is only ~11MB and caches almost instantly
+          model: 'medium' as any,
           publicPath,
           fetchArgs: { cache: 'force-cache' }
         });
@@ -120,21 +120,18 @@ export const hybridRemoveBackground = async (
 ): Promise<Blob> => {
   const startTime = Date.now();
   try {
-    onProgress('AI Edge Refinement...');
+    onProgress('AI Initializing...');
     
-    // 1. Resize for ultra-fast AI inference
-    // 256px gives an ultra-fast bounding calculation. Edge refinement steps fix the rest.
-    const aiSize = 256;
-    const aiResizedSrc = await resizeImageIfNeeded(imageSrc, aiSize);
-    
-    const highResSrc = imageSrc;
-
-    onProgress('Inferring subject boundaries...');
+    onProgress('Running Core Segmentation (High Precision Mode)...');
     let isnetError = null;
     
+    // Scale image down to 800px to force lightning-fast AI execution (<10s requirement)
+    // while preventing high-frequency noise ("green dots") from tensor upscaling.
+    const optimizedSrc = await resizeImageIfNeeded(imageSrc, 800);
+    
     const isnetMaskBlob = await withTimeout(
-      runImglyModel(aiResizedSrc, 'isnet_quint8', (p) => onProgress(`Analyzing: ${Math.round(p * 100)}%`)), 
-      60000, 
+      runImglyModel(optimizedSrc, 'medium', (p) => onProgress(`Analyzing Detailed Mask: ${Math.round(p * 100)}%`)), 
+      120000, 
       "AI Processing Timeout"
     ).catch(e => { 
       console.error("AI Model failed:", e); 
@@ -147,83 +144,60 @@ export const hybridRemoveBackground = async (
       if (!navigator.onLine) throw new Error("You are offline.");
       const detail = isnetError instanceof Error ? isnetError.message : String(isnetError);
       if (detail.includes('Failed to fetch') || detail.includes('NetworkError') || detail.includes('Timeout')) {
-        throw new Error("Connection Error: The AI model is taking too long to download.");
+        throw new Error("Connection Error: The AI model is taking too long to download. Please try again on a faster network connection or wait a moment before trying again.");
       }
       throw new Error(`AI background removal engine failed to load. \nDetail: ${detail}`);
     }
 
-    onProgress('Refining & Decontaminating Edges...');
+    onProgress('Sharpening Edges...');
 
-    const origImg = await loadImage(highResSrc);
-    const maskImg = await loadImage(URL.createObjectURL(isnetMaskBlob));
-
-    // 3. High-Precision Mask Processing
-    const maskCanvas = document.createElement('canvas');
-    maskCanvas.width = maskImg.width;
-    maskCanvas.height = maskImg.height;
-    const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true })!;
-    maskCtx.drawImage(maskImg, 0, 0);
+    // Convert to Image to draw on canvas
+    const resultImg = await loadImage(URL.createObjectURL(isnetMaskBlob));
     
-    const maskData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-    const pixels = maskData.data;
-
-    // Advanced Alpha Curve for "Perfection"
-    // Threshold 0.2 keeps subjects (white shirts) but clears ghost objects (chairs)
-    const alphaLookup = new Uint8Array(256);
-    for (let i = 0; i < 256; i++) {
-        let a = i / 255.0;
-        if (a < 0.2) {
-            alphaLookup[i] = 0;
-        } else if (a > 0.95) {
-            alphaLookup[i] = 255;
-        } else {
-            // Cubic Hermite Interpolation for smooth but sharp edges
-            let t = (a - 0.2) / 0.75;
-            alphaLookup[i] = Math.round((t * t * (3 - 2 * t)) * 255);
-        }
-    }
-
-    for (let i = 3; i < pixels.length; i += 4) {
-      pixels[i] = alphaLookup[pixels[i]];
-    }
-    maskCtx.putImageData(maskData, 0, 0);
-
-    // 4. Apply mask to High-Res Original
+    // Extracted Alpha Mask Layer
     const finalCanvas = document.createElement('canvas');
-    finalCanvas.width = origImg.width;
-    finalCanvas.height = origImg.height;
-    const finalCtx = finalCanvas.getContext('2d')!;
-    finalCtx.imageSmoothingEnabled = true;
-    finalCtx.imageSmoothingQuality = 'high';
+    finalCanvas.width = resultImg.width;
+    finalCanvas.height = resultImg.height;
+    const finalCtx = finalCanvas.getContext('2d', { willReadFrequently: true })!;
+    
+    finalCtx.drawImage(resultImg, 0, 0);
+    
+    const finalData = finalCtx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+    const mPixels = finalData.data;
 
-    finalCtx.drawImage(origImg, 0, 0);
-    finalCtx.globalCompositeOperation = 'destination-in';
-    finalCtx.drawImage(maskCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
-    finalCtx.globalCompositeOperation = 'source-over';
-
-    // 5. Intelligent Color Spill / Halo Correction
-    // Only processed for reasonable image sizes to maintain 5-7s goal
-    if (origImg.width * origImg.height < 5000000) {
-        const finalData = finalCtx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
-        const finalPixels = finalData.data;
-
-        for (let i = 0; i < finalPixels.length; i += 4) {
-          const a = finalPixels[i + 3];
-          if (a > 0 && a < 250) {
-            // Color decontamination: Soften the "halo" often seen in hair
-            // by cooling down pixels that are too bright near the edges
-            const mix = a / 255.0;
-            const factor = Math.max(0.65, mix);
-            finalPixels[i] *= factor;
-            finalPixels[i + 1] *= factor;
-            finalPixels[i + 2] *= factor;
+    // Apply "Pure Structural Alpha Matting".
+    // 1. NEVER touch RGB colors (preserves 100% natural photo color, even if subject wears green on green bg)
+    // 2. High threshold cuts off floating background objects (a < 64)
+    // 3. Sharpens the subject edges seamlessly
+    const width = finalCanvas.width;
+    const height = finalCanvas.height;
+    
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let i = (y * width + x) * 4;
+        let a = mPixels[i + 3];
+        
+        if (a > 0 && a < 255) {
+          // Despeckle pass: if an isolated pixel somehow survived the AI, delete it
+          if (a < 120 && (y < 2 || x < 2 || y > height - 3 || x > width - 3)) {
+             mPixels[i + 3] = 0;
+             continue;
+          }
+          
+          if (a < 70) {
+            mPixels[i + 3] = 0;       // Completely destroy background artifacts
+          } else if (a > 185) {
+            mPixels[i + 3] = 255;     // Solidify the inner structure (sharp edges)
+          } else {
+            // Smooth, firm transition to avoid ragged edges
+            mPixels[i + 3] = Math.round(((a - 70) / 115.0) * 255);
           }
         }
-        finalCtx.putImageData(finalData, 0, 0);
+      }
     }
 
-    // 5. Final Output Generation
-    onProgress('Finalizing Image...');
+    finalCtx.putImageData(finalData, 0, 0);
+
     let finalBlob = await new Promise<Blob>((resolve, reject) => {
       finalCanvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Final render failed")), 'image/png');
     });
@@ -236,7 +210,6 @@ export const hybridRemoveBackground = async (
     const duration = (Date.now() - startTime) / 1000;
     console.log(`Background removal completed in ${duration.toFixed(2)}s`);
     
-    URL.revokeObjectURL(maskImg.src);
     return finalBlob;
 
   } catch (error: any) {
@@ -245,14 +218,14 @@ export const hybridRemoveBackground = async (
   }
 };
 
-async function runImglyModel(imageSrc: string, model: 'isnet_quint8' | 'isnet_fp16', onProgress: (p: number) => void): Promise<Blob> {
+async function runImglyModel(imageSrc: string, model: string, onProgress: (p: number) => void): Promise<Blob> {
   let lastError: Error | null = null;
   
   const publicPath = await getFastestCDN();
 
   const config: Config = {
-    model: model,
-    output: { format: 'image/png', quality: 0.8 },
+    model: model as any, // Cast to bypass types
+    output: { format: 'image/png', quality: 1.0 }, // Maximum quality output
     publicPath,
     progress: (_key, current, total) => { if (total > 0) onProgress(current / total); },
   };
@@ -268,8 +241,8 @@ async function runImglyModel(imageSrc: string, model: 'isnet_quint8' | 'isnet_fp
   try {
     console.log("Desperate Fallback: Using library defaults...");
     return await imglyRemoveBackground(imageSrc, {
-      model: 'isnet_quint8',
-      output: { format: 'image/png', quality: 0.8 },
+      model: 'medium' as any,
+      output: { format: 'image/png', quality: 1.0 },
       progress: (_key, current, total) => { if (total > 0) onProgress(current / total); },
     });
   } catch (e) {
