@@ -1,9 +1,7 @@
-import { removeBackground as imglyRemoveBackground, preload } from '@imgly/background-removal';
-import * as ort from 'onnxruntime-web';
+import { removeBackground as imglyRemoveBackground, preload, Config } from '@imgly/background-removal';
 
-// Explicitly configure ONNX Runtime to avoid requesting threaded WASM files which might not exist on the CDN
-ort.env.wasm.numThreads = 1;
-ort.env.wasm.simd = true;
+// Use default ONNX multi-threading configuration for MAXIMUM performance.
+// Disabling threading artificially limits processing to 1 core, taking 60+ seconds.
 
 const CDNS = [
   'https://static.imgly.com/packages/@imgly/background-removal/1.5.5/dist/',
@@ -51,14 +49,19 @@ let cachedPublicPath: string | null = null;
 async function getFastestCDN(): Promise<string> {
   if (cachedPublicPath) return cachedPublicPath;
   
-  // Try to find the first working CDN
-  for (const publicPath of CDNS) {
-    if (await checkCDN(publicPath)) {
-      cachedPublicPath = publicPath;
-      return publicPath;
-    }
+  // Race multiple CDNs to find the fastest responder
+  try {
+    const workingPath = await Promise.any(CDNS.map(async (path) => {
+      const ok = await checkCDN(path);
+      if (ok) return path;
+      throw new Error('failed');
+    }));
+    cachedPublicPath = workingPath;
+    return workingPath;
+  } catch (e) {
+    // If all fail or race fails, return the first one as default
+    return CDNS[0];
   }
-  return CDNS[0]; // Fallback
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -89,11 +92,11 @@ export const ensurePreloaded = async () => {
           continue;
         }
 
-        console.log(`Preloading IS-Net from ${publicPath}...`);
+        console.log(`Preloading IS-Net small from ${publicPath}...`);
         await preload({ 
-          model: 'isnet', 
+          model: 'isnet_quint8', // small model is only ~11MB and caches almost instantly
           publicPath,
-          fetchArgs: { cache: 'no-cache' }
+          fetchArgs: { cache: 'force-cache' }
         });
         break;
       } catch (err) {
@@ -117,53 +120,44 @@ export const hybridRemoveBackground = async (
 ): Promise<Blob> => {
   const startTime = Date.now();
   try {
-    onProgress('Optimizing Image for AI Processing...');
+    onProgress('AI Edge Refinement...');
     
-    // 1. Resize for AI Models (512px is the industry standard for fast inference masks)
-    // The refinement step handles upscaling to the high-res original.
-    const aiResizedSrc = await resizeImageIfNeeded(imageSrc, 512);
+    // 1. Resize for ultra-fast AI inference
+    // 256px gives an ultra-fast bounding calculation. Edge refinement steps fix the rest.
+    const aiSize = 256;
+    const aiResizedSrc = await resizeImageIfNeeded(imageSrc, aiSize);
     
-    // 2. Preserve full original image dimensions for High-Res Output
     const highResSrc = imageSrc;
 
-    onProgress('Running AI Model...');
+    onProgress('Inferring subject boundaries...');
     let isnetError = null;
-    const isnetMaskBlob = await withTimeout(runImglyModel(aiResizedSrc, 'isnet', (p) => onProgress(`Processing: ${Math.round(p * 100)}%`)), 180000, "AI Model Timeout").catch(e => { 
-      console.error("ISNet failed:", e); 
+    
+    const isnetMaskBlob = await withTimeout(
+      runImglyModel(aiResizedSrc, 'isnet_quint8', (p) => onProgress(`Analyzing: ${Math.round(p * 100)}%`)), 
+      60000, 
+      "AI Processing Timeout"
+    ).catch(e => { 
+      console.error("AI Model failed:", e); 
       isnetError = e;
       return null; 
     });
 
     if (!isnetMaskBlob) {
-      if (!navigator.onLine) {
-        throw new Error("You are offline. Background removal requires an internet connection to load AI models.");
-      }
+      // (Error handling remains)
+      if (!navigator.onLine) throw new Error("You are offline.");
       const detail = isnetError instanceof Error ? isnetError.message : String(isnetError);
-      
-      if (detail.includes('Failed to fetch') || detail.includes('NetworkError')) {
-        throw new Error("Network Error: The AI models could not be downloaded. This is often caused by a slow connection, a corporate firewall, or an ad-blocker (like uBlock Origin or AdGuard) blocking our model CDNs. \n\nTroubleshooting:\n1. Disable ad-blockers for this site.\n2. Check your internet connection.\n3. If you are on a VPN or corporate network, try a different connection.");
+      if (detail.includes('Failed to fetch') || detail.includes('NetworkError') || detail.includes('Timeout')) {
+        throw new Error("Connection Error: The AI model is taking too long to download.");
       }
-      
-      if (detail.includes('WebAssembly') || detail.includes('WASM')) {
-        throw new Error("Compatibility Error: Your browser had trouble initializing the AI engine (WebAssembly). \n\nTroubleshooting:\n1. Ensure your browser is up to date.\n2. Try disabling 'Hardware Acceleration' in your browser settings.\n3. Try using a different browser (Chrome or Edge recommended).");
-      }
-
-      if (detail.includes('out of memory') || detail.includes('allocation failed')) {
-        throw new Error("Memory Error: The AI model failed due to insufficient memory. \n\nTroubleshooting:\n1. Close other browser tabs and apps.\n2. Try a smaller image.\n3. Try a device with more RAM.");
-      }
-
-      throw new Error(`AI background removal engine failed to load. \nDetail: ${detail}\n\nPlease try refreshing the page or using a different browser.`);
+      throw new Error(`AI background removal engine failed to load. \nDetail: ${detail}`);
     }
 
-    onProgress('Refining Edges & Enhancing Quality...');
+    onProgress('Refining & Decontaminating Edges...');
 
-    // Load original high-res image
     const origImg = await loadImage(highResSrc);
-
-    // Load low-res AI cutout
     const maskImg = await loadImage(URL.createObjectURL(isnetMaskBlob));
 
-    // 3. Clean up the AI mask (Fast JS pass on low-res image)
+    // 3. High-Precision Mask Processing
     const maskCanvas = document.createElement('canvas');
     maskCanvas.width = maskImg.width;
     maskCanvas.height = maskImg.height;
@@ -173,80 +167,60 @@ export const hybridRemoveBackground = async (
     const maskData = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
     const pixels = maskData.data;
 
-    for (let i = 0; i < pixels.length; i += 4) {
-      let a = pixels[i + 3] / 255.0;
+    // Advanced Alpha Curve for "Perfection"
+    // Threshold 0.2 keeps subjects (white shirts) but clears ghost objects (chairs)
+    const alphaLookup = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) {
+        let a = i / 255.0;
+        if (a < 0.2) {
+            alphaLookup[i] = 0;
+        } else if (a > 0.95) {
+            alphaLookup[i] = 255;
+        } else {
+            // Cubic Hermite Interpolation for smooth but sharp edges
+            let t = (a - 0.2) / 0.75;
+            alphaLookup[i] = Math.round((t * t * (3 - 2 * t)) * 255);
+        }
+    }
 
-      // Aggressive mask cleanup: clear faint background noise and transparent ghosts
-      if (a < 0.45) {
-        a = 0;
-      } else {
-        // Steep smoothstep to sharpen edges and completely cut out weak background artifacts
-        let t = (a - 0.45) / 0.55;
-        a = t * t * (3 - 2 * t);
-      }
-
-      pixels[i + 3] = Math.round(a * 255);
+    for (let i = 3; i < pixels.length; i += 4) {
+      pixels[i] = alphaLookup[pixels[i]];
     }
     maskCtx.putImageData(maskData, 0, 0);
 
-    // 4. Apply cleaned mask to High-Res Original
+    // 4. Apply mask to High-Res Original
     const finalCanvas = document.createElement('canvas');
     finalCanvas.width = origImg.width;
     finalCanvas.height = origImg.height;
     const finalCtx = finalCanvas.getContext('2d')!;
-
-    // Enable high-quality smoothing for the mask upscaling
     finalCtx.imageSmoothingEnabled = true;
     finalCtx.imageSmoothingQuality = 'high';
 
-    // Draw original high-res image
     finalCtx.drawImage(origImg, 0, 0);
-
-    // Apply the mask
     finalCtx.globalCompositeOperation = 'destination-in';
     finalCtx.drawImage(maskCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
-
-    // Reset composite operation
     finalCtx.globalCompositeOperation = 'source-over';
 
-    // DEFRINGE / HALO REMOVAL (White Color Decontamination)
-    // Fixes the issue where hair edges show white color when placed on a new background
-    const finalData = finalCtx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
-    const finalPixels = finalData.data;
+    // 5. Intelligent Color Spill / Halo Correction
+    // Only processed for reasonable image sizes to maintain 5-7s goal
+    if (origImg.width * origImg.height < 5000000) {
+        const finalData = finalCtx.getImageData(0, 0, finalCanvas.width, finalCanvas.height);
+        const finalPixels = finalData.data;
 
-    for (let i = 0; i < finalPixels.length; i += 4) {
-      const alpha = finalPixels[i + 3];
-      
-      // Target semi-transparent edge pixels (the "halo" area)
-      if (alpha > 0 && alpha < 245) {
-        // Assume the halo is caused by a bright/white original background.
-        // We darken the edge pixels based on their transparency to cancel out the white light bleed.
-        // A lower alpha means more background was mixed in, so we darken it more.
-        const mixRatio = alpha / 255.0; // 0.0 to 1.0
-        
-        // We pull the RGB values down. A factor between 0.5 (heavy dark) and 1.0 (no dark).
-        // For very transparent pixels (e.g. 0.2), factor is 0.5
-        // For opaque pixels (e.g. 0.9), factor is ~0.9
-        const factor = Math.max(0.5, mixRatio * 1.1); 
-
-        // Also if the pixel is dangerously close to white (high luminance), we aggressively un-whiten it
-        const r = finalPixels[i];
-        const g = finalPixels[i + 1];
-        const b = finalPixels[i + 2];
-        const luminance = (r * 0.299 + g * 0.587 + b * 0.114);
-        
-        // If it's a very bright pixel on the edge, it's almost certainly background bleed
-        let applyFactor = factor;
-        if (luminance > 180) {
-            applyFactor = applyFactor * 0.8; // extra darkening for pure white fringes
+        for (let i = 0; i < finalPixels.length; i += 4) {
+          const a = finalPixels[i + 3];
+          if (a > 0 && a < 250) {
+            // Color decontamination: Soften the "halo" often seen in hair
+            // by cooling down pixels that are too bright near the edges
+            const mix = a / 255.0;
+            const factor = Math.max(0.65, mix);
+            finalPixels[i] *= factor;
+            finalPixels[i + 1] *= factor;
+            finalPixels[i + 2] *= factor;
+          }
         }
-
-        finalPixels[i] = r * applyFactor;
-        finalPixels[i + 1] = g * applyFactor;
-        finalPixels[i + 2] = b * applyFactor;
-      }
+        finalCtx.putImageData(finalData, 0, 0);
     }
-    finalCtx.putImageData(finalData, 0, 0);
 
     // 5. Final Output Generation
     onProgress('Finalizing Image...');
@@ -271,61 +245,31 @@ export const hybridRemoveBackground = async (
   }
 };
 
-async function runImglyModel(imageSrc: string, model: 'isnet', onProgress: (p: number) => void): Promise<Blob> {
-  // Prioritize smaller models (quint8 ~11MB, fp16 ~22MB) over full isnet (~44MB) for slow networks
-  const modelsToTry = ['isnet_quint8', 'isnet_fp16', model] as const;
+async function runImglyModel(imageSrc: string, model: 'isnet_quint8' | 'isnet_fp16', onProgress: (p: number) => void): Promise<Blob> {
   let lastError: Error | null = null;
   
   const publicPath = await getFastestCDN();
 
-  // 1. Try identified mirrors with prioritized model sizes
-  for (const modelName of modelsToTry) {
-    try {
-      console.log(`Running optimized model ${modelName} (Fast Path)...`);
-      ort.env.wasm.wasmPaths = publicPath;
-      return await imglyRemoveBackground(imageSrc, {
-        model: modelName as any,
-        output: { format: 'image/png', quality: 0.7 },
-        proxyToWorker: true,
-        publicPath,
-        device: 'cpu',
-        fetchArgs: { mode: 'cors', cache: 'force-cache' },
-        progress: (_key, current, total) => { if (total > 0) onProgress(current / total); },
-      });
-    } catch (e) {
-      lastError = e instanceof Error ? e : new Error(String(e));
-      // If it's a fetch error, move to next model/CDN quickly
-      continue;
-    }
+  const config: Config = {
+    model: model,
+    output: { format: 'image/png', quality: 0.8 },
+    publicPath,
+    progress: (_key, current, total) => { if (total > 0) onProgress(current / total); },
+  };
+
+  try {
+    console.log(`Running fast-path AI with ${publicPath} (Model: ${model})...`);
+    return await imglyRemoveBackground(imageSrc, config);
+  } catch (e) {
+    lastError = e instanceof Error ? e : new Error(String(e));
   }
 
-  // 2. Fallback to other CDNs if the fastest one failed for all model variants
-  for (const altPath of CDNS) {
-    if (altPath === publicPath) continue;
-    try {
-      console.log(`Trying alternative CDN: ${altPath}`);
-      return await imglyRemoveBackground(imageSrc, {
-        model: 'isnet_quint8' as any, // Only try the smallest model on fallback CDNs
-        output: { format: 'image/png', quality: 0.7 },
-        proxyToWorker: true,
-        publicPath: altPath,
-        device: 'cpu',
-        fetchArgs: { mode: 'cors', cache: 'force-cache' },
-        progress: (_key, current, total) => { if (total > 0) onProgress(current / total); },
-      });
-    } catch (e) {
-      lastError = e instanceof Error ? e : new Error(String(e));
-    }
-  }
-
-  // 2. Final Desperate Fallback: No dedicated publicPath (let library use its internal default)
+  // Desperate Fallback
   try {
     console.log("Desperate Fallback: Using library defaults...");
     return await imglyRemoveBackground(imageSrc, {
-      model: 'isnet' as any,
+      model: 'isnet_quint8',
       output: { format: 'image/png', quality: 0.8 },
-      proxyToWorker: false, // Try main thread in case worker fetch is blocked
-      device: 'cpu',
       progress: (_key, current, total) => { if (total > 0) onProgress(current / total); },
     });
   } catch (e) {
@@ -333,7 +277,7 @@ async function runImglyModel(imageSrc: string, model: 'isnet', onProgress: (p: n
   }
   
   const finalError = lastError || new Error("AI Processing failed");
-  console.error("Critical Failure: All CDNs and fallback models failed.", finalError);
+  console.error("Critical Failure: All AI execution paths failed.", finalError);
   throw finalError;
 }
 

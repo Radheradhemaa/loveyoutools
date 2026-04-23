@@ -12,7 +12,14 @@ export default function BackgroundRemover() {
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [statusText, setStatusText] = useState('');
-  // Removed preload engine model on mount to prevent concurrent loading deadlocks
+  
+  // Preload AI assets quietly in the background after mount
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      ensurePreloaded().catch(console.error);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
