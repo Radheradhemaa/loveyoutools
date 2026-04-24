@@ -184,13 +184,13 @@ export const hybridRemoveBackground = async (
              continue;
           }
           
-          if (a < 70) {
-            mPixels[i + 3] = 0;       // Completely destroy background artifacts
-          } else if (a > 185) {
-            mPixels[i + 3] = 255;     // Solidify the inner structure (sharp edges)
+          if (a < 60) {
+            mPixels[i + 3] = 0;       // Aggressively destroy faint background noise
+          } else if (a > 105) {
+            mPixels[i + 3] = 255;     // Solidify the subject at very low confidence to prevent background bleed (perfect for white shirts)
           } else {
-            // Smooth, firm transition to avoid ragged edges
-            mPixels[i + 3] = Math.round(((a - 70) / 115.0) * 255);
+            // Extremely sharp edge transition
+            mPixels[i + 3] = Math.round(((a - 60) / 45.0) * 255);
           }
         }
       }
