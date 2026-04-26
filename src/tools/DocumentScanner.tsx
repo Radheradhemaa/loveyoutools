@@ -249,28 +249,19 @@ export default function DocumentScanner() {
     });
   };
 
-  // Initialize camera and get devices
+  // Initialize device list without prompting for permissions yet
   useEffect(() => {
     const getDevices = async () => {
       try {
-        // Request permissions first to get labels
-        await navigator.mediaDevices.getUserMedia({ video: true }).then(s => s.getTracks().forEach(t => t.stop()));
-        
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
         setDevices(videoDevices);
-        
-        if (videoDevices.length > 0 && !selectedDeviceId) {
-          // Priority: 1. Labels with 'back', 2. facingMode environment if possible, 3. first device
-          const backCam = videoDevices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('rear'));
-          setSelectedDeviceId(backCam ? backCam.deviceId : videoDevices[0].deviceId);
-        }
       } catch (err) {
         console.error("Error listing devices:", err);
       }
     };
     getDevices();
-  }, [selectedDeviceId]);
+  }, []);
 
   // Handle stream attachment to video element
   useEffect(() => {
@@ -294,6 +285,16 @@ export default function DocumentScanner() {
       const newStream = await navigator.mediaDevices.getUserMedia(constraints);
       setStream(newStream);
       setIsCameraActive(true);
+
+      // Refresh devices to get labels now that we have permission
+      const updatedDevices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = updatedDevices.filter(d => d.kind === 'videoinput');
+      setDevices(videoDevices);
+      
+      if (videoDevices.length > 0 && !selectedDeviceId) {
+        const backCam = videoDevices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('rear'));
+        setSelectedDeviceId(backCam ? backCam.deviceId : videoDevices[0].deviceId);
+      }
     } catch (err) {
       console.error("Camera access failed:", err);
       // Fallback for some browsers that might fail with exact deviceId

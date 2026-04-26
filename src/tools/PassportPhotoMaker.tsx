@@ -195,6 +195,8 @@ export default function PassportPhotoMaker() {
   // Manual Touchup State
   const [isManualMode, setIsManualMode] = useState(false);
   const [brushMode, setBrushMode] = useState<'erase' | 'restore'>('erase');
+  const [brushShape, setBrushShape] = useState<'round' | 'square'>('round');
+  const [brushOffset, setBrushOffset] = useState(false);
   const [brushSize, setBrushSize] = useState(20);
   const [isDrawing, setIsDrawing] = useState(false);
   const touchupCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -260,7 +262,7 @@ export default function PassportPhotoMaker() {
     const scaleY = canvas.height / rect.height;
     
     let clientX, clientY;
-    if ('touches' in e) {
+    if ('touches' in e && e.touches.length > 0) {
       clientX = e.touches[0].clientX;
       clientY = e.touches[0].clientY;
     } else {
@@ -268,9 +270,14 @@ export default function PassportPhotoMaker() {
       clientY = (e as React.MouseEvent).clientY;
     }
 
+    let yOffset = 0;
+    if (brushOffset) {
+       yOffset = 60 * scaleY; // Offset cursor 60 pixels up so finger doesn't block view
+    }
+
     return {
       x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY
+      y: ((clientY - rect.top) * scaleY) - yOffset
     };
   };
 
@@ -295,8 +302,8 @@ export default function PassportPhotoMaker() {
     ctx.lineTo(currentPos.x, currentPos.y);
     
     ctx.lineWidth = brushSize;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    ctx.lineCap = brushShape === 'square' ? 'square' : 'round';
+    ctx.lineJoin = brushShape === 'square' ? 'miter' : 'round';
 
     if (brushMode === 'erase') {
       ctx.globalCompositeOperation = 'destination-out';
@@ -1134,6 +1141,28 @@ export default function PassportPhotoMaker() {
                               className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${brushMode === 'restore' ? 'bg-white shadow-sm text-[#e8501a] ring-1 ring-[#e8501a]/30' : 'text-gray-600 hover:bg-gray-200'}`}
                             >
                               Restore
+                            </button>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => setBrushShape('round')}
+                                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${brushShape === 'round' ? 'bg-white shadow-sm text-[#e8501a] ring-1 ring-[#e8501a]/30' : 'text-gray-600 bg-gray-200/50 hover:bg-gray-200'}`}
+                              >
+                                Circle Brush
+                              </button>
+                              <button
+                                onClick={() => setBrushShape('square')}
+                                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${brushShape === 'square' ? 'bg-white shadow-sm text-[#e8501a] ring-1 ring-[#e8501a]/30' : 'text-gray-600 bg-gray-200/50 hover:bg-gray-200'}`}
+                              >
+                                Sharp Pencil
+                              </button>
+                            </div>
+                            <button
+                              onClick={() => setBrushOffset(!brushOffset)}
+                              className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${brushOffset ? 'bg-[#e8501a] text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200'}`}
+                            >
+                              Mobile Offset
                             </button>
                           </div>
                           <div>

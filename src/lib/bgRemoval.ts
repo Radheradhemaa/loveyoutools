@@ -299,28 +299,24 @@ async function refineDualHybridMask(
       canvas.height = h;
       const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 
-      // 1. NEURAL ENSEMBLE: Balanced Priority for structural integrity and fine edges
-      const ensembleMask = new Float32Array(w * h);
-      let totalWeight = 0;
+      // 1. NEURAL ENSEMBLE: Extract individual masks
+      const u2netMask = new Float32Array(w * h);
+      const modnetMask = new Float32Array(w * h);
+      let hasU2net = false;
+      let hasModnet = false;
 
       images.forEach(({ img, model }) => {
-        let weight = 1.0;
-        if (model === "modnet") weight = 18.0; // High priority for hair and fine boundary detail
-        if (model === "u2net") weight = 14.0;  // Strong structural support to prevent subject cutoff
-
-        totalWeight += weight;
-
         ctx.clearRect(0, 0, w, h);
         ctx.drawImage(img, 0, 0, w, h);
         const data = ctx.getImageData(0, 0, w, h).data;
-        for (let i = 0; i < ensembleMask.length; i++) {
-          ensembleMask[i] += (data[i * 4 + 3] / 255.0) * weight;
+        const targetMask = model === "u2net" ? u2netMask : modnetMask;
+        if (model === "u2net") hasU2net = true;
+        if (model === "modnet") hasModnet = true;
+        
+        for (let i = 0; i < targetMask.length; i++) {
+          targetMask[i] = data[i * 4 + 3] / 255.0;
         }
       });
-
-      for (let i = 0; i < ensembleMask.length; i++) {
-        ensembleMask[i] /= totalWeight;
-      }
 
       // 2. STRUCTURAL GATE: MediaPipe mask for interior hole-filling
       ctx.clearRect(0, 0, w, h);
@@ -331,20 +327,50 @@ async function refineDualHybridMask(
         rMask[i] = rData[i * 4 + 3] / 255.0;
       }
 
-      // 3. FUSION PASS: Dynamic Preservation
+      // 3. FUSION PASS: Dynamic Precision Matting (Head vs Shoulder tuning)
       const finalMask = new Uint8Array(w * h);
       for (let i = 0; i < w * h; i++) {
-        const e = ensembleMask[i];
+        const y = Math.floor(i / w);
+        const normalizedY = y / h;
+        
+        // headRatio: 1.0 at top (head/ears), 0.0 at bottom (shoulders)
+        let headRatio = 1.0;
+        if (normalizedY > 0.6) headRatio = 0.0;
+        else if (normalizedY > 0.4) headRatio = (0.6 - normalizedY) / 0.2; 
+        
+        const u = hasU2net ? u2netMask[i] : modnetMask[i];
+        const m = hasModnet ? modnetMask[i] : u2netMask[i];
         const r = rMask[i];
+
+        // Base ensemble: prioritize ModNet for fine details, U2Net for structure
+        let e = (m * 22.0 + u * 11.0) / 33.0;
+
+        // Ear Webbing Obliterator
+        if (headRatio > 0.4) {
+          // If ModNet sees a hole (like between ear and head), trust it absolutely
+          if (m < 0.45) e = Math.min(e, m * 0.5);
+        }
+
+        // Shoulder & Solid Body Recovery
+        if (headRatio < 0.5) {
+          // Trust U2Net heavily for lower sections to construct solid shoulders
+          if (u > 0.45) e = Math.max(e, u);
+          // If MediaPipe guarantees it is body, force it to be solid to prevent "cut ho jata hai"
+          if (r > 0.7 && u > 0.1) e = Math.max(e, 0.95);
+        }
 
         let alpha = e;
         
-        // SUBJECT PROTECTION GATE: Calibrated pruning to eliminate background "webbing" (ears/head)
-        if (r < 0.26) {
-          alpha = 0; // Clean rejection of background bleeds
-        } else if (r < 0.92) {
+        // Dynamic thresholds based on region
+        const rejectThreshold = 0.15 + (0.35 * headRatio); // 0.50 for head, 0.15 for shoulders
+        const transitionEnd = 0.75 + (0.20 * headRatio);   // 0.95 for head, 0.75 for shoulders
+
+        if (r < rejectThreshold && (headRatio > 0.5 || e < 0.5)) {
+          // Absolute rejection of background bleeds (ears).
+          alpha = 0; 
+        } else if (r < transitionEnd) {
           // Sharp structural transition window
-          const weight = (r - 0.26) / 0.66;
+          const weight = (r - rejectThreshold) / (transitionEnd - rejectThreshold);
           const curve = weight * weight * (3 - 2 * weight); 
           alpha = e * curve;
         }
@@ -354,9 +380,12 @@ async function refineDualHybridMask(
           const t = (alpha - 0.0001) / 0.9998;
           alpha = t * t * t * (t * (t * 6 - 15) + 10); 
           
-          // Ultra-Clean Alpha Toggles: Surgical precision to destroy color patches
-          if (alpha < 0.55) alpha = 0; 
-          else if (alpha > 0.75) alpha = 1.0;
+          // Regional Alpha Toggles to strictly kill "white patches" and preserve shoulder softness
+          const lowerToggle = 0.20 + (0.60 * headRatio); // 0.80 for head, 0.20 for shoulders
+          const upperToggle = 0.65 + (0.20 * headRatio); // 0.85 for head, 0.65 for shoulders
+          
+          if (alpha < lowerToggle) alpha = 0; 
+          else if (alpha > upperToggle) alpha = 1.0;
         }
 
         finalMask[i] = Math.round(alpha * 255);
@@ -365,6 +394,32 @@ async function refineDualHybridMask(
       // 4. MORPHOLOGICAL REFINEMENT: Studio-grade multi-pass polishing
       let alphaMask = new Uint8Array(finalMask);
       
+      // Pass 0: Despeckle (Island Removal) - Kills floating white dots/patches (e.g., near ears)
+      for (let iter = 0; iter < 3; iter++) {
+        const source = new Uint8Array(alphaMask);
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const idx = y * w + x;
+            if (source[idx] > 0) {
+              let bgCount = 0;
+              if (source[idx-1] === 0) bgCount++;
+              if (source[idx+1] === 0) bgCount++;
+              if (source[idx-w] === 0) bgCount++;
+              if (source[idx+w] === 0) bgCount++;
+              if (source[idx-w-1] === 0) bgCount++;
+              if (source[idx-w+1] === 0) bgCount++;
+              if (source[idx+w-1] === 0) bgCount++;
+              if (source[idx+w+1] === 0) bgCount++;
+              
+              // If 6 or more out of 8 neighbors are pure background, it's an isolated speck/dot
+              if (bgCount >= 6) {
+                alphaMask[idx] = 0;
+              }
+            }
+          }
+        }
+      }
+
       // Stage: Closing (Dilation then Erosion) - Fills micro-gaps to prevent subject detail loss
       const dilate = (src: Uint8Array) => {
         const dst = new Uint8Array(src);
@@ -398,20 +453,29 @@ async function refineDualHybridMask(
       alphaMask = dilate(alphaMask);
       alphaMask = erode(alphaMask);
 
-      // Pass: Edge Purification - Targeted suppression of background halos near ears/hair
+      // Pass: Edge Purification - Environment-Aware background halo suppression
       for (let iter = 0; iter < 4; iter++) {
         const source = new Uint8Array(alphaMask);
         for (let y = 1; y < h - 1; y++) {
+          const normalizedY = y / h;
+          // Determine erosion strength: Heavy on head/ears (130), light on shoulders (20)
+          let erosionStrength = 40; 
+          if (normalizedY < 0.4) erosionStrength = 150;
+          else if (normalizedY < 0.6) erosionStrength = 150 - (110 * ((normalizedY - 0.4) / 0.2));
+
+          if (erosionStrength <= 0) continue;
+
           for (let x = 1; x < w - 1; x++) {
             const idx = y * w + x;
-            if (source[idx] > 0 && source[idx] < 255) {
+            if (source[idx] > 0) {
               const hasBgNeighbor = 
                 source[idx-1] === 0 || source[idx+1] === 0 || 
-                source[idx-w] === 0 || source[idx+w] === 0;
+                source[idx-w] === 0 || source[idx+w] === 0 ||
+                source[idx-w-1] === 0 || source[idx+w+1] === 0 ||
+                source[idx-w+1] === 0 || source[idx+w-1] === 0;
 
               if (hasBgNeighbor) {
-                // Precise suppression of background bloom for natural edges
-                alphaMask[idx] = Math.max(0, source[idx] - 105);
+                alphaMask[idx] = Math.max(0, source[idx] - erosionStrength);
               }
             }
           }
