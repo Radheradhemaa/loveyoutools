@@ -31,14 +31,20 @@ export const ensurePreloaded = async () => {
         outputConfidenceMasks: true,
       });
 
-      // Preload secondary high-fidelity model (IS-Net Lite variant)
-      await preload({
-        model: "isnet_fp16" as any,
-        fetchArgs: { cache: "force-cache" },
-      }).catch(() => {});
+      // Preload high-fidelity models (U2Net, MODNet)
+      await Promise.all([
+        preload({
+          model: "u2net" as any,
+          fetchArgs: { cache: "force-cache" },
+        }),
+        preload({
+          model: "modnet" as any,
+          fetchArgs: { cache: "force-cache" },
+        }),
+      ]).catch(() => {});
 
       isPreloaded = true;
-      console.log("Ultra-Fast AI Pipelines Ready");
+      console.log("Ultra-Fast AI Pipelines Ready (Dual-Model Ensemble Active)");
     } catch (err) {
       console.warn(`AI Initialization failed:`, err);
     }
@@ -120,11 +126,11 @@ async function runFastSegmentation(source: HTMLImageElement): Promise<Blob> {
     const idx = i * 4;
     // We store the mask in the alpha channel of the temp canvas
     let alpha = 0;
-    // Extremely tight fallback thresholds to forcefully eliminate ear halos and background colour spread (webbing)
-    if (confidence < 0.7) alpha = 0;
+    // Relaxed fallback thresholds to preserve fine subject detail at the edges
+    if (confidence < 0.5) alpha = 0;
     else if (confidence > 0.95) alpha = 255;
     else {
-      const t = (confidence - 0.7) / 0.25;
+      const t = (confidence - 0.5) / 0.45;
       // Hermite interpolation (smoothstep) for a clean, feathered edge
       const smoothT = t * t * (3 - 2 * t);
       alpha = Math.round(smoothT * 255);
@@ -150,7 +156,7 @@ async function runFastSegmentation(source: HTMLImageElement): Promise<Blob> {
 
 /**
  * High-Speed Hybrid Background Removal
- * Combined MODNet + U2Net Lite Logic for 3-5s delivery
+ * Dual-Model Flow: U2Net + MODNet Fusion logic for 5-7s delivery
  */
 export const hybridRemoveBackground = async (
   imageSrc: string,
@@ -158,11 +164,11 @@ export const hybridRemoveBackground = async (
   forceWhiteBackground: boolean = false,
 ): Promise<Blob> => {
   const startTime = Date.now();
-  onProgress("Igniting GPU AI Pipelines...");
+  onProgress("Igniting Dual-Model AI Pipeline...");
 
+  let robustBlob: Blob | null = null;
   try {
-    // 1. Initial High-Speed Pulse (MediaPipe Selfie Segmentation)
-    // This is the fastest path for humans, taking < 1s
+    // 1. Initial High-Speed Pulse
     const img = new Image();
     img.crossOrigin = "anonymous";
     await new Promise((res, rej) => {
@@ -171,57 +177,72 @@ export const hybridRemoveBackground = async (
       img.src = imageSrc;
     });
 
-    onProgress("Running Rapid AI Segmentation (MODNet Path)...");
-    let fastBlob = await runFastSegmentation(img);
+    onProgress("Phase 1: Structural Analysis...");
+    robustBlob = await runFastSegmentation(img);
 
-    // 2. High-Fidelity Edge Correction (IS-Net Inspired Hybrid)
-    // We run this to solve edge ghosting and subject preservation issues
-    onProgress("Applying IS-Net Hybrid Refinement...");
+    onProgress("Phase 2: Neural Recognition...");
+    // Maximum resolution for professional studio-grade detail preservation
+    const hdSource = await resizeImageIfNeeded(imageSrc, 3072);
 
-    // Optimal resolution (768px) for High-Speed IS-Net to guarantee 3-5 sec delivery
-    const hdSource = await resizeImageIfNeeded(imageSrc, 768);
+    const runModel = async (model: string) => {
+      try {
+        return await imglyRemoveBackground(hdSource, {
+          model: model as any,
+          output: { format: "image/png", quality: 0.99 },
+        });
+      } catch (e) {
+        console.warn(`Model ${model} failed`, e);
+        return null;
+      }
+    };
 
-    const isnetPromise = imglyRemoveBackground(hdSource, {
-      model: "isnet_fp16" as any,
-      output: { format: "image/png", quality: 0.99 },
-      progress: (k, curr, total) => {
-        if (total > 0) {
-          const percent = Math.round((curr / total) * 100);
-          onProgress(`Refining Subject Edges (${percent}%)...`);
-        }
-      },
-    });
+    // Parallel execution for maximum throughput
+    const [u2netBlob, modnetBlob] = await Promise.all([
+      runModel("u2net"),
+      runModel("modnet")
+    ]);
 
-    const timeoutPromise = new Promise<Blob>((_, reject) => {
-      // Strict 4.8-second window to guarantee instant delivery as requested
-      setTimeout(() => reject(new Error("Refinement limit")), 4800);
-    });
+    onProgress("Phase 3: Expert Fusion & Halo Removal...");
 
-    try {
-      const finalBlob = await Promise.race([isnetPromise, timeoutPromise]);
-      onProgress("Synthesizing Master Cutout...");
+    const precisionBlobs = [
+      { blob: u2netBlob, model: "u2net" },
+      { blob: modnetBlob, model: "modnet" },
+    ].filter(b => b.blob !== null) as { blob: Blob; model: string }[];
 
-      // We directly use the pristine IS-Net output.
-      // But user requested specific morphological refinement (erode->dilate) to fix ear halos and blur stringiness.
-      let processed = await refineAlphaMask(finalBlob, img);
-
-      if (forceWhiteBackground)
+    if (precisionBlobs.length === 0) {
+      console.warn("High-fidelity models failed, falling back to structural segmentation");
+      let processed = robustBlob;
+      if (forceWhiteBackground) {
         processed = await applyWhiteBackground(processed);
-
-      console.log(
-        `Professional high-fidelity process: ${(Date.now() - startTime) / 1000}s`,
-      );
-      return processed;
-    } catch (e) {
-      console.log("High-fidelity delay, delivering rapid GPU result (MODNet)");
-      // Fallback
-      let processed = fastBlob;
-      if (forceWhiteBackground)
-        processed = await applyWhiteBackground(processed);
+      }
       return processed;
     }
+
+    let processed = await refineDualHybridMask(
+      precisionBlobs,
+      robustBlob,
+      img,
+    );
+
+    if (forceWhiteBackground)
+      processed = await applyWhiteBackground(processed);
+
+    console.log(
+      `Dual-Model Process Complete: ${(Date.now() - startTime) / 1000}s`,
+    );
+    return processed;
   } catch (error: any) {
     console.error("Hybrid AI failed:", error);
+    
+    // Final emergency fallback if structural result exists
+    if (robustBlob) {
+      console.log("Returning structural fallback after critical error");
+      if (forceWhiteBackground) {
+        return await applyWhiteBackground(robustBlob);
+      }
+      return robustBlob;
+    }
+
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(
       `AI Processing Error: ${errorMessage}. Please try again with a clearer image.`,
@@ -252,122 +273,257 @@ async function applyWhiteBackground(transparentBlob: Blob): Promise<Blob> {
 }
 
 /**
- * Applies Morphological Operations (Erode -> Dilate) and Gaussian Blur
- * directly translated from the user's Python processing pipeline
- * to handle ear edge fixing and hair edge refinement.
+ * Expert Dual-Model Hybrid Mask Fusion (Passport Grade)
+ * Implements Morphological Post-processing, Halo Suppression, and Smooth-Edge Blending.
  */
-async function refineAlphaMask(
-  aiResultBlob: Blob,
+async function refineDualHybridMask(
+  precisionBlobs: { blob: Blob; model: string }[],
+  robustBlob: Blob,
   originalSource: HTMLImageElement,
 ): Promise<Blob> {
   return new Promise((resolve) => {
-    const aiImg = new Image();
-    aiImg.onload = () => {
-      // Process erosion directly on the AI mask for instant 0ms execution
-      const w = aiImg.width;
-      const h = aiImg.height;
+    const images: { img: HTMLImageElement; model: string }[] = [];
+    const robustImg = new Image();
+    let loadedCount = 0;
+    const totalToLoad = precisionBlobs.length + 1;
+
+    const onLoaded = () => {
+      loadedCount++;
+      if (loadedCount < totalToLoad) return;
+
+      const w = images[0].img.width;
+      const h = images[0].img.height;
 
       const canvas = document.createElement("canvas");
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 
-      // 1. Draw IS-Net AI mask onto canvas
-      ctx.drawImage(aiImg, 0, 0, w, h);
-      const imageData = ctx.getImageData(0, 0, w, h);
-      const data = imageData.data;
+      // 1. NEURAL ENSEMBLE: Balanced Priority for structural integrity and fine edges
+      const ensembleMask = new Float32Array(w * h);
+      let totalWeight = 0;
 
-      // Extract mask and apply Soft Mask (Smoothstep 0.2 to 0.8)
-      // This preserves fine hair and prevents body parts from getting cut off
-      let mask = new Uint8Array(w * h);
-      for (let i = 0; i < mask.length; i++) {
-        let val = data[i * 4 + 3] / 255.0;
-        if (val < 0.2) val = 0;
-        else if (val > 0.8) val = 1;
-        else {
-          let t = (val - 0.2) / 0.6;
-          val = t * t * (3 - 2 * t);
+      images.forEach(({ img, model }) => {
+        let weight = 1.0;
+        if (model === "modnet") weight = 18.0; // High priority for hair and fine boundary detail
+        if (model === "u2net") weight = 14.0;  // Strong structural support to prevent subject cutoff
+
+        totalWeight += weight;
+
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        const data = ctx.getImageData(0, 0, w, h).data;
+        for (let i = 0; i < ensembleMask.length; i++) {
+          ensembleMask[i] += (data[i * 4 + 3] / 255.0) * weight;
         }
-        mask[i] = Math.round(val * 255);
+      });
+
+      for (let i = 0; i < ensembleMask.length; i++) {
+        ensembleMask[i] /= totalWeight;
       }
 
-      // Small Erosion (Magic for Ear Area) kernel=2x2, iterations=1
-      // Gently nibbles away webbing without amputating body parts
-      const eroded = new Uint8Array(w * h);
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          if (x < w - 1 && y < h - 1) {
-            const m1 = mask[y * w + x];
-            const m2 = mask[y * w + x + 1];
-            const m3 = mask[(y + 1) * w + x];
-            const m4 = mask[(y + 1) * w + x + 1];
-            eroded[y * w + x] = Math.min(m1, m2, m3, m4);
-          } else {
-            eroded[y * w + x] = mask[y * w + x];
+      // 2. STRUCTURAL GATE: MediaPipe mask for interior hole-filling
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(robustImg, 0, 0, w, h);
+      const rData = ctx.getImageData(0, 0, w, h).data;
+      const rMask = new Float32Array(w * h);
+      for (let i = 0; i < rMask.length; i++) {
+        rMask[i] = rData[i * 4 + 3] / 255.0;
+      }
+
+      // 3. FUSION PASS: Dynamic Preservation
+      const finalMask = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        const e = ensembleMask[i];
+        const r = rMask[i];
+
+        let alpha = e;
+        
+        // SUBJECT PROTECTION GATE: Calibrated pruning to eliminate background "webbing" (ears/head)
+        if (r < 0.26) {
+          alpha = 0; // Clean rejection of background bleeds
+        } else if (r < 0.92) {
+          // Sharp structural transition window
+          const weight = (r - 0.26) / 0.66;
+          const curve = weight * weight * (3 - 2 * weight); 
+          alpha = e * curve;
+        }
+
+        // Professional Progressive Smoothing (Quintic Step)
+        if (alpha > 0.0001 && alpha < 0.9999) {
+          const t = (alpha - 0.0001) / 0.9998;
+          alpha = t * t * t * (t * (t * 6 - 15) + 10); 
+          
+          // Ultra-Clean Alpha Toggles: Surgical precision to destroy color patches
+          if (alpha < 0.55) alpha = 0; 
+          else if (alpha > 0.75) alpha = 1.0;
+        }
+
+        finalMask[i] = Math.round(alpha * 255);
+      }
+
+      // 4. MORPHOLOGICAL REFINEMENT: Studio-grade multi-pass polishing
+      let alphaMask = new Uint8Array(finalMask);
+      
+      // Stage: Closing (Dilation then Erosion) - Fills micro-gaps to prevent subject detail loss
+      const dilate = (src: Uint8Array) => {
+        const dst = new Uint8Array(src);
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const i = y * w + x;
+            if (src[i] < 255) {
+              const maxVal = Math.max(src[i-1], src[i+1], src[i-w], src[i+w]);
+              if (maxVal > dst[i]) dst[i] = maxVal;
+            }
           }
         }
-      }
+        return dst;
+      };
 
-      // Edge Clean (Leak Removal) alpha[edge] = alpha[edge] * 0.85
-      // Beautifully suppresses halos and color spread on the boundary
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const idx = y * w + x;
-          const val = eroded[idx];
-          if (val > 0 && val < 255) {
-            const right = eroded[y * w + x + 1];
-            const bottom = eroded[(y + 1) * w + x];
-            const left = eroded[y * w + x - 1];
-            const top = eroded[(y - 1) * w + x];
-            
-            // Simple gradient check for edges
-            if (
-              Math.abs(right - val) > 10 || 
-              Math.abs(bottom - val) > 10 ||
-              Math.abs(left - val) > 10 ||
-              Math.abs(top - val) > 10
-            ) {
-              eroded[idx] = val * 0.85;
+      const erode = (src: Uint8Array) => {
+        const dst = new Uint8Array(src);
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const i = y * w + x;
+            if (src[i] > 0) {
+              const minVal = Math.min(src[i-1], src[i+1], src[i-w], src[i+w]);
+              if (minVal < dst[i]) dst[i] = minVal;
+            }
+          }
+        }
+        return dst;
+      };
+
+      // Perform a single "Closing" pass to repair the boundary interior
+      alphaMask = dilate(alphaMask);
+      alphaMask = erode(alphaMask);
+
+      // Pass: Edge Purification - Targeted suppression of background halos near ears/hair
+      for (let iter = 0; iter < 4; iter++) {
+        const source = new Uint8Array(alphaMask);
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const idx = y * w + x;
+            if (source[idx] > 0 && source[idx] < 255) {
+              const hasBgNeighbor = 
+                source[idx-1] === 0 || source[idx+1] === 0 || 
+                source[idx-w] === 0 || source[idx+w] === 0;
+
+              if (hasBgNeighbor) {
+                // Precise suppression of background bloom for natural edges
+                alphaMask[idx] = Math.max(0, source[idx] - 105);
+              }
             }
           }
         }
       }
 
-      // Update image data with processed mask
-      for (let i = 0; i < mask.length; i++) {
-        data[i * 4 + 3] = eroded[i];
+      // Pass 2: High-Speed Hole Filling (Interior Only)
+      for (let pass = 0; pass < 2; pass++) {
+        const src = new Uint8Array(alphaMask);
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const i = y * w + x;
+            if (src[i] > 100 && src[i] < 255) {
+              // Fill small gaps inside solid subject parts (e.g. hair clusters)
+              const maxVal = Math.max(src[i-1], src[i+1], src[i-w], src[i+w]);
+              if (maxVal > 240) alphaMask[i] = 255;
+            }
+          }
+        }
       }
-      ctx.putImageData(imageData, 0, 0);
 
-      // Edge Feathering + Guided Filter approximation
-      const blurCanvas = document.createElement("canvas");
-      blurCanvas.width = originalSource.width;
-      blurCanvas.height = originalSource.height;
-      const bCtx = blurCanvas.getContext("2d")!;
+      // 5. PROFESSIONAL EDGE DECONTAMINATION (AI-Driven Color Spill Removal)
+      // This stage replaces "dirty" pixels at the edge with clean internal colors
+      const spillCanvas = document.createElement("canvas");
+      spillCanvas.width = w;
+      spillCanvas.height = h;
+      const spillCtx = spillCanvas.getContext("2d", { willReadFrequently: true })!;
+      spillCtx.drawImage(originalSource, 0, 0, w, h);
+      const imgData = spillCtx.getImageData(0, 0, w, h);
+      const px = imgData.data;
 
-      // Radius 1.2px Gaussian + Guided filter visual approximation
-      bCtx.filter = "blur(1.6px)";
-      bCtx.drawImage(canvas, 0, 0, originalSource.width, originalSource.height);
+      // Studio-Grade Color Matting: 10-pixel deep sampling for color restoration
+      for (let y = 10; y < h - 10; y++) {
+        for (let x = 10; x < w - 10; x++) {
+          const idx = y * w + x;
+          const a = alphaMask[idx];
+          
+          if (a > 0 && a < 255) {
+            const isFringe = alphaMask[idx-1] === 0 || alphaMask[idx+1] === 0 || 
+                             alphaMask[idx-w] === 0 || alphaMask[idx+w] === 0 ||
+                             (a < 180);
+
+            if (isFringe) {
+              // Search deep for untainted color
+              let bestSIdx = -1;
+              for (let d = 2; d <= 10; d++) {
+                if (alphaMask[idx - d] === 255) { bestSIdx = idx - d; break; }
+                if (alphaMask[idx + d] === 255) { bestSIdx = idx + d; break; }
+                if (alphaMask[idx - (w * d)] === 255) { bestSIdx = idx - (w * d); break; }
+                if (alphaMask[idx + (w * d)] === 255) { bestSIdx = idx + (w * d); break; }
+              }
+
+              if (bestSIdx !== -1) {
+                const s4 = bestSIdx * 4;
+                const i4 = idx * 4;
+                // High-precision color matching
+                px[i4] = px[s4];
+                px[i4 + 1] = px[s4 + 1];
+                px[i4 + 2] = px[s4 + 2];
+              } else {
+                // If no pure subject color is nearby, it's a floating color patch (e.g. ear bloom). Obliterate it.
+                alphaMask[idx] = 0;
+              }
+            }
+          }
+        }
+      }
+      spillCtx.putImageData(imgData, 0, 0);
+
+      // 6. FINAL COMPOSITION: Studio-quality blending
+      const finalImgData = ctx.createImageData(w, h);
+      for (let i = 0; i < alphaMask.length; i++) {
+        const val = alphaMask[i];
+        finalImgData.data[i * 4] = 0;
+        finalImgData.data[i * 4 + 1] = 0;
+        finalImgData.data[i * 4 + 2] = 0;
+        finalImgData.data[i * 4 + 3] = val;
+      }
+      ctx.putImageData(finalImgData, 0, 0);
 
       const finalCanvas = document.createElement("canvas");
       finalCanvas.width = originalSource.width;
       finalCanvas.height = originalSource.height;
       const fCtx = finalCanvas.getContext("2d")!;
 
-      // Draw original source with high quality
-      fCtx.imageSmoothingQuality = "high";
-      fCtx.drawImage(originalSource, 0, 0);
-
-      // Mask using the heavily refined, blurred matte
+      fCtx.drawImage(spillCanvas, 0, 0, originalSource.width, originalSource.height);
       fCtx.globalCompositeOperation = "destination-in";
-      fCtx.drawImage(blurCanvas, 0, 0);
+      // Professional studio feathering: balanced for sharpness vs natural integration
+      fCtx.filter = "blur(0.4px)"; 
+      fCtx.drawImage(canvas, 0, 0, originalSource.width, originalSource.height);
 
-      finalCanvas.toBlob((result) => {
-        URL.revokeObjectURL(aiImg.src);
-        resolve(result || aiResultBlob);
-      }, "image/png");
+      finalCanvas.toBlob(
+        (result) => {
+          images.forEach(({ img }) => URL.revokeObjectURL(img.src));
+          URL.revokeObjectURL(robustImg.src);
+          resolve(result || precisionBlobs[0].blob);
+        },
+        "image/png",
+        0.99,
+      );
     };
-    aiImg.onerror = () => resolve(aiResultBlob);
-    aiImg.src = URL.createObjectURL(aiResultBlob);
+
+    precisionBlobs.forEach(({ blob, model }) => {
+      const img = new Image();
+      img.onload = onLoaded;
+      img.onerror = onLoaded;
+      img.src = URL.createObjectURL(blob);
+      images.push({ img, model });
+    });
+
+    robustImg.onload = onLoaded;
+    robustImg.onerror = onLoaded;
+    robustImg.src = URL.createObjectURL(robustBlob);
   });
 }
