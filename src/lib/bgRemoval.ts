@@ -345,27 +345,30 @@ async function refineDualHybridMask(
         // Base ensemble: prioritize ModNet for fine details, U2Net for structure
         let e = (m * 22.0 + u * 11.0) / 33.0;
 
-        // Ear Webbing Obliterator
+        // Ear Webbing & Corner Obliterator
         if (headRatio > 0.4) {
-          // If ModNet sees a hole (like between ear and head), trust it absolutely
-          if (m < 0.45) e = Math.min(e, m * 0.5);
+          // ModNet is superior at hair/ear edge logic. 
+          // If ModNet strongly believes it is background, override U2Net completely to prevent white patches.
+          if (m < 0.45) e = 0;
+          else if (m < 0.7) e = Math.min(e, m * 0.25);
         }
 
         // Shoulder & Solid Body Recovery
         if (headRatio < 0.5) {
-          // Trust U2Net heavily for lower sections to construct solid shoulders
-          if (u > 0.45) e = Math.max(e, u);
+          // Trust U2Net heavily for lower sections to construct solid natural shoulders
+          // smoothly blend to avoid jagged cuts
+          if (u > 0.2) e = Math.max(e, u * 0.95 + m * 0.05);
           // If MediaPipe guarantees it is body, force it to be solid to prevent "cut ho jata hai"
-          if (r > 0.7 && u > 0.1) e = Math.max(e, 0.95);
+          if (r > 0.5 && (u > 0.1 || m > 0.1)) e = Math.max(e, 0.98);
         }
 
         let alpha = e;
         
         // Dynamic thresholds based on region
-        const rejectThreshold = 0.15 + (0.35 * headRatio); // 0.50 for head, 0.15 for shoulders
-        const transitionEnd = 0.75 + (0.20 * headRatio);   // 0.95 for head, 0.75 for shoulders
+        const rejectThreshold = 0.05 + (0.50 * headRatio); // 0.55 for head, 0.05 for shoulders
+        const transitionEnd = 0.70 + (0.20 * headRatio);   // 0.90 for head, 0.70 for shoulders
 
-        if (r < rejectThreshold && (headRatio > 0.5 || e < 0.5)) {
+        if (r < rejectThreshold && (headRatio > 0.5 || e < 0.4)) {
           // Absolute rejection of background bleeds (ears).
           alpha = 0; 
         } else if (r < transitionEnd) {
@@ -380,9 +383,9 @@ async function refineDualHybridMask(
           const t = (alpha - 0.0001) / 0.9998;
           alpha = t * t * t * (t * (t * 6 - 15) + 10); 
           
-          // Regional Alpha Toggles to strictly kill "white patches" and preserve shoulder softness
-          const lowerToggle = 0.20 + (0.60 * headRatio); // 0.80 for head, 0.20 for shoulders
-          const upperToggle = 0.65 + (0.20 * headRatio); // 0.85 for head, 0.65 for shoulders
+          // Regional Alpha Toggles: surgically kill halos around ears while keeping shoulders anti-aliased
+          const lowerToggle = 0.05 + (0.65 * headRatio); // 0.70 for head, 0.05 for shoulders 
+          const upperToggle = 0.65 + (0.25 * headRatio); // 0.90 for head, 0.65 for shoulders (sharp snap)
           
           if (alpha < lowerToggle) alpha = 0; 
           else if (alpha > upperToggle) alpha = 1.0;
@@ -395,24 +398,25 @@ async function refineDualHybridMask(
       let alphaMask = new Uint8Array(finalMask);
       
       // Pass 0: Despeckle (Island Removal) - Kills floating white dots/patches (e.g., near ears)
-      for (let iter = 0; iter < 3; iter++) {
+      for (let iter = 0; iter < 4; iter++) {
         const source = new Uint8Array(alphaMask);
         for (let y = 1; y < h - 1; y++) {
           for (let x = 1; x < w - 1; x++) {
             const idx = y * w + x;
             if (source[idx] > 0) {
               let bgCount = 0;
-              if (source[idx-1] === 0) bgCount++;
-              if (source[idx+1] === 0) bgCount++;
-              if (source[idx-w] === 0) bgCount++;
-              if (source[idx+w] === 0) bgCount++;
-              if (source[idx-w-1] === 0) bgCount++;
-              if (source[idx-w+1] === 0) bgCount++;
-              if (source[idx+w-1] === 0) bgCount++;
-              if (source[idx+w+1] === 0) bgCount++;
+              // Treat very transparent pixels (< 60) as background logically for island detection
+              if (source[idx-1] < 60) bgCount++;
+              if (source[idx+1] < 60) bgCount++;
+              if (source[idx-w] < 60) bgCount++;
+              if (source[idx+w] < 60) bgCount++;
+              if (source[idx-w-1] < 60) bgCount++;
+              if (source[idx-w+1] < 60) bgCount++;
+              if (source[idx+w-1] < 60) bgCount++;
+              if (source[idx+w+1] < 60) bgCount++;
               
-              // If 6 or more out of 8 neighbors are pure background, it's an isolated speck/dot
-              if (bgCount >= 6) {
+              // If 5 or more out of 8 neighbors are logically background, it's an isolated speck/dot/sharp corner
+              if (bgCount >= 5) {
                 alphaMask[idx] = 0;
               }
             }
@@ -454,14 +458,14 @@ async function refineDualHybridMask(
       alphaMask = erode(alphaMask);
 
       // Pass: Edge Purification - Environment-Aware background halo suppression
-      for (let iter = 0; iter < 4; iter++) {
+      for (let iter = 0; iter < 2; iter++) {
         const source = new Uint8Array(alphaMask);
         for (let y = 1; y < h - 1; y++) {
           const normalizedY = y / h;
-          // Determine erosion strength: Heavy on head/ears (130), light on shoulders (20)
-          let erosionStrength = 40; 
-          if (normalizedY < 0.4) erosionStrength = 150;
-          else if (normalizedY < 0.6) erosionStrength = 150 - (110 * ((normalizedY - 0.4) / 0.2));
+          // Determine erosion strength: Moderate on head/ears (40), light on shoulders (10)
+          let erosionStrength = 10; 
+          if (normalizedY < 0.4) erosionStrength = 40;
+          else if (normalizedY < 0.6) erosionStrength = 40 - (30 * ((normalizedY - 0.4) / 0.2));
 
           if (erosionStrength <= 0) continue;
 
@@ -507,9 +511,9 @@ async function refineDualHybridMask(
       const imgData = spillCtx.getImageData(0, 0, w, h);
       const px = imgData.data;
 
-      // Studio-Grade Color Matting: 10-pixel deep sampling for color restoration
-      for (let y = 10; y < h - 10; y++) {
-        for (let x = 10; x < w - 10; x++) {
+      // Studio-Grade Color Matting: 25-pixel deep sampling for color restoration
+      for (let y = 25; y < h - 25; y++) {
+        for (let x = 25; x < w - 25; x++) {
           const idx = y * w + x;
           const a = alphaMask[idx];
           
@@ -521,7 +525,7 @@ async function refineDualHybridMask(
             if (isFringe) {
               // Search deep for untainted color
               let bestSIdx = -1;
-              for (let d = 2; d <= 10; d++) {
+              for (let d = 2; d <= 25; d += 2) {
                 if (alphaMask[idx - d] === 255) { bestSIdx = idx - d; break; }
                 if (alphaMask[idx + d] === 255) { bestSIdx = idx + d; break; }
                 if (alphaMask[idx - (w * d)] === 255) { bestSIdx = idx - (w * d); break; }
@@ -536,8 +540,12 @@ async function refineDualHybridMask(
                 px[i4 + 1] = px[s4 + 1];
                 px[i4 + 2] = px[s4 + 2];
               } else {
-                // If no pure subject color is nearby, it's a floating color patch (e.g. ear bloom). Obliterate it.
-                alphaMask[idx] = 0;
+                // If no pure subject color is nearby, only obliterate if it's very faint or clearly disconnected
+                if (a < 80) {
+                  alphaMask[idx] = 0;
+                } else if (a < 160) {
+                  alphaMask[idx] = Math.max(0, a - 40);
+                }
               }
             }
           }
@@ -564,7 +572,7 @@ async function refineDualHybridMask(
       fCtx.drawImage(spillCanvas, 0, 0, originalSource.width, originalSource.height);
       fCtx.globalCompositeOperation = "destination-in";
       // Professional studio feathering: balanced for sharpness vs natural integration
-      fCtx.filter = "blur(0.4px)"; 
+      fCtx.filter = "blur(0.3px)"; 
       fCtx.drawImage(canvas, 0, 0, originalSource.width, originalSource.height);
 
       finalCanvas.toBlob(
