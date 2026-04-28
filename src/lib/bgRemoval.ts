@@ -106,13 +106,34 @@ export const removeBackground = async (
     iImg.src = URL.createObjectURL(imglyBlob);
     await new Promise(r => { iImg.onload = r; });
     
+    // Run MediaPipe to get a semantic "Human" mask for robust patch elimination and shoulder protection
+    onProgress("Running Semantic Deep-Scan (Targeting Ears & Shoulders)...");
+    let mpMask: Float32Array | null = null;
+    try {
+        if (!mediapipeSegmenter) await ensurePreloaded();
+        if (mediapipeSegmenter) {
+            const origImg = new Image();
+            origImg.crossOrigin = "anonymous";
+            await new Promise(r => { origImg.onload = r; origImg.src = imageSrc; });
+            // Compare dimensions just in case
+            if (origImg.width === iImg.width && origImg.height === iImg.height) {
+                const result = mediapipeSegmenter.segment(origImg);
+                if (result && result.confidenceMasks && result.confidenceMasks.length > 0) {
+                    mpMask = result.confidenceMasks[0].getAsFloat32Array();
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("Semantic scan failed, continuing with standard cutout.", e);
+    }
+
     const canvas = document.createElement("canvas");
     canvas.width = iImg.width;
     canvas.height = iImg.height;
     
     URL.revokeObjectURL(iImg.src);
 
-    return await polishAndFinalize(iImg, canvas, forceWhiteBackground, onProgress);
+    return await polishAndFinalize(iImg, canvas, forceWhiteBackground, onProgress, mpMask);
 
   } catch (err) {
     console.error("BG removal logic failed:", err);
@@ -162,7 +183,13 @@ async function mediapipeFallback(imageSrc: string, forceWhite: boolean, onProgre
     return await polishAndFinalize(resImg, canvas, forceWhite, onProgress);
 }
 
-async function polishAndFinalize(imgSource: HTMLImageElement | HTMLCanvasElement, canvas: HTMLCanvasElement, forceWhite: boolean, onProgress: (s:string)=>void): Promise<Blob> {
+async function polishAndFinalize(
+    imgSource: HTMLImageElement | HTMLCanvasElement, 
+    canvas: HTMLCanvasElement, 
+    forceWhite: boolean, 
+    onProgress: (s:string)=>void,
+    mpMask?: Float32Array | null
+): Promise<Blob> {
     onProgress("Initiating Studio-Quality Matting...");
     const width = canvas.width;
     const height = canvas.height;
@@ -184,10 +211,29 @@ async function polishAndFinalize(imgSource: HTMLImageElement | HTMLCanvasElement
         alphaBuffer[i / 4] = data[i + 3];
     }
 
+    if (mpMask) {
+        onProgress("Fusing Semantic Mask to Restore Shoulders & Delete Patches...");
+        for (let i = 0; i < width * height; i++) {
+            const isnetA = alphaBuffer[i] / 255.0;
+            const mpConf = mpMask[i];
+            
+            // Only restore missing solid body parts (like shoulders) where MediaPipe is extremely confident
+            if (isnetA < 0.5 && mpConf > 0.9) {
+                alphaBuffer[i] = Math.max(alphaBuffer[i], Math.round(mpConf * 255));
+                data[i * 4 + 3] = alphaBuffer[i]; 
+            }
+            
+            // Only delete patches where MediaPipe is absolutely certain it's background (<=0.02)
+            // This prevents cutting the shoulder edge while still deleting far-away ISNet garbage.
+            if (isnetA > 0.0 && mpConf <= 0.02) {
+                alphaBuffer[i] = 0;
+                data[i * 4 + 3] = 0;
+            }
+        }
+    }
+
     onProgress("Decontaminating Edge Halos & Spill...");
     // 1. Edge Color Decontamination (Bleeding solid RGB into translucent edges)
-    // To eradicate white/color halos, we push internal solid colors outward into the semi-transparent rim.
-    // We limit the search distance to preserve hair color.
     for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
             const idx = y * width + x;
@@ -195,7 +241,7 @@ async function polishAndFinalize(imgSource: HTMLImageElement | HTMLCanvasElement
             
             if (a > 0 && a < 252) {
                 let matchIdx = -1;
-                const maxRadius = 3; // Keep it tight to avoid changing hair to skin color
+                const maxRadius = 6; // Expanded to 6 to catch thicker edge halos around the ear
                 for (let r = 1; r <= maxRadius; r++) {
                     for (let dy = -r; dy <= r; dy++) {
                         for (let dx = -r; dx <= r; dx++) {
@@ -215,24 +261,24 @@ async function polishAndFinalize(imgSource: HTMLImageElement | HTMLCanvasElement
                 }
 
                 if (matchIdx !== -1) {
-                    // Blend interior color over the edge. Lower alpha = takes more interior color.
-                    // This kills the white/background fringing without destroying the original edge completely.
-                    // Added a 0.9 multiplier so it doesn't entirely overwrite everything, preserving some natural texture.
-                    const mixRatio = ((255 - a) / 255.0) * 0.9; 
+                    // Blend interior color over the edge.
+                    // For highly translucent edges, we completely replace the RGB (mixRatio approaching 1.2, clamped to 1) 
+                    // This perfectly kills any white/background rim light without harming alpha
+                    const mixRatio = Math.min(1.0, ((255 - a) / 255.0) * 1.5); 
                     data[idx * 4]     = Math.round(data[idx * 4] * (1 - mixRatio) + data[matchIdx * 4] * mixRatio);
                     data[idx * 4 + 1] = Math.round(data[idx * 4 + 1] * (1 - mixRatio) + data[matchIdx * 4 + 1] * mixRatio);
                     data[idx * 4 + 2] = Math.round(data[idx * 4 + 2] * (1 - mixRatio) + data[matchIdx * 4 + 2] * mixRatio);
-                } else if (a < 150) {
-                     // If it's a faint pixel and has NO solid pixel within a 3px radius, it's very likely
-                     // floating background noise/patch leftover from ISNet. Eradicate it.
+                } else if (a < 210) {
+                     // Faint pixel with no solid anchor within wide radius.
+                     // It is an isolated stray patch (e.g. background patches far from ear).
                      data[idx * 4 + 3] = 0;
-                     alphaBuffer[idx] = 0; // Update buffer so subsequent steps ignore it
+                     alphaBuffer[idx] = 0; // Update buffer
                 }
             }
         }
     }
 
-    onProgress("Applying Sub-Pixel Alpha & Anti-aliasing...");
+    onProgress("Removing Minor Patches & Refining Alpha Edge...");
     // 2. High-Fidelity Alpha Contrast & Smoothing
     const newAlpha = new Float32Array(width * height);
     for (let i = 0; i < alphaBuffer.length; i++) newAlpha[i] = alphaBuffer[i] / 255.0;
@@ -245,36 +291,40 @@ async function polishAndFinalize(imgSource: HTMLImageElement | HTMLCanvasElement
             if (origA > 0 && origA < 1.0) {
                 let sumA = 0;
                 let emptyNeighbors = 0;
+                let minA = origA;
                 
                 for (let dy = -1; dy <= 1; dy++) {
                     for (let dx = -1; dx <= 1; dx++) {
                         const na = alphaBuffer[(y + dy) * width + (x + dx)] / 255.0;
                         sumA += na;
+                        if (na < minA) minA = na;
                         if (na < 0.05) emptyNeighbors++;
                     }
                 }
                 const avgA = sumA / 9.0;
                 
                 // Hard delete completely isolated fuzzy noise
-                if (emptyNeighbors >= 6 && origA < 0.4) {
+                if (emptyNeighbors >= 5 && origA < 0.5) {
                     newAlpha[idx] = 0;
                     continue;
                 }
                 
-                // Enhance the alpha contrast to remove the "soft/blurry" appearance 
-                // of ISNet borders while maintaining a 1px anti-aliased gradient
-                let finalA = origA;
+                // Sub-pixel Erode (Choke): Pulls the edge inwards heavily
+                // by blending the original alpha mostly with the minimum alpha in the neighborhood.
+                // This eliminates the stubborn 1-2px white fringe near the ear perfectly.
+                let erodedA = (origA * 0.15) + (minA * 0.85); 
                 
-                // Sigmoid-like curve: pushes <0.5 lower, >0.5 higher
-                finalA = finalA * finalA * (3 - 2 * finalA);
+                // Apply steep contrast curve to the eroded alpha to tighten the edge
+                let finalA = erodedA * erodedA * (3 - 2 * erodedA);
+                finalA = finalA * finalA * (3 - 2 * finalA); // Double sigmoid for extreme sharpness while keeping 1px gradient
                 
-                // Blend with local average to prevent jagged aliased stair-stepping
-                finalA = (finalA * 0.65) + (avgA * 0.35);
+                // Blend with local average slightly for smooth anti-aliased edge
+                finalA = (finalA * 0.8) + (avgA * 0.2);
                 
-                // Cut off super faint dust / trailing shadows 
-                if (finalA < 0.05) finalA = 0;
-                // Snap nearly pure opaque to 1
-                if (finalA > 0.95) finalA = 1;
+                // Thresholding
+                if (finalA < 0.15) finalA = 0; // Cutoff trailing edge shadows completely
+                if (finalA > 0.90) finalA = 1; // Snap near-opaque to full solid
+
                 
                 newAlpha[idx] = finalA;
             }
