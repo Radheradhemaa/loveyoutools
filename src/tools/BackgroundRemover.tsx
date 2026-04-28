@@ -3,7 +3,7 @@ import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2,
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { hybridRemoveBackground, ensurePreloaded } from '../lib/bgRemoval';
+import { removeBackground, ensurePreloaded } from '../lib/bgRemoval';
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -28,8 +28,8 @@ export default function BackgroundRemover() {
       setProcessingError(null);
       interval = setInterval(() => {
         setTimer((prev) => {
-          // Accurate timer targeting 3.5s average completion
-          if (prev >= 3.4) return 3.4;
+          // Precise timer targeting 18s deep-scan completion
+          if (prev >= 17.8) return 17.8;
           return prev + 0.1;
         });
       }, 100);
@@ -329,7 +329,7 @@ export default function BackgroundRemover() {
       img.onload = () => { 
         originalImgRef.current = img; 
         // Auto-trigger background removal for "instant" feel
-        removeBackground(src);
+        triggerBackgroundRemoval(src);
       };
       img.src = src;
     };
@@ -371,7 +371,7 @@ export default function BackgroundRemover() {
     });
   };
 
-  const removeBackground = async (src?: string | React.MouseEvent) => {
+  const triggerBackgroundRemoval = async (src?: string | React.MouseEvent) => {
     const targetSrc = typeof src === 'string' ? src : imageSrc;
     if (!targetSrc) return;
     setIsProcessing(true);
@@ -382,7 +382,7 @@ export default function BackgroundRemover() {
     const startTime = Date.now();
     
     try {
-      const rawBlob = await hybridRemoveBackground(targetSrc, async (status, intermediateBlob) => {
+      const rawBlob = await removeBackground(targetSrc, async (status, intermediateBlob) => {
         setStatusText(status);
         if (intermediateBlob) {
           const url = URL.createObjectURL(intermediateBlob);
@@ -664,7 +664,7 @@ export default function BackgroundRemover() {
   return (
     <ToolLayout
       title="AI Background Remover"
-      description="Remove image backgrounds in 3-5 seconds with professional precision using GPU-accelerated MODNet + U2Net Lite AI."
+      description="Remove image backgrounds in 3-5 seconds with professional precision using the ultra-high quality ISNet AI model."
       toolId="background-remover"
       acceptedFileTypes={['image/*']}
       onDownload={downloadImage}
@@ -812,7 +812,7 @@ export default function BackgroundRemover() {
                           onClick={() => {
                             setIsCropping(false);
                             setHasCropped(true);
-                            removeBackground(imageSrc || '');
+                            triggerBackgroundRemoval(imageSrc || '');
                           }}
                           className="w-full py-3 bg-surface border border-border rounded-xl text-text-muted hover:text-accent transition-all text-xs font-bold"
                         >
@@ -843,7 +843,7 @@ export default function BackgroundRemover() {
                         </div>
 
                         <button 
-                          onClick={removeBackground}
+                          onClick={triggerBackgroundRemoval}
                         disabled={isProcessing}
                         className={`w-full btn py-4 rounded-2xl gap-2 text-lg shadow-lg ${processingError ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/20' : 'bp shadow-accent/20'}`}
                       >
@@ -1065,7 +1065,7 @@ export default function BackgroundRemover() {
                   <div className="flex flex-col gap-2">
                     {!resultImage && !isProcessing && imageSrc && (
                       <button 
-                        onClick={() => removeBackground()} 
+                        onClick={() => triggerBackgroundRemoval()} 
                         className="w-full btn bp py-3 rounded-xl gap-2 font-bold shadow-lg shadow-accent/20 animate-bounce"
                       >
                         <Wand2 className="w-5 h-5" /> Remove Background Now
@@ -1233,7 +1233,7 @@ export default function BackgroundRemover() {
                               <h3 className="text-white font-bold mb-2">Processing Failed</h3>
                               <p className="text-gray-400 text-xs mb-6">{processingError}</p>
                               <button 
-                                onClick={() => removeBackground()}
+                                onClick={() => triggerBackgroundRemoval()}
                                 className="w-full py-2 bg-accent text-white rounded-lg font-bold text-sm hover:bg-accent/80 transition-colors flex items-center justify-center gap-2"
                               >
                                 <RefreshCw className="w-4 h-4" /> Try Again

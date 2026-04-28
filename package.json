@@ -20,7 +20,6 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@imgly/background-removal": "^1.5.7",
     "@imgly/background-removal-data": "^1.4.5",
-    "@mediapipe/selfie_segmentation": "^0.1.1675465747",
     "@mediapipe/tasks-vision": "^0.10.14",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.1.14",

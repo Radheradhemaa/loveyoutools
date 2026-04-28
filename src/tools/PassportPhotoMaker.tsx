@@ -3,7 +3,7 @@ import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Ima
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { hybridRemoveBackground } from '../lib/bgRemoval';
+import { removeBackground } from '../lib/bgRemoval';
 
 // --- Configuration ---
 const PRESETS = [
@@ -467,7 +467,7 @@ export default function PassportPhotoMaker() {
     setStatusText('Initializing AI Engine...');
     
     try {
-      const rawBlob = await hybridRemoveBackground(src, async (status, intermediateBlob) => {
+      const rawBlob = await removeBackground(src, async (status, intermediateBlob) => {
         setStatusText(status);
         if (intermediateBlob) {
           const url = URL.createObjectURL(intermediateBlob);
@@ -533,7 +533,7 @@ export default function PassportPhotoMaker() {
     });
   };
 
-  const removeBackground = async () => {
+  const handleRemoveBackground = async () => {
     if (!croppedImageSrc) return;
     await removeBackgroundFromSrc(croppedImageSrc);
   };
@@ -1106,7 +1106,7 @@ export default function PassportPhotoMaker() {
                       
                       <div className="flex gap-2 mb-4">
                         <button
-                          onClick={removeBackground}
+                          onClick={handleRemoveBackground}
                           disabled={isProcessing}
                           className="flex-1 py-2.5 px-2 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-gray-800 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-70"
                         >
