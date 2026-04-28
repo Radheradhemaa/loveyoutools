@@ -27,7 +27,7 @@ export default defineConfig(({mode}) => {
               if (id.includes('fabric')) {
                 return 'vendor-canvas';
               }
-              if (id.includes('tesseract.js') || id.includes('onnxruntime-web') || id.includes('opencv-js')) {
+              if (id.includes('tesseract.js') || id.includes('opencv-js')) {
                 return 'vendor-ml';
               }
               if (id.includes('jszip')) {

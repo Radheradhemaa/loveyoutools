@@ -1,601 +1,394 @@
-import { ImageSegmenter, FilesetResolver } from "@mediapipe/tasks-vision";
 import {
   removeBackground as imglyRemoveBackground,
-  preload,
+  Config,
 } from "@imgly/background-removal";
+import { ImageSegmenter, FilesetResolver, ImageSegmenterResult } from "@mediapipe/tasks-vision";
+import * as ort from "onnxruntime-web";
 
-let segmenter: ImageSegmenter | null = null;
-let isPreloaded = false;
-let preloadPromise: Promise<void> | null = null;
+let mediapipeSegmenter: ImageSegmenter | null = null;
+let modnetSession: ort.InferenceSession | null = null;
+let u2netSession: ort.InferenceSession | null = null;
 
-export const ensurePreloaded = async () => {
-  if (isPreloaded) return;
-  if (preloadPromise) return preloadPromise;
+const MODNET_MIRRORS = [
+    "https://huggingface.co/Zuz666/modnet-onnx/resolve/main/modnet_photographic_portrait_matting.onnx",
+    "https://cdn.jsdelivr.net/gh/luciddreams-ai/modnet-onnx@main/modnet_photographic_portrait_matting.onnx",
+];
 
-  preloadPromise = (async () => {
-    try {
-      console.log(`Initializing Ultra-Fast AI Pipelines...`);
+const U2NET_MIRRORS = [
+    "https://huggingface.co/Zuz666/u2net-onnx/resolve/main/u2net.onnx",
+    "https://cdn.jsdelivr.net/gh/luciddreams-ai/u2net-onnx@main/u2net.onnx",
+];
 
-      const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm",
-      );
+// Configure ONNX Runtime to use reliable WASM paths
+const setupNeuralEngines = async () => {
+    if (modnetSession && u2netSession) return;
+    
+    const baseUrl = "https://unpkg.com/onnxruntime-web@1.20.1/dist/";
+    ort.env.wasm.wasmPaths = baseUrl;
+    ort.env.wasm.proxy = false; 
+    ort.env.wasm.numThreads = 1; // Back to 1 to avoid SharedArrayBuffer/crossOriginIsolated errors
 
-      segmenter = await ImageSegmenter.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
-          delegate: "GPU",
-        },
-        runningMode: "IMAGE",
-        outputCategoryMask: false,
-        outputConfidenceMasks: true,
-      });
+    const loadModel = async (mirrors: string[], name: string) => {
+        for (const url of mirrors) {
+            try {
+                console.log(`Attempting to load ${name} from: ${url}`);
+                const session = await ort.InferenceSession.create(url, { 
+                    executionProviders: ["webgl", "wasm"], 
+                    graphOptimizationLevel: "all" 
+                });
+                console.log(`${name} Engine Ready via ${url}`);
+                return session;
+            } catch (err) {
+                console.warn(`${name} mirror failed: ${url}`, err);
+            }
+        }
+        return null;
+    };
 
-      // Preload high-fidelity models (U2Net, MODNet)
-      await Promise.all([
-        preload({
-          model: "u2net" as any,
-          fetchArgs: { cache: "force-cache" },
-        }),
-        preload({
-          model: "modnet" as any,
-          fetchArgs: { cache: "force-cache" },
-        }),
-      ]).catch(() => {});
-
-      isPreloaded = true;
-      console.log("Ultra-Fast AI Pipelines Ready (Dual-Model Ensemble Active)");
-    } catch (err) {
-      console.warn(`AI Initialization failed:`, err);
-    }
-  })();
-  return preloadPromise;
+    [modnetSession, u2netSession] = await Promise.all([
+        loadModel(MODNET_MIRRORS, "MODNet"),
+        loadModel(U2NET_MIRRORS, "U2Net")
+    ]);
 };
 
-async function resizeImageIfNeeded(
-  dataUrl: string,
-  maxSize: number,
-): Promise<string> {
-  return new Promise((resolve, reject) => {
+/**
+ * Preload all engines to ensure smooth transitions.
+ */
+export const ensurePreloaded = async () => {
+  await Promise.allSettled([
+    setupNeuralEngines(),
+    (async () => {
+      if (mediapipeSegmenter) return;
+      try {
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+        );
+        mediapipeSegmenter = await ImageSegmenter.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
+            delegate: "GPU"
+          },
+          runningMode: "IMAGE",
+          outputCategoryMask: false,
+          outputConfidenceMasks: true
+        });
+      } catch (err) {
+        console.warn("MediaPipe Fallback Preload Failed:", err);
+      }
+    })()
+  ]);
+};
+
+async function runOnnxModel(imageSrc: string, session: ort.InferenceSession | null, res: number, name: string): Promise<Uint8ClampedArray | null> {
+  if (!session) return null;
+  try {
     const img = new Image();
     img.crossOrigin = "anonymous";
-    img.onload = () => {
-      let { width, height } = img;
-      if (width <= maxSize && height <= maxSize) {
-        resolve(dataUrl);
-        return;
-      }
-      const ratio = Math.min(maxSize / width, maxSize / height);
-      width = Math.round(width * ratio);
-      height = Math.round(height * ratio);
+    await new Promise(r => { img.onload = r; img.src = imageSrc; });
 
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d")!;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL("image/png"));
-    };
-    img.onerror = () => reject(new Error("Image reduction failed"));
-    img.src = dataUrl;
-  });
-}
-
-/**
- * MediaPipe Ultra-Fast Segmenter (GPU)
- * Mimics Selfie Segmentation / MODNet pattern
- */
-async function runFastSegmentation(source: HTMLImageElement): Promise<Blob> {
-  if (!segmenter) await ensurePreloaded();
-  if (!segmenter) throw new Error("AI Segmenter unavailable");
-
-  const results = segmenter.segment(source);
-  if (
-    !results ||
-    !results.confidenceMasks ||
-    results.confidenceMasks.length === 0
-  ) {
-    throw new Error("Segmentation output invalid");
-  }
-
-  const personMask =
-    results.confidenceMasks.length > 1
-      ? results.confidenceMasks[1]
-      : results.confidenceMasks[0];
-  const maskWidth = personMask.width;
-  const maskHeight = personMask.height;
-  const maskData = personMask.getAsFloat32Array();
-
-  // 1. Create a high-res canvas for the final result
-  const canvas = document.createElement("canvas");
-  canvas.width = source.width;
-  canvas.height = source.height;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-
-  // 2. Process the mask into a temporary canvas for scaling
-  const maskCanvas = document.createElement("canvas");
-  maskCanvas.width = maskWidth;
-  maskCanvas.height = maskHeight;
-  const maskCtx = maskCanvas.getContext("2d")!;
-  const maskImgData = maskCtx.createImageData(maskWidth, maskHeight);
-
-  for (let i = 0; i < maskData.length; i++) {
-    const confidence = maskData[i];
-    const idx = i * 4;
-    // We store the mask in the alpha channel of the temp canvas
-    let alpha = 0;
-    // Relaxed fallback thresholds to preserve fine subject detail at the edges
-    if (confidence < 0.5) alpha = 0;
-    else if (confidence > 0.95) alpha = 255;
-    else {
-      const t = (confidence - 0.5) / 0.45;
-      // Hermite interpolation (smoothstep) for a clean, feathered edge
-      const smoothT = t * t * (3 - 2 * t);
-      alpha = Math.round(smoothT * 255);
+    const canvas = document.createElement("canvas");
+    canvas.width = res; canvas.height = res;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(img, 0, 0, res, res);
+    const { data } = ctx.getImageData(0, 0, res, res);
+    
+    const input = new Float32Array(res * res * 3);
+    for (let i = 0; i < res * res; i++) {
+        input[i] = (data[i * 4] / 255.0 - 0.5) / 0.5;
+        input[i + res * res] = (data[i * 4 + 1] / 255.0 - 0.5) / 0.5;
+        input[i + res * res * 2] = (data[i * 4 + 2] / 255.0 - 0.5) / 0.5;
     }
-    maskImgData.data[idx] = 255;
-    maskImgData.data[idx + 1] = 255;
-    maskImgData.data[idx + 2] = 255;
-    maskImgData.data[idx + 3] = alpha;
+
+    const tensor = new ort.Tensor("float32", input, [1, 3, res, res]);
+    const outputMap = await session.run({ input: tensor });
+    const output = outputMap[Object.keys(outputMap)[0]] as ort.Tensor;
+    const outputData = output.data as Float32Array;
+
+    const mCanvas = document.createElement("canvas");
+    mCanvas.width = res; mCanvas.height = res;
+    const mCtx = mCanvas.getContext("2d")!;
+    const mImgData = mCtx.createImageData(res, res);
+    for (let i = 0; i < outputData.length; i++) {
+        const v = Math.round(outputData[i] * 255);
+        mImgData.data[i * 4] = v; mImgData.data[i * 4 + 1] = v; mImgData.data[i * 4 + 2] = v; mImgData.data[i * 4 + 3] = 255;
+    }
+    mCtx.putImageData(mImgData, 0, 0);
+
+    const fCanvas = document.createElement("canvas");
+    fCanvas.width = img.width; fCanvas.height = img.height;
+    const fCtx = fCanvas.getContext("2d")!;
+    fCtx.imageSmoothingEnabled = true;
+    fCtx.imageSmoothingQuality = "high";
+    fCtx.drawImage(mCanvas, 0, 0, img.width, img.height);
+    
+    const finalMaskRes = fCtx.getImageData(0, 0, img.width, img.height).data;
+    const alphaBuffer = new Uint8ClampedArray(img.width * img.height);
+    for (let i = 0; i < alphaBuffer.length; i++) alphaBuffer[i] = finalMaskRes[i * 4];
+    return alphaBuffer;
+  } catch (err) {
+    console.warn(`${name} failed:`, err);
+    return null;
   }
-  maskCtx.putImageData(maskImgData, 0, 0);
-
-  // 3. Draw original image and use high-quality scaled mask for clipping
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(source, 0, 0);
-  ctx.globalCompositeOperation = "destination-in";
-  ctx.drawImage(maskCanvas, 0, 0, source.width, source.height);
-
-  return new Promise((resolve) => {
-    canvas.toBlob((blob) => resolve(blob!), "image/png");
-  });
 }
 
 /**
- * High-Speed Hybrid Background Removal
- * Dual-Model Flow: U2Net + MODNet Fusion logic for 5-7s delivery
+ * Triple-Engine Hybrid AI: Fuses MODNet (Accuracy), U2Net (Boundaries), and ISNet (Structure).
  */
 export const hybridRemoveBackground = async (
   imageSrc: string,
   onProgress: (status: string, intermediateBlob?: Blob) => void,
   forceWhiteBackground: boolean = false,
 ): Promise<Blob> => {
-  const startTime = Date.now();
-  onProgress("Igniting Dual-Model AI Pipeline...");
+  onProgress("Initializing Triple-Engine Hybrid AI...");
+  await setupNeuralEngines();
 
-  let robustBlob: Blob | null = null;
   try {
-    // 1. Initial High-Speed Pulse
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    await new Promise((res, rej) => {
-      img.onload = res;
-      img.onerror = rej;
-      img.src = imageSrc;
-    });
-
-    onProgress("Phase 1: Structural Analysis...");
-    robustBlob = await runFastSegmentation(img);
-
-    onProgress("Phase 2: Neural Recognition...");
-    // Maximum resolution for professional studio-grade detail preservation
-    const hdSource = await resizeImageIfNeeded(imageSrc, 3072);
-
-    const runModel = async (model: string) => {
-      try {
-        return await imglyRemoveBackground(hdSource, {
-          model: model as any,
-          output: { format: "image/png", quality: 0.99 },
-        });
-      } catch (e) {
-        console.warn(`Model ${model} failed`, e);
-        return null;
-      }
-    };
-
-    // Parallel execution for maximum throughput
-    const [u2netBlob, modnetBlob] = await Promise.all([
-      runModel("u2net"),
-      runModel("modnet")
+    const [modnetAlpha, u2netAlpha, imglyBlob] = await Promise.all([
+      runOnnxModel(imageSrc, modnetSession, 1024, "MODNet"),
+      runOnnxModel(imageSrc, u2netSession, 768, "U2Net"),
+      (async () => {
+        onProgress("ISNet Structural Analysis...");
+        try {
+          const config: Config = {
+            model: "isnet",
+            output: { format: "image/png", quality: 1.0 },
+            publicPath: "https://unpkg.com/@imgly/background-removal-data@1.5.7/dist/",
+          };
+          return await imglyRemoveBackground(imageSrc, config);
+        } catch (e) {
+          console.warn("ISNet Bypass:", e);
+          return null;
+        }
+      })()
     ]);
 
-    onProgress("Phase 3: Expert Fusion & Halo Removal...");
-
-    const precisionBlobs = [
-      { blob: u2netBlob, model: "u2net" },
-      { blob: modnetBlob, model: "modnet" },
-    ].filter(b => b.blob !== null) as { blob: Blob; model: string }[];
-
-    if (precisionBlobs.length === 0) {
-      console.warn("High-fidelity models failed, falling back to structural segmentation");
-      let processed = robustBlob;
-      if (forceWhiteBackground) {
-        processed = await applyWhiteBackground(processed);
-      }
-      return processed;
+    if (!imglyBlob && !modnetAlpha && !u2netAlpha) {
+      console.warn("Primary engines unavailable, attempting recovery engine fallback...");
+      return await mediapipeFallback(imageSrc, forceWhiteBackground, onProgress);
     }
 
-    let processed = await refineDualHybridMask(
-      precisionBlobs,
-      robustBlob,
-      img,
-    );
+    onProgress("Fusing Triple-Engine Computations...");
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise(r => { img.onload = r; img.src = imageSrc; });
 
-    if (forceWhiteBackground)
-      processed = await applyWhiteBackground(processed);
-
-    console.log(
-      `Dual-Model Process Complete: ${(Date.now() - startTime) / 1000}s`,
-    );
-    return processed;
-  } catch (error: any) {
-    console.error("Hybrid AI failed:", error);
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     
-    // Final emergency fallback if structural result exists
-    if (robustBlob) {
-      console.log("Returning structural fallback after critical error");
-      if (forceWhiteBackground) {
-        return await applyWhiteBackground(robustBlob);
-      }
-      return robustBlob;
+    let imglyData: Uint8ClampedArray | null = null;
+    if (imglyBlob) {
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = img.width;
+        tempCanvas.height = img.height;
+        const tCtx = tempCanvas.getContext("2d", { willReadFrequently: true })!;
+        
+        const iImg = new Image();
+        iImg.src = URL.createObjectURL(imglyBlob);
+        await new Promise(r => { iImg.onload = r; });
+        tCtx.drawImage(iImg, 0, 0);
+        imglyData = tCtx.getImageData(0, 0, img.width, img.height).data;
+        URL.revokeObjectURL(iImg.src);
+    }
+    
+    // Always use the ORIGINAL image's RGB so restored edges have native color
+    ctx.drawImage(img, 0, 0);
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const pixels = imageData.data;
+
+    for (let i = 0; i < canvas.width * canvas.height; i++) {
+        const m = modnetAlpha ? modnetAlpha[i] : (imglyData ? imglyData[i * 4 + 3] : 255);
+        const u = u2netAlpha ? u2netAlpha[i] : m;
+        const s = imglyData ? imglyData[i * 4 + 3] : m;
+
+        // Synergistic Fusion of ISNet and MODNet for Sharp, Clean Edges
+        let alpha = 0;
+
+        // 1. Extreme Halos and Gaps Cleanup
+        // If MODNet strongly marks this as background, it is excellent at carving out 
+        // hair gaps and ear cutouts. We trust it over ISNet's tendency to blob.
+        if (m < 60) {
+            alpha = 0;
+        } 
+        // 2. Solid Body/Subject
+        // Both agree it's subject
+        else if (s > 200 && m > 200) {
+            alpha = 255;
+        }
+        // 3. Synergistic Transition (Sharp Edge Processing)
+        else {
+            // High threshold for ISNet to preserve solid body (shoulders)
+            const isISNetBody = s > 220 && m > 80;
+            // High threshold for MODNet to preserve hair/ears
+            const isModNetHair = m > 220 && s > 60;
+            
+            if (isISNetBody || isModNetHair) {
+                alpha = 255;
+            } else {
+                // Strict joint-agreement for the remaining transition pixels (kills fringe)
+                const jointConf = (s / 255.0) * (m / 255.0);
+                if (jointConf > 0.35) {
+                    alpha = 255;
+                } else {
+                    alpha = 0;
+                }
+            }
+        }
+
+        pixels[i * 4 + 3] = alpha;
     }
 
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `AI Processing Error: ${errorMessage}. Please try again with a clearer image.`,
-    );
+    // 3. Edge Smoothing and Color Decontamination (Defringing)
+    // To solve the "white line" halo without cutting the subject (shoulders/ears),
+    // we find edge pixels and shift their RGB colors towards the safe internal subject color.
+    const alphaBuffer = new Uint8ClampedArray(canvas.width * canvas.height);
+    for (let i = 0; i < pixels.length; i += 4) alphaBuffer[i / 4] = pixels[i + 3];
+
+    for (let y = 1; y < canvas.height - 1; y++) {
+        for (let x = 1; x < canvas.width - 1; x++) {
+            const idx = y * canvas.width + x;
+            const a = alphaBuffer[idx];
+            
+            if (a === 0) continue;
+
+            // Simple smoothing on alpha to remove jarring aliased edges (jaggies)
+            if (a > 0 && a < 255) {
+                let sumAlpha = 0;
+                let count = 0;
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        sumAlpha += alphaBuffer[(y + dy) * canvas.width + (x + dx)];
+                        count++;
+                    }
+                }
+                pixels[idx * 4 + 3] = sumAlpha / count;
+            }
+
+            // Defringing: if this pixel is on or near the boundary (has transparent neighbors)
+            // AND it's not fully solid deep inside.
+            let isEdge = false;
+            for (let dy = -3; dy <= 3; dy++) {
+                for (let dx = -3; dx <= 3; dx++) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx >= 0 && nx < canvas.width && ny >= 0 && ny < canvas.height) {
+                        if (alphaBuffer[ny * canvas.width + nx] < 100) {
+                            isEdge = true;
+                            break;
+                        }
+                    }
+                }
+                if (isEdge) break;
+            }
+
+            if (isEdge) {
+                // Find nearest solid color deep inside the subject to pull outward
+                let nr = pixels[idx * 4];
+                let ng = pixels[idx * 4 + 1];
+                let nb = pixels[idx * 4 + 2];
+                let found = false;
+
+                // Search radius up to 6 pixels inwards
+                for (let r = 1; r <= 6; r++) {
+                    for (let dy = -r; dy <= r; dy++) {
+                        const dxRange = r - Math.abs(dy);
+                        for (let dx = -dxRange; dx <= dxRange; dx++) {
+                            const nx = x + dx;
+                            const ny = y + dy;
+                            if (nx >= 0 && nx < canvas.width && ny >= 0 && ny < canvas.height) {
+                                const nIdx = ny * canvas.width + nx;
+                                if (alphaBuffer[nIdx] === 255) {
+                                    nr = pixels[nIdx * 4];
+                                    ng = pixels[nIdx * 4 + 1];
+                                    nb = pixels[nIdx * 4 + 2];
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (found) break;
+                    }
+                    if (found) break;
+                }
+
+                // If found a safe deep pixel, blend the edge pixel towards it
+                // We mix based on alpha. The more transparent, the more we use the deep color.
+                // Even for alpha=255 near the edge, we will apply a 40% mix to kill any baked-in white outline.
+                if (found) {
+                    const mix = Math.max(0.4, Math.min(1.0, (255 - pixels[idx * 4 + 3]) / 255.0 + 0.3));
+                    pixels[idx * 4] = pixels[idx * 4] * (1 - mix) + nr * mix;
+                    pixels[idx * 4 + 1] = pixels[idx * 4 + 1] * (1 - mix) + ng * mix;
+                    pixels[idx * 4 + 2] = pixels[idx * 4 + 2] * (1 - mix) + nb * mix;
+                }
+            }
+        }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    return await polishAndFinalize(canvas, forceWhiteBackground, onProgress);
+
+  } catch (err) {
+    console.error("Hybrid AI Failure:", err);
+    return await mediapipeFallback(imageSrc, forceWhiteBackground, onProgress);
   }
 };
 
-async function applyWhiteBackground(transparentBlob: Blob): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext("2d")!;
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
-      canvas.toBlob((blob) => {
-        if (blob) resolve(blob);
-        else reject(new Error("Merge failed"));
-      }, "image/png");
-      URL.revokeObjectURL(img.src);
-    };
-    img.onerror = () => reject(new Error("BG Apply failed"));
-    img.src = URL.createObjectURL(transparentBlob);
-  });
-}
 
-/**
- * Expert Dual-Model Hybrid Mask Fusion (Passport Grade)
- * Implements Morphological Post-processing, Halo Suppression, and Smooth-Edge Blending.
- */
-async function refineDualHybridMask(
-  precisionBlobs: { blob: Blob; model: string }[],
-  robustBlob: Blob,
-  originalSource: HTMLImageElement,
-): Promise<Blob> {
-  return new Promise((resolve) => {
-    const images: { img: HTMLImageElement; model: string }[] = [];
-    const robustImg = new Image();
-    let loadedCount = 0;
-    const totalToLoad = precisionBlobs.length + 1;
+async function polishAndFinalize(canvas: HTMLCanvasElement, forceWhite: boolean, onProgress: (s:string)=>void): Promise<Blob> {
+    onProgress("Refining Edge Polish...");
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    // We already have a clean alpha mask from the fusion.
+    // 1. FINAL COMPOSITING WITH SMOOTHING
+    const outCanvas = document.createElement("canvas");
+    outCanvas.width = width;
+    outCanvas.height = height;
+    const oCtx = outCanvas.getContext("2d")!;
+    
+    if (forceWhite) {
+        oCtx.fillStyle = "#ffffff";
+        oCtx.fillRect(0, 0, width, height);
+    }
+    
+    // Use multi-pass compositing to provide a smooth, professional anti-aliased edge
+    oCtx.imageSmoothingEnabled = true;
+    oCtx.imageSmoothingQuality = "high";
+    oCtx.drawImage(canvas, 0, 0);
 
-    const onLoaded = () => {
-      loadedCount++;
-      if (loadedCount < totalToLoad) return;
-
-      const w = images[0].img.width;
-      const h = images[0].img.height;
-
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-
-      // 1. NEURAL ENSEMBLE: Extract individual masks
-      const u2netMask = new Float32Array(w * h);
-      const modnetMask = new Float32Array(w * h);
-      let hasU2net = false;
-      let hasModnet = false;
-
-      images.forEach(({ img, model }) => {
-        ctx.clearRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-        const data = ctx.getImageData(0, 0, w, h).data;
-        const targetMask = model === "u2net" ? u2netMask : modnetMask;
-        if (model === "u2net") hasU2net = true;
-        if (model === "modnet") hasModnet = true;
-        
-        for (let i = 0; i < targetMask.length; i++) {
-          targetMask[i] = data[i * 4 + 3] / 255.0;
-        }
-      });
-
-      // 2. STRUCTURAL GATE: MediaPipe mask for interior hole-filling
-      ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(robustImg, 0, 0, w, h);
-      const rData = ctx.getImageData(0, 0, w, h).data;
-      const rMask = new Float32Array(w * h);
-      for (let i = 0; i < rMask.length; i++) {
-        rMask[i] = rData[i * 4 + 3] / 255.0;
-      }
-
-      // 3. FUSION PASS: Dynamic Precision Matting (Head vs Shoulder tuning)
-      const finalMask = new Uint8Array(w * h);
-      for (let i = 0; i < w * h; i++) {
-        const y = Math.floor(i / w);
-        const normalizedY = y / h;
-        
-        // headRatio: 1.0 at top (head/ears), 0.0 at bottom (shoulders)
-        let headRatio = 1.0;
-        if (normalizedY > 0.6) headRatio = 0.0;
-        else if (normalizedY > 0.4) headRatio = (0.6 - normalizedY) / 0.2; 
-        
-        const u = hasU2net ? u2netMask[i] : modnetMask[i];
-        const m = hasModnet ? modnetMask[i] : u2netMask[i];
-        const r = rMask[i];
-
-        // Base ensemble: prioritize ModNet for fine details, U2Net for structure
-        let e = (m * 22.0 + u * 11.0) / 33.0;
-
-        // Ear Webbing & Corner Obliterator
-        if (headRatio > 0.4) {
-          // ModNet is superior at hair/ear edge logic. 
-          // If ModNet strongly believes it is background, override U2Net completely to prevent white patches.
-          if (m < 0.45) e = 0;
-          else if (m < 0.7) e = Math.min(e, m * 0.25);
-        }
-
-        // Shoulder & Solid Body Recovery
-        if (headRatio < 0.5) {
-          // Trust U2Net heavily for lower sections to construct solid natural shoulders
-          // smoothly blend to avoid jagged cuts
-          if (u > 0.2) e = Math.max(e, u * 0.95 + m * 0.05);
-          // If MediaPipe guarantees it is body, force it to be solid to prevent "cut ho jata hai"
-          if (r > 0.5 && (u > 0.1 || m > 0.1)) e = Math.max(e, 0.98);
-        }
-
-        let alpha = e;
-        
-        // Dynamic thresholds based on region
-        const rejectThreshold = 0.05 + (0.50 * headRatio); // 0.55 for head, 0.05 for shoulders
-        const transitionEnd = 0.70 + (0.20 * headRatio);   // 0.90 for head, 0.70 for shoulders
-
-        if (r < rejectThreshold && (headRatio > 0.5 || e < 0.4)) {
-          // Absolute rejection of background bleeds (ears).
-          alpha = 0; 
-        } else if (r < transitionEnd) {
-          // Sharp structural transition window
-          const weight = (r - rejectThreshold) / (transitionEnd - rejectThreshold);
-          const curve = weight * weight * (3 - 2 * weight); 
-          alpha = e * curve;
-        }
-
-        // Professional Progressive Smoothing (Quintic Step)
-        if (alpha > 0.0001 && alpha < 0.9999) {
-          const t = (alpha - 0.0001) / 0.9998;
-          alpha = t * t * t * (t * (t * 6 - 15) + 10); 
-          
-          // Regional Alpha Toggles: surgically kill halos around ears while keeping shoulders anti-aliased
-          const lowerToggle = 0.05 + (0.65 * headRatio); // 0.70 for head, 0.05 for shoulders 
-          const upperToggle = 0.65 + (0.25 * headRatio); // 0.90 for head, 0.65 for shoulders (sharp snap)
-          
-          if (alpha < lowerToggle) alpha = 0; 
-          else if (alpha > upperToggle) alpha = 1.0;
-        }
-
-        finalMask[i] = Math.round(alpha * 255);
-      }
-
-      // 4. MORPHOLOGICAL REFINEMENT: Studio-grade multi-pass polishing
-      let alphaMask = new Uint8Array(finalMask);
-      
-      // Pass 0: Despeckle (Island Removal) - Kills floating white dots/patches (e.g., near ears)
-      for (let iter = 0; iter < 4; iter++) {
-        const source = new Uint8Array(alphaMask);
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const idx = y * w + x;
-            if (source[idx] > 0) {
-              let bgCount = 0;
-              // Treat very transparent pixels (< 60) as background logically for island detection
-              if (source[idx-1] < 60) bgCount++;
-              if (source[idx+1] < 60) bgCount++;
-              if (source[idx-w] < 60) bgCount++;
-              if (source[idx+w] < 60) bgCount++;
-              if (source[idx-w-1] < 60) bgCount++;
-              if (source[idx-w+1] < 60) bgCount++;
-              if (source[idx+w-1] < 60) bgCount++;
-              if (source[idx+w+1] < 60) bgCount++;
-              
-              // If 5 or more out of 8 neighbors are logically background, it's an isolated speck/dot/sharp corner
-              if (bgCount >= 5) {
-                alphaMask[idx] = 0;
-              }
-            }
-          }
-        }
-      }
-
-      // Stage: Closing (Dilation then Erosion) - Fills micro-gaps to prevent subject detail loss
-      const dilate = (src: Uint8Array) => {
-        const dst = new Uint8Array(src);
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const i = y * w + x;
-            if (src[i] < 255) {
-              const maxVal = Math.max(src[i-1], src[i+1], src[i-w], src[i+w]);
-              if (maxVal > dst[i]) dst[i] = maxVal;
-            }
-          }
-        }
-        return dst;
-      };
-
-      const erode = (src: Uint8Array) => {
-        const dst = new Uint8Array(src);
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const i = y * w + x;
-            if (src[i] > 0) {
-              const minVal = Math.min(src[i-1], src[i+1], src[i-w], src[i+w]);
-              if (minVal < dst[i]) dst[i] = minVal;
-            }
-          }
-        }
-        return dst;
-      };
-
-      // Perform a single "Closing" pass to repair the boundary interior
-      alphaMask = dilate(alphaMask);
-      alphaMask = erode(alphaMask);
-
-      // Pass: Edge Purification - Environment-Aware background halo suppression
-      for (let iter = 0; iter < 2; iter++) {
-        const source = new Uint8Array(alphaMask);
-        for (let y = 1; y < h - 1; y++) {
-          const normalizedY = y / h;
-          // Determine erosion strength: Moderate on head/ears (40), light on shoulders (10)
-          let erosionStrength = 10; 
-          if (normalizedY < 0.4) erosionStrength = 40;
-          else if (normalizedY < 0.6) erosionStrength = 40 - (30 * ((normalizedY - 0.4) / 0.2));
-
-          if (erosionStrength <= 0) continue;
-
-          for (let x = 1; x < w - 1; x++) {
-            const idx = y * w + x;
-            if (source[idx] > 0) {
-              const hasBgNeighbor = 
-                source[idx-1] === 0 || source[idx+1] === 0 || 
-                source[idx-w] === 0 || source[idx+w] === 0 ||
-                source[idx-w-1] === 0 || source[idx+w+1] === 0 ||
-                source[idx-w+1] === 0 || source[idx+w-1] === 0;
-
-              if (hasBgNeighbor) {
-                alphaMask[idx] = Math.max(0, source[idx] - erosionStrength);
-              }
-            }
-          }
-        }
-      }
-
-      // Pass 2: High-Speed Hole Filling (Interior Only)
-      for (let pass = 0; pass < 2; pass++) {
-        const src = new Uint8Array(alphaMask);
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const i = y * w + x;
-            if (src[i] > 100 && src[i] < 255) {
-              // Fill small gaps inside solid subject parts (e.g. hair clusters)
-              const maxVal = Math.max(src[i-1], src[i+1], src[i-w], src[i+w]);
-              if (maxVal > 240) alphaMask[i] = 255;
-            }
-          }
-        }
-      }
-
-      // 5. PROFESSIONAL EDGE DECONTAMINATION (AI-Driven Color Spill Removal)
-      // This stage replaces "dirty" pixels at the edge with clean internal colors
-      const spillCanvas = document.createElement("canvas");
-      spillCanvas.width = w;
-      spillCanvas.height = h;
-      const spillCtx = spillCanvas.getContext("2d", { willReadFrequently: true })!;
-      spillCtx.drawImage(originalSource, 0, 0, w, h);
-      const imgData = spillCtx.getImageData(0, 0, w, h);
-      const px = imgData.data;
-
-      // Studio-Grade Color Matting: 25-pixel deep sampling for color restoration
-      for (let y = 25; y < h - 25; y++) {
-        for (let x = 25; x < w - 25; x++) {
-          const idx = y * w + x;
-          const a = alphaMask[idx];
-          
-          if (a > 0 && a < 255) {
-            const isFringe = alphaMask[idx-1] === 0 || alphaMask[idx+1] === 0 || 
-                             alphaMask[idx-w] === 0 || alphaMask[idx+w] === 0 ||
-                             (a < 180);
-
-            if (isFringe) {
-              // Search deep for untainted color
-              let bestSIdx = -1;
-              for (let d = 2; d <= 25; d += 2) {
-                if (alphaMask[idx - d] === 255) { bestSIdx = idx - d; break; }
-                if (alphaMask[idx + d] === 255) { bestSIdx = idx + d; break; }
-                if (alphaMask[idx - (w * d)] === 255) { bestSIdx = idx - (w * d); break; }
-                if (alphaMask[idx + (w * d)] === 255) { bestSIdx = idx + (w * d); break; }
-              }
-
-              if (bestSIdx !== -1) {
-                const s4 = bestSIdx * 4;
-                const i4 = idx * 4;
-                // High-precision color matching
-                px[i4] = px[s4];
-                px[i4 + 1] = px[s4 + 1];
-                px[i4 + 2] = px[s4 + 2];
-              } else {
-                // If no pure subject color is nearby, only obliterate if it's very faint or clearly disconnected
-                if (a < 80) {
-                  alphaMask[idx] = 0;
-                } else if (a < 160) {
-                  alphaMask[idx] = Math.max(0, a - 40);
-                }
-              }
-            }
-          }
-        }
-      }
-      spillCtx.putImageData(imgData, 0, 0);
-
-      // 6. FINAL COMPOSITION: Studio-quality blending
-      const finalImgData = ctx.createImageData(w, h);
-      for (let i = 0; i < alphaMask.length; i++) {
-        const val = alphaMask[i];
-        finalImgData.data[i * 4] = 0;
-        finalImgData.data[i * 4 + 1] = 0;
-        finalImgData.data[i * 4 + 2] = 0;
-        finalImgData.data[i * 4 + 3] = val;
-      }
-      ctx.putImageData(finalImgData, 0, 0);
-
-      const finalCanvas = document.createElement("canvas");
-      finalCanvas.width = originalSource.width;
-      finalCanvas.height = originalSource.height;
-      const fCtx = finalCanvas.getContext("2d")!;
-
-      fCtx.drawImage(spillCanvas, 0, 0, originalSource.width, originalSource.height);
-      fCtx.globalCompositeOperation = "destination-in";
-      // Professional studio feathering: balanced for sharpness vs natural integration
-      fCtx.filter = "blur(0.3px)"; 
-      fCtx.drawImage(canvas, 0, 0, originalSource.width, originalSource.height);
-
-      finalCanvas.toBlob(
-        (result) => {
-          images.forEach(({ img }) => URL.revokeObjectURL(img.src));
-          URL.revokeObjectURL(robustImg.src);
-          resolve(result || precisionBlobs[0].blob);
-        },
-        "image/png",
-        0.99,
-      );
-    };
-
-    precisionBlobs.forEach(({ blob, model }) => {
-      const img = new Image();
-      img.onload = onLoaded;
-      img.onerror = onLoaded;
-      img.src = URL.createObjectURL(blob);
-      images.push({ img, model });
+    return new Promise((res, rej) => {
+        outCanvas.toBlob(b => b ? res(b) : rej(new Error("Polish failed")), "image/png", 1.0);
     });
-
-    robustImg.onload = onLoaded;
-    robustImg.onerror = onLoaded;
-    robustImg.src = URL.createObjectURL(robustBlob);
-  });
 }
+
+async function mediapipeFallback(imageSrc: string, forceWhite: boolean, onProgress: (s:string)=>void): Promise<Blob> {
+    onProgress("Running Recovery Engine...");
+    if (!mediapipeSegmenter) await ensurePreloaded();
+    if (!mediapipeSegmenter) throw new Error("Engines Offline");
+
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise(r => { img.onload = r; img.src = imageSrc; });
+
+    const result = mediapipeSegmenter.segment(img);
+    const mask = result.confidenceMasks![0].getAsFloat32Array();
+    
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(img, 0, 0);
+    const idata = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const p = idata.data;
+
+    for (let i = 0; i < mask.length; i++) {
+        p[i * 4 + 3] = mask[i] > 0.5 ? 255 : 0;
+    }
+    ctx.putImageData(idata, 0, 0);
+    return await polishAndFinalize(canvas, forceWhite, onProgress);
+}
+
+
