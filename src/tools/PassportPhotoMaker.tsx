@@ -40,13 +40,6 @@ type Step = 'crop' | 'edit' | 'print';
 export default function PassportPhotoMaker() {
   const [step, setStep] = useState<Step>('crop');
   
-  // Preload AI on mount to make background removal instant later
-  useEffect(() => {
-    import('../lib/bgRemoval').then(m => {
-      m.ensurePreloaded().catch(console.error);
-    });
-  }, []);
-  
   // Image States
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const initialFilesProcessed = useRef(false);

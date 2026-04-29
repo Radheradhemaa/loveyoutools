@@ -3,7 +3,7 @@ import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2,
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground, ensurePreloaded } from '../lib/bgRemoval';
+import { removeBackground } from '../lib/bgRemoval';
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -12,14 +12,6 @@ export default function BackgroundRemover() {
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [statusText, setStatusText] = useState('');
-  
-  // Preload AI assets quietly in the background after mount
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      ensurePreloaded().catch(console.error);
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -28,8 +20,8 @@ export default function BackgroundRemover() {
       setProcessingError(null);
       interval = setInterval(() => {
         setTimer((prev) => {
-          // Precise timer targeting 18s deep-scan completion
-          if (prev >= 17.8) return 17.8;
+          // Increase limit to 179.8s to match our new global timeout
+          if (prev >= 179.8) return 179.8;
           return prev + 0.1;
         });
       }, 100);
@@ -288,13 +280,6 @@ export default function BackgroundRemover() {
       updateCanvasFromSrc(history[nextIndex]);
     }
   };
-
-  // Removed preload engine model on mount to prevent concurrent loading deadlocks
-
-  // Preload AI models on mount for "instant" feel
-  useEffect(() => {
-    ensurePreloaded();
-  }, []);
 
   const updateCanvasFromSrc = (src: string | null) => {
     const canvas = canvasRef.current;
@@ -1255,17 +1240,23 @@ export default function BackgroundRemover() {
                                 <div 
                                   className="h-full bg-accent transition-all duration-300 ease-out"
                                   style={{ 
-                                    width: statusText.match(/(\d+)%/) ? statusText.match(/(\d+)%/)![0] :
-                                           statusText.includes('Downloading') ? '20%' : 
-                                           statusText.includes('Processing') ? '50%' : 
-                                           statusText.includes('Refining Edges') ? '80%' : 
-                                           statusText.includes('Finalizing') ? '95%' : '5%'
+                                    width: (() => {
+                                      const match = statusText.match(/(\d+)%/);
+                                      if (match) return match[0];
+                                      if (statusText.toLowerCase().includes('initializing')) return '10%';
+                                      if (statusText.toLowerCase().includes('optimizing')) return '20%';
+                                      if (statusText.toLowerCase().includes('modnet')) return '50%';
+                                      if (statusText.toLowerCase().includes('u2net')) return '80%';
+                                      if (statusText.toLowerCase().includes('scanning')) return '90%';
+                                      if (statusText.toLowerCase().includes('finalizing')) return '98%';
+                                      return '5%';
+                                    })()
                                   }}
                                 />
                               </div>
                               <p className="mt-1 text-xs font-bold text-white uppercase tracking-wider">{statusText || 'Removing...'}</p>
-                              <p className="mt-2 text-[10px] text-accent font-bold uppercase tracking-widest">GPU MODNet + U2Net Active</p>
-                              <p className="text-[9px] text-white/50 mt-1 max-w-[150px]">Analyzing 15k+ image gradients for perfect edge extraction...</p>
+                              <p className="mt-2 text-[10px] text-accent font-bold uppercase tracking-widest">MODNet + U2Net Hybrid System</p>
+                              <p className="text-[9px] text-white/50 mt-1 max-w-[150px]">GPU-accelerated dual-architecture for instant results and excellent quality...</p>
                             </div>
                           </div>
                         )}
