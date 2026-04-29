@@ -47,9 +47,8 @@ async function runMediaPipeInstant(imageSrc: string): Promise<Blob | null> {
           const data = idata.data;
           for (let i = 0; i < data.length; i += 4) {
             const val = data[i]; 
-            // We turn the mask into a black-and-white alpha channel
-            // Mediapipe mask is typically in the Red channel after drawing to canvas
-            data[i + 3] = val > 128 ? 255 : 0; 
+            // Return soft values for better multi-model merging
+            data[i + 3] = val; 
             data[i] = 255;
             data[i+1] = 255;
             data[i+2] = 255;
@@ -209,10 +208,10 @@ export const removeBackground = async (
     // Stage 1: MediaPipe Instant Pass (Parallel)
     const instantPromise = runMediaPipeInstant(imageSrc);
 
-    // Stage 2: Balanced Model Generation for Speed & Precision
-    // Optimized dimensions for crisp edges on hair and ears while maintaining speed
-    const u2netBlobPromise = resizeImageForAI(imageSrc, 640); 
-    const modnetBlobPromise = resizeImageForAI(imageSrc, 896);
+    // Stage 2: Deep Scene Understanding Resolution
+    // Higher resolution allows the models to better distinguish between subject and complex background objects (chairs, etc).
+    const u2netBlobPromise = resizeImageForAI(imageSrc, 800); 
+    const modnetBlobPromise = resizeImageForAI(imageSrc, 1024);
 
     const [u2netBlob, modnetBlob] = await Promise.all([u2netBlobPromise, modnetBlobPromise]);
     
@@ -235,44 +234,55 @@ export const removeBackground = async (
     });
 
     const applyMaskAndComposite = async (
-      maskBlob: Blob,
+      maskBlob: Blob | Blob[], // Can now take multiple blobs for consensus
       isFinalRefinement: boolean,
     ): Promise<Blob> => {
-      const resultMaskImg = new Image();
-      const maskUrl = URL.createObjectURL(maskBlob);
-      objectUrls.push(maskUrl);
-
-      await new Promise((res, rej) => {
-        resultMaskImg.onload = res;
-        resultMaskImg.onerror = rej;
-        resultMaskImg.src = maskUrl;
-      });
-
       const canvas = document.createElement("canvas");
       canvas.width = highResSource.width;
       canvas.height = highResSource.height;
       const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(resultMaskImg, 0, 0, canvas.width, canvas.height);
+      const blobs = Array.isArray(maskBlob) ? maskBlob : [maskBlob];
+      
+      // Temporary canvas to stack masks
+      const tempCanvas = document.createElement("canvas");
+      tempCanvas.width = canvas.width;
+      tempCanvas.height = canvas.height;
+      const tCtx = tempCanvas.getContext("2d")!;
+
+      for (let i = 0; i < blobs.length; i++) {
+        const mImg = new Image();
+        const url = URL.createObjectURL(blobs[i]);
+        objectUrls.push(url);
+        await new Promise((r) => { mImg.onload = r; mImg.src = url; });
+        
+        if (i === 0) {
+          tCtx.drawImage(mImg, 0, 0, canvas.width, canvas.height);
+        } else {
+          // Multiply/Intersect masks to remove background objects (chairs, etc)
+          // that only one model incorrectly identifies as foreground.
+          tCtx.globalCompositeOperation = "multiply";
+          tCtx.drawImage(mImg, 0, 0, canvas.width, canvas.height);
+          tCtx.globalCompositeOperation = "source-over";
+        }
+      }
+
+      ctx.drawImage(tempCanvas, 0, 0);
 
       if (isFinalRefinement) {
         const idata = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = idata.data;
-        // Anti-Halo & Edge Polish:
-        // 1. Floor at 75: Effectively "eats" inward slightly to remove the classic white background halo.
-        // 2. Ceiling at 165: Ensures white shirts/shoulders stay 100% solid.
-        // 3. Sigmoid curve: Smooths the transition for hair and ears without leaving ghosting.
+        // Anti-Halo & Strict Subject Isolation:
+        // 1. Higher floor (100) to aggressively cut off surviving objects/chairs.
+        // 2. Ceiling at 175 for solid subject preservation (shoulders/shirts).
         for (let i = 0; i < data.length; i += 4) {
           const a = data[i + 3];
-          if (a < 75) {
+          if (a < 100) {
             data[i + 3] = 0; 
-          } else if (a > 165) {
+          } else if (a > 175) {
             data[i + 3] = 255; 
           } else {
-            const t = (a - 75) / 90; // 165 - 75 = 90
-            // Tightened sigmoid for cleaner separation
+            const t = (a - 100) / 75; // 175 - 100 = 75
             const smooth = t * t * (3 - 2 * t);
             data[i + 3] = Math.round(smooth * 255);
           }
@@ -326,25 +336,26 @@ export const removeBackground = async (
       // Stage 2: Parallel Model Generation
       onProgress("Refining with AI Engines...");
       
-      // Wait for both to get the best possible combined effect
-      // but return the first one that fits our quality bar.
-      const [u2netMask, modnetMask] = await Promise.allSettled([u2netPipeline, modnetPipeline]);
+      // Wait for all models to get the best possible consensus
+      // MediaPipe (Person), U2Net (Structure), MODNet (Matting)
+      const [u2netRes, modnetRes, mpRes] = await Promise.allSettled([
+        u2netPipeline, 
+        modnetPipeline,
+        instantPromise
+      ]);
       
       fastResolved = true;
       
-      let bestMask: Blob | null = null;
+      const consensusMasks: Blob[] = [];
       
-      // Prioritize MODNet (Edge Matting) for the final result as it handles hair/ears better
-      if (modnetMask.status === "fulfilled") {
-        bestMask = modnetMask.value;
-      } else if (u2netMask.status === "fulfilled") {
-        bestMask = u2netMask.value;
-      }
+      if (u2netRes.status === "fulfilled") consensusMasks.push(u2netRes.value);
+      if (modnetRes.status === "fulfilled") consensusMasks.push(modnetRes.value);
+      if (mpRes.status === "fulfilled" && mpRes.value) consensusMasks.push(mpRes.value);
 
-      if (!bestMask) throw new Error("Quality AI pipelines failed");
+      if (consensusMasks.length === 0) throw new Error("Quality AI pipelines failed");
 
       onProgress("Final Studio Quality Polish...");
-      return await applyMaskAndComposite(bestMask, true);
+      return await applyMaskAndComposite(consensusMasks, true);
     } catch (e) {
       console.warn("Refinement failed, falling back to instant", e);
       fastResolved = true;
