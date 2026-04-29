@@ -1,191 +1,291 @@
-import { Config } from "@imgly/background-removal";
+import { SelfieSegmentation } from "@mediapipe/selfie_segmentation";
 
 /**
  * Hybrid AI Background Removal System
- * Runs MODNet (Fast) and U2Net (Precision) simultaneously in separate Web Workers
- * for true instant results with zero UI blocking.
+ * 1. MediaPipe (Selfie Segmentation) -> Instant Mask
+ * 2. U2Net Lite (isnet_quint8) -> Precision Structure
+ * 3. MODNet (medium) -> Edge & Matting Polish
  */
+
+// Initialize MediaPipe once
+let selfieSegmentation: SelfieSegmentation | null = null;
+const getSelfieSegmentation = async () => {
+  if (selfieSegmentation) return selfieSegmentation;
+  selfieSegmentation = new SelfieSegmentation({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`,
+  });
+  selfieSegmentation.setOptions({
+    modelSelection: 1, // 0 for general, 1 for landscape/selfie precision
+  });
+  return selfieSegmentation;
+};
+
+async function runMediaPipeInstant(imageSrc: string): Promise<Blob | null> {
+  return new Promise(async (resolve) => {
+    try {
+      const segmenter = await getSelfieSegmentation();
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d")!;
+
+        await segmenter.send({ image: img });
+        
+        // Timeout protection for MediaPipe
+        const timeout = setTimeout(() => resolve(null), 3000);
+
+        segmenter.onResults((results) => {
+          clearTimeout(timeout);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          // Draw the segmentation mask
+          ctx.drawImage(results.segmentationMask, 0, 0, canvas.width, canvas.height);
+          
+          const idata = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const data = idata.data;
+          for (let i = 0; i < data.length; i += 4) {
+            const val = data[i]; 
+            // We turn the mask into a black-and-white alpha channel
+            // Mediapipe mask is typically in the Red channel after drawing to canvas
+            data[i + 3] = val > 128 ? 255 : 0; 
+            data[i] = 255;
+            data[i+1] = 255;
+            data[i+2] = 255;
+          }
+          ctx.putImageData(idata, 0, 0);
+
+          canvas.toBlob((blob) => resolve(blob), "image/png");
+        });
+      };
+      img.onerror = () => resolve(null);
+      img.src = imageSrc;
+    } catch (e) {
+      resolve(null);
+    }
+  });
+}
+
+async function resizeImageForAI(
+  imageSrc: string,
+  maxDim: number,
+): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      if (img.width <= maxDim && img.height <= maxDim) {
+        resolve(null);
+        return;
+      }
+      let w = img.width;
+      let h = img.height;
+      const ratio = Math.min(maxDim / w, maxDim / h);
+      w = Math.round(w * ratio);
+      h = Math.round(h * ratio);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.95);
+    };
+    img.onerror = () => resolve(null);
+    img.src = imageSrc;
+  });
+}
+
+export const preloadBackgroundRemoval = async (): Promise<void> => {
+  const engineVersion = "1.5.0";
+  const cdnMirrors = [
+    `https://unpkg.com/@imgly/background-removal-data@${engineVersion}/dist/`,
+    `https://cdn.jsdelivr.net/npm/@imgly/background-removal-data@${engineVersion}/dist/`,
+    undefined,
+  ];
+
+  // Pre-warm MediaPipe
+  getSelfieSegmentation().catch(() => {});
+
+  for (const cdn of cdnMirrors) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const worker = new Worker(new URL("./bgWorker.ts", import.meta.url), {
+          type: "module",
+        });
+
+        worker.onmessage = (e) => {
+          if (e.data.type === "preload_success") {
+            worker.terminate();
+            resolve();
+          } else if (e.data.type === "error") {
+            worker.terminate();
+            reject(new Error(e.data.errorMsg));
+          }
+        };
+
+        worker.onerror = (e) => {
+          worker.terminate();
+          reject(new Error(e.message));
+        };
+
+        worker.postMessage({ type: "PRELOAD", modelType: "isnet_quint8", cdn });
+      });
+      return;
+    } catch (e) {
+      console.warn("Preload failed on mirror", cdn, e);
+    }
+  }
+};
+
 export const removeBackground = async (
   imageSrc: string,
   onProgress: (status: string, intermediateBlob?: Blob) => void,
-  forceWhiteBackground: boolean = false,
+  forceWhiteBackground = false,
 ): Promise<Blob> => {
-  onProgress("Initializing Multi-Thread Engine...");
-
-  const engineVersion = "1.5.5";
-  
-  const cdnMirrors = [
-    undefined, // Primary: Use bundled assets if available
-    `https://cdn.jsdelivr.net/npm/@imgly/background-removal@${engineVersion}/dist/`,
-    `https://unpkg.com/@imgly/background-removal@${engineVersion}/dist/`,
-  ];
-
-  // Cleanup pool
   const objectUrls: string[] = [];
-  const cleanup = () => objectUrls.forEach(url => {
-    try { URL.revokeObjectURL(url); } catch (e) {}
+  const cleanup = () => objectUrls.forEach((url) => {
+    try { URL.revokeObjectURL(url); } catch(e) {}
   });
 
   try {
-    onProgress("Optimizing Dual-Res Assets...");
-    const fastBlob = await resizeImageForAI(imageSrc, 512);
-    const qualityBlob = await resizeImageForAI(imageSrc, 1024);
-    
-    const fastSrc = fastBlob ? URL.createObjectURL(fastBlob) : imageSrc;
-    const qualitySrc = qualityBlob ? URL.createObjectURL(qualityBlob) : imageSrc;
-    if (fastBlob) objectUrls.push(fastSrc);
-    if (qualityBlob) objectUrls.push(qualitySrc);
+    onProgress("Initializing Hybrid Multi-Model AI...");
 
-    // We'll return the final quality mask, but trigger intermediate instant mask
-    let instantMaskBlob: Blob | null = null;
-    let highQualityMaskBlob: Blob | null = null;
-
-    // Helper to run a model through mirrors in a worker
     const runWorkerPipeline = async (
-      id: string, 
-      modelType: string, 
+      id: string,
+      modelType: string,
       src: string,
-      isFast: boolean
     ): Promise<Blob> => {
-      let lastError: Error | null = null;
+      const engineVersion = "1.5.0";
+      const cdnMirrors = [
+        `https://unpkg.com/@imgly/background-removal-data@${engineVersion}/dist/`,
+        `https://cdn.jsdelivr.net/npm/@imgly/background-removal-data@${engineVersion}/dist/`,
+        undefined,
+      ];
+
+      let lastError: any = null;
       for (const cdn of cdnMirrors) {
         try {
           return await new Promise<Blob>((resolve, reject) => {
-            const worker = new Worker(new URL('./bgWorker.ts', import.meta.url), { type: 'module' });
-            
-            const timeout = setTimeout(() => {
-              worker.terminate();
-              reject(new Error("Worker Execution Timeout"));
-            }, isFast ? 45000 : 85000);
+            const worker = new Worker(
+              new URL("./bgWorker.ts", import.meta.url),
+              { type: "module" },
+            );
 
             worker.onmessage = (e) => {
-              const { type, step, progress, blob, errorMsg } = e.data;
-              if (type === 'progress') {
-                const percent = Math.round(progress * 100);
-                if (percent % 10 === 0) {
-                  onProgress(`${id} ${cdn ? 'CDN' : 'Native'}: ${percent}%`);
-                }
-              } else if (type === 'success') {
-                clearTimeout(timeout);
+              if (e.data.type === "success") {
                 worker.terminate();
-                resolve(blob);
-              } else if (type === 'error') {
-                clearTimeout(timeout);
+                resolve(e.data.blob);
+              } else if (e.data.type === "error") {
                 worker.terminate();
-                reject(new Error(errorMsg));
+                reject(new Error(e.data.errorMsg));
+              } else if (e.data.type === "progress") {
+                onProgress(`${id}: ${Math.round(e.data.progress * 100)}%`);
               }
             };
-            
+
             worker.onerror = (e) => {
-              clearTimeout(timeout);
               worker.terminate();
               reject(new Error(e.message || "Worker crashed"));
             };
 
-            worker.postMessage({ id, processSrc: src, modelType, cdn });
+            worker.postMessage({
+              type: "PROCESS",
+              id,
+              processSrc: src,
+              modelType,
+              cdn,
+            });
           });
         } catch (e) {
           lastError = e instanceof Error ? e : new Error(String(e));
           continue;
         }
       }
-      throw lastError || new Error(`Pipeline ${id} completely failed.`);
+      throw lastError || new Error(`Pipeline ${id} failed.`);
     };
 
-    // Kick off both pipelines completely simultaneously
-    const fastPipeline = runWorkerPipeline("MODNet Fast", "isnet_quint8", fastSrc, true);
-    const qualityPipeline = runWorkerPipeline("U2Net Precision", "isnet_fp16", qualitySrc, false);
+    // Stage 1: MediaPipe Instant Pass (Parallel)
+    const instantPromise = runMediaPipeInstant(imageSrc);
 
-    // Wait for the fast one first. If it fails, we fall back to waiting for the quality one.
-    try {
-      instantMaskBlob = await fastPipeline;
-      
-      // Perform a rapid "Instant Composite" for zero-lag feedback
-      try {
-        const instantPreview = await compositeSimple(fastSrc, instantMaskBlob);
-        onProgress("Instant AI Result", instantPreview);
-      } catch (e) {
-        console.warn("Instant preview failed", e);
-      }
-      
-      onProgress("Precision Refining...");
-    } catch (e) {
-      console.warn("Fast Pipeline failed, waiting on Quality Pipeline only:", e);
-      onProgress("High-Res Engine Processing...");
-    }
+    // Stage 2: Balanced Model Generation for Speed & Precision
+    // Optimized dimensions for crisp edges on hair and ears while maintaining speed
+    const u2netBlobPromise = resizeImageForAI(imageSrc, 640); 
+    const modnetBlobPromise = resizeImageForAI(imageSrc, 896);
 
-    // Now wait for the heavy one.
-    try {
-      highQualityMaskBlob = await qualityPipeline;
-      onProgress("Precision Analysis Complete...");
-    } catch (e) {
-      console.warn("Quality Pipeline failed:", e);
-      if (!instantMaskBlob) {
-        throw new Error("Both AI engines failed. Check your network or browser settings.");
-      }
-      onProgress("Finalizing with Fast Engine Result...");
-      highQualityMaskBlob = instantMaskBlob; // Fallback
-    }
-
-    onProgress("Polishing Edges...");
+    const [u2netBlob, modnetBlob] = await Promise.all([u2netBlobPromise, modnetBlobPromise]);
     
-    // Choose the best mask we have
-    const finalMask = highQualityMaskBlob || instantMaskBlob!;
-    const maskUrl = URL.createObjectURL(finalMask);
-    objectUrls.push(maskUrl);
-    
-    // Final Compositing: Apply the AI mask to the high-quality source
-    const resultMaskImg = new Image();
+    const u2netSrc = u2netBlob ? URL.createObjectURL(u2netBlob) : imageSrc;
+    const modnetSrc = modnetBlob ? URL.createObjectURL(modnetBlob) : imageSrc;
+    if (u2netBlob) objectUrls.push(u2netSrc);
+    if (modnetBlob) objectUrls.push(modnetSrc);
+
+    onProgress("Tuning AI Engines...");
+
+    const u2netPipeline = runWorkerPipeline("Precision", "isnet_quint8", u2netSrc);
+    const modnetPipeline = runWorkerPipeline("Edge Matting", "medium", modnetSrc);
+
     const highResSource = new Image();
-    highResSource.src = qualitySrc;
+    highResSource.crossOrigin = "anonymous";
+    highResSource.src = imageSrc;
+    await new Promise((res, rej) => {
+      highResSource.onload = res;
+      highResSource.onerror = rej;
+    });
 
-    try {
-      await Promise.all([
-        new Promise((res, rej) => { resultMaskImg.onload = res; resultMaskImg.onerror = rej; resultMaskImg.src = maskUrl; }),
-        new Promise((res, rej) => { highResSource.onload = res; highResSource.onerror = rej; })
-      ]);
-      
+    const applyMaskAndComposite = async (
+      maskBlob: Blob,
+      isFinalRefinement: boolean,
+    ): Promise<Blob> => {
+      const resultMaskImg = new Image();
+      const maskUrl = URL.createObjectURL(maskBlob);
+      objectUrls.push(maskUrl);
+
+      await new Promise((res, rej) => {
+        resultMaskImg.onload = res;
+        resultMaskImg.onerror = rej;
+        resultMaskImg.src = maskUrl;
+      });
+
       const canvas = document.createElement("canvas");
       canvas.width = highResSource.width;
       canvas.height = highResSource.height;
-      
-      const ctx = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D;
-      if (!ctx) throw new Error("Could not initialize canvas context");
-      
-      onProgress("Applying Edge Refining Mask...");
-      
-      // 1. Draw the raw neural mask
-      ctx.drawImage(resultMaskImg, 0, 0, canvas.width, canvas.height); 
-      
-      // 2. Aggressively tighten alpha channel to remove halos and solidify the subject
-      const idata = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = idata.data;
-      const len = data.length;
-      for (let i = 0; i < len; i += 4) {
-        const a = data[i + 3];
-        // Preserve body parts (shoulders, hair) while eliminating background noise
-        if (a < 40) {
-          data[i + 3] = 0;
-        } 
-        // Make sure the main subject is 100% solid, avoiding semi-transparency on the shirt
-        else if (a > 140) {
-          data[i + 3] = 255;
-        } 
-        // Sharp but smooth anti-aliased edge
-        else {
-          data[i + 3] = Math.round(((a - 40) / 100) * 255);
-        }
-      }
-      ctx.putImageData(idata, 0, 0);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 
-      // 3. Overlay the original image using "source-in" to fill the tight mask with pristine colors
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(resultMaskImg, 0, 0, canvas.width, canvas.height);
+
+      if (isFinalRefinement) {
+        const idata = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = idata.data;
+        // Anti-Halo & Edge Polish:
+        // 1. Floor at 75: Effectively "eats" inward slightly to remove the classic white background halo.
+        // 2. Ceiling at 165: Ensures white shirts/shoulders stay 100% solid.
+        // 3. Sigmoid curve: Smooths the transition for hair and ears without leaving ghosting.
+        for (let i = 0; i < data.length; i += 4) {
+          const a = data[i + 3];
+          if (a < 75) {
+            data[i + 3] = 0; 
+          } else if (a > 165) {
+            data[i + 3] = 255; 
+          } else {
+            const t = (a - 75) / 90; // 165 - 75 = 90
+            // Tightened sigmoid for cleaner separation
+            const smooth = t * t * (3 - 2 * t);
+            data[i + 3] = Math.round(smooth * 255);
+          }
+        }
+        ctx.putImageData(idata, 0, 0);
+      }
+
       ctx.globalCompositeOperation = "source-in";
+      // Subtle studio lighting boost
+      ctx.filter = "brightness(1.02) contrast(1.02)";
       ctx.drawImage(highResSource, 0, 0);
-      
-      // Reset composite operation just in case
+      ctx.filter = "none";
       ctx.globalCompositeOperation = "source-over";
-      
-      onProgress("Finalizing Rendering Output...");
 
       if (forceWhiteBackground) {
         const finalCanvas = document.createElement("canvas");
@@ -195,101 +295,64 @@ export const removeBackground = async (
         fCtx.fillStyle = "#ffffff";
         fCtx.fillRect(0, 0, canvas.width, canvas.height);
         fCtx.drawImage(canvas, 0, 0);
-        return await new Promise((res, rej) => {
-          finalCanvas.toBlob(b => b ? res(b) : rej(new Error("Encoding error")), "image/jpeg", 0.98);
-        });
+        return new Promise((res, rej) =>
+          finalCanvas.toBlob(
+            (b) => (b ? res(b) : rej()),
+            "image/jpeg",
+            0.98,
+          ),
+        );
+      }
+      return new Promise((res, rej) =>
+        canvas.toBlob((b) => (b ? res(b) : rej()), "image/png"),
+      );
+    };
+
+    let fastResolved = false;
+
+    // MediaPipe Result Handling
+    instantPromise.then(async (maskBlob) => {
+      if (maskBlob && !fastResolved) {
+        try {
+          const instantResult = await applyMaskAndComposite(maskBlob, false);
+          if (!fastResolved) {
+            onProgress("MediaPipe: Instant Output", instantResult);
+          }
+        } catch (e) {}
+      }
+    });
+
+    try {
+      // Stage 2: Parallel Model Generation
+      onProgress("Refining with AI Engines...");
+      
+      // Wait for both to get the best possible combined effect
+      // but return the first one that fits our quality bar.
+      const [u2netMask, modnetMask] = await Promise.allSettled([u2netPipeline, modnetPipeline]);
+      
+      fastResolved = true;
+      
+      let bestMask: Blob | null = null;
+      
+      // Prioritize MODNet (Edge Matting) for the final result as it handles hair/ears better
+      if (modnetMask.status === "fulfilled") {
+        bestMask = modnetMask.value;
+      } else if (u2netMask.status === "fulfilled") {
+        bestMask = u2netMask.value;
       }
 
-      return await new Promise((res, rej) => {
-        canvas.toBlob(b => b ? res(b) : rej(new Error("Encoding error")), "image/png");
-      });
-    } catch (e) {
-      console.warn("Sub-pixel polish failed, returning AI output", e);
-      return finalMask;
-    }
+      if (!bestMask) throw new Error("Quality AI pipelines failed");
 
+      onProgress("Final Studio Quality Polish...");
+      return await applyMaskAndComposite(bestMask, true);
+    } catch (e) {
+      console.warn("Refinement failed, falling back to instant", e);
+      fastResolved = true;
+      const mask = await instantPromise;
+      if (!mask) throw new Error("All AI pipelines failed");
+      return await applyMaskAndComposite(mask, true);
+    }
   } finally {
     cleanup();
   }
 };
-
-/**
- * Rapid compositing for instant feedback
- */
-async function compositeSimple(srcUrl: string, maskBlob: Blob): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const mask = new Image();
-    const maskUrl = URL.createObjectURL(maskBlob);
-    
-    let loaded = 0;
-    const check = () => {
-      if (++loaded === 2) {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-        
-        ctx.drawImage(mask, 0, 0, canvas.width, canvas.height);
-        
-        const idata = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = idata.data;
-        const len = data.length;
-        for (let i = 0; i < len; i += 4) {
-          const a = data[i + 3];
-          if (a < 40) data[i + 3] = 0;
-          else if (a > 140) data[i + 3] = 255;
-          else data[i + 3] = Math.round(((a - 40) / 100) * 255);
-        }
-        ctx.putImageData(idata, 0, 0);
-
-        ctx.globalCompositeOperation = "source-in";
-        ctx.drawImage(img, 0, 0);
-        
-        URL.revokeObjectURL(maskUrl);
-        canvas.toBlob(b => b ? resolve(b) : reject(), "image/png");
-      }
-    };
-    
-    img.onload = check;
-    mask.onload = check;
-    img.onerror = reject;
-    mask.onerror = reject;
-    img.src = srcUrl;
-    mask.src = maskUrl;
-  });
-}
-
-/**
- * Rapid re-sampler for AI latency reduction
- */
-async function resizeImageForAI(imageSrc: string, maxDim: number): Promise<Blob | null> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      if (img.width <= maxDim && img.height <= maxDim) {
-        resolve(null);
-        return;
-      }
-      
-      let w = img.width;
-      let h = img.height;
-      
-      const ratio = Math.min(maxDim / w, maxDim / h);
-      w = Math.round(w * ratio);
-      h = Math.round(h * ratio);
-      
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d")!;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(img, 0, 0, w, h);
-      
-      canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.9);
-    };
-    img.onerror = () => resolve(null);
-    img.src = imageSrc;
-  });
-}
