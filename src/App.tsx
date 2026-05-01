@@ -1,6 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
-import { useEffect } from 'react';
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import ToolPage from './pages/ToolPage';
@@ -14,15 +13,8 @@ import Disclaimer from './pages/Disclaimer';
 import ScrollToTop from './components/ScrollToTop';
 import FeedbackWidget from './components/FeedbackWidget';
 import { FocusModeProvider } from './contexts/FocusModeContext';
-import { preloadBackgroundRemoval } from './lib/bgRemoval';
 
 export default function App() {
-  useEffect(() => {
-    // Silently preload the background removal AI models
-    // so they are ready instantly when the user needs them.
-    preloadBackgroundRemoval().catch(() => {});
-  }, []);
-
   return (
     <HelmetProvider>
       <FocusModeProvider>

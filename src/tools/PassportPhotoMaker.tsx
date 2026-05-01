@@ -3,7 +3,7 @@ import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Ima
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground } from '../lib/bgRemoval';
+import { hybridRemoveBackground } from '../lib/bgRemoval';
 
 // --- Configuration ---
 const PRESETS = [
@@ -39,6 +39,13 @@ type Step = 'crop' | 'edit' | 'print';
 
 export default function PassportPhotoMaker() {
   const [step, setStep] = useState<Step>('crop');
+  
+  // Preload AI on mount to make background removal instant later
+  useEffect(() => {
+    import('../lib/bgRemoval').then(m => {
+      m.ensurePreloaded().catch(console.error);
+    });
+  }, []);
   
   // Image States
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -188,8 +195,6 @@ export default function PassportPhotoMaker() {
   // Manual Touchup State
   const [isManualMode, setIsManualMode] = useState(false);
   const [brushMode, setBrushMode] = useState<'erase' | 'restore'>('erase');
-  const [brushShape, setBrushShape] = useState<'round' | 'square'>('round');
-  const [brushOffset, setBrushOffset] = useState(false);
   const [brushSize, setBrushSize] = useState(20);
   const [isDrawing, setIsDrawing] = useState(false);
   const touchupCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -255,7 +260,7 @@ export default function PassportPhotoMaker() {
     const scaleY = canvas.height / rect.height;
     
     let clientX, clientY;
-    if ('touches' in e && e.touches.length > 0) {
+    if ('touches' in e) {
       clientX = e.touches[0].clientX;
       clientY = e.touches[0].clientY;
     } else {
@@ -263,14 +268,9 @@ export default function PassportPhotoMaker() {
       clientY = (e as React.MouseEvent).clientY;
     }
 
-    let yOffset = 0;
-    if (brushOffset) {
-       yOffset = 60 * scaleY; // Offset cursor 60 pixels up so finger doesn't block view
-    }
-
     return {
       x: (clientX - rect.left) * scaleX,
-      y: ((clientY - rect.top) * scaleY) - yOffset
+      y: (clientY - rect.top) * scaleY
     };
   };
 
@@ -295,8 +295,8 @@ export default function PassportPhotoMaker() {
     ctx.lineTo(currentPos.x, currentPos.y);
     
     ctx.lineWidth = brushSize;
-    ctx.lineCap = brushShape === 'square' ? 'square' : 'round';
-    ctx.lineJoin = brushShape === 'square' ? 'miter' : 'round';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 
     if (brushMode === 'erase') {
       ctx.globalCompositeOperation = 'destination-out';
@@ -460,7 +460,7 @@ export default function PassportPhotoMaker() {
     setStatusText('Initializing AI Engine...');
     
     try {
-      const rawBlob = await removeBackground(src, async (status, intermediateBlob) => {
+      const rawBlob = await hybridRemoveBackground(src, async (status, intermediateBlob) => {
         setStatusText(status);
         if (intermediateBlob) {
           const url = URL.createObjectURL(intermediateBlob);
@@ -526,7 +526,7 @@ export default function PassportPhotoMaker() {
     });
   };
 
-  const handleRemoveBackground = async () => {
+  const removeBackground = async () => {
     if (!croppedImageSrc) return;
     await removeBackgroundFromSrc(croppedImageSrc);
   };
@@ -1099,7 +1099,7 @@ export default function PassportPhotoMaker() {
                       
                       <div className="flex gap-2 mb-4">
                         <button
-                          onClick={handleRemoveBackground}
+                          onClick={removeBackground}
                           disabled={isProcessing}
                           className="flex-1 py-2.5 px-2 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-gray-800 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-70"
                         >
@@ -1134,28 +1134,6 @@ export default function PassportPhotoMaker() {
                               className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${brushMode === 'restore' ? 'bg-white shadow-sm text-[#e8501a] ring-1 ring-[#e8501a]/30' : 'text-gray-600 hover:bg-gray-200'}`}
                             >
                               Restore
-                            </button>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => setBrushShape('round')}
-                                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${brushShape === 'round' ? 'bg-white shadow-sm text-[#e8501a] ring-1 ring-[#e8501a]/30' : 'text-gray-600 bg-gray-200/50 hover:bg-gray-200'}`}
-                              >
-                                Circle Brush
-                              </button>
-                              <button
-                                onClick={() => setBrushShape('square')}
-                                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${brushShape === 'square' ? 'bg-white shadow-sm text-[#e8501a] ring-1 ring-[#e8501a]/30' : 'text-gray-600 bg-gray-200/50 hover:bg-gray-200'}`}
-                              >
-                                Sharp Pencil
-                              </button>
-                            </div>
-                            <button
-                              onClick={() => setBrushOffset(!brushOffset)}
-                              className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${brushOffset ? 'bg-[#e8501a] text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200'}`}
-                            >
-                              Mobile Offset
                             </button>
                           </div>
                           <div>
