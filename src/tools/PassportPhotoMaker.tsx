@@ -3,7 +3,7 @@ import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Ima
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { hybridRemoveBackground } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval } from '../lib/bgRemoval';
 
 // --- Configuration ---
 const PRESETS = [
@@ -460,7 +460,7 @@ export default function PassportPhotoMaker() {
     setStatusText('Initializing AI Engine...');
     
     try {
-      const rawBlob = await hybridRemoveBackground(src, async (status, intermediateBlob) => {
+      const rawBlob = await runBgRemoval(src, async (status, intermediateBlob) => {
         setStatusText(status);
         if (intermediateBlob) {
           const url = URL.createObjectURL(intermediateBlob);
@@ -1535,7 +1535,7 @@ export default function PassportPhotoMaker() {
                             </div>
                             <div className="text-sm font-bold text-center">{statusText || 'Removing Background...'}</div>
                             <div className="text-[10px] text-[#e8501a] mt-2 text-center max-w-[200px] font-bold">
-                              GPU MODNet + U2Net Lite Engine Active
+                              IS-Net Engine Active
                             </div>
                             <div className="text-[10px] text-gray-400 mt-1 text-center max-w-[200px]">
                               Analyzing 10k+ facial points for perfect edge precision...

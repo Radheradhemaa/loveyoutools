@@ -3,7 +3,7 @@ import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2,
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { hybridRemoveBackground, ensurePreloaded } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded } from '../lib/bgRemoval';
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -382,7 +382,7 @@ export default function BackgroundRemover() {
     const startTime = Date.now();
     
     try {
-      const rawBlob = await hybridRemoveBackground(targetSrc, async (status, intermediateBlob) => {
+      const rawBlob = await runBgRemoval(targetSrc, async (status, intermediateBlob) => {
         setStatusText(status);
         if (intermediateBlob) {
           const url = URL.createObjectURL(intermediateBlob);
@@ -664,7 +664,7 @@ export default function BackgroundRemover() {
   return (
     <ToolLayout
       title="AI Background Remover"
-      description="Remove image backgrounds in 3-5 seconds with professional precision using GPU-accelerated MODNet + U2Net Lite AI."
+      description="Remove image backgrounds with professional precision and extremely high quality using IS-Net AI."
       toolId="background-remover"
       acceptedFileTypes={['image/*']}
       onDownload={downloadImage}
@@ -838,7 +838,7 @@ export default function BackgroundRemover() {
                         <div className="space-y-2">
                           <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Background Removal</label>
                           <p className="text-[10px] text-text-muted px-1">
-                            Ultra-fast hybrid AI processing.
+                            High quality IS-Net AI processing.
                           </p>
                         </div>
 
@@ -1264,7 +1264,7 @@ export default function BackgroundRemover() {
                                 />
                               </div>
                               <p className="mt-1 text-xs font-bold text-white uppercase tracking-wider">{statusText || 'Removing...'}</p>
-                              <p className="mt-2 text-[10px] text-accent font-bold uppercase tracking-widest">GPU MODNet + U2Net Active</p>
+                              <p className="mt-2 text-[10px] text-accent font-bold uppercase tracking-widest">IS-Net Engine Active</p>
                               <p className="text-[9px] text-white/50 mt-1 max-w-[150px]">Analyzing 15k+ image gradients for perfect edge extraction...</p>
                             </div>
                           </div>
