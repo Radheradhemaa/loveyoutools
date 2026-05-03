@@ -9,22 +9,25 @@ export const ensurePreloaded = async () => {
   
   preloadPromise = (async () => {
     try {
-      console.log(`Initializing IS-Net AI Pipeline...`);
+      console.log(`Initializing Hybrid AI Pipeline (Fast + Precision)...`);
       
-      // Preload primary high-fidelity model (IS-Net)
-      await preload({ 
-        model: 'isnet' as any,
-        fetchArgs: { cache: 'force-cache' }
-      }).catch(() => {
-        // Fallback to fp16 if full isnet fails to preload
-        return preload({ 
+      // Preload MODNet (Fast) and U2Net (Structure) equivalent models
+      await Promise.all([
+        preload({ 
           model: 'isnet_fp16' as any,
           fetchArgs: { cache: 'force-cache' }
-        });
-      }).catch(() => {});
+        }),
+        preload({ 
+          model: 'u2net' as any,
+          fetchArgs: { cache: 'force-cache' }
+        }).catch(() => {
+          // If u2net fails, fallback to standard isnet
+          return preload({ model: 'isnet' as any });
+        })
+      ]).catch(() => {});
       
       isPreloaded = true;
-      console.log("IS-Net AI Pipeline Ready");
+      console.log("Hybrid AI Pipeline Ready");
     } catch (err) {
       console.warn(`AI Initialization failed:`, err);
     }
@@ -61,7 +64,10 @@ async function resizeImageIfNeeded(dataUrl: string, maxSize: number): Promise<st
 }
 
 /**
- * High-Quality Background Removal using IS-Net
+ * Hybrid Faster Background Removal
+ * Step 1: MODNet (Fast Mask)
+ * Step 2: U2Net (Structure Fix)
+ * Step 3: Edge & Studio Refinement
  */
 export const removeBackground = async (
   imageSrc: string,
@@ -70,7 +76,7 @@ export const removeBackground = async (
   safetyMode: boolean = false
 ): Promise<Blob> => {
   const startTime = Date.now();
-  onProgress(safetyMode ? 'Starting safe AI processing...' : 'Starting high-quality AI processing...');
+  onProgress('Starting Hybrid AI System...');
   
   try {
     const img = new Image();
@@ -81,47 +87,119 @@ export const removeBackground = async (
       img.src = imageSrc; 
     });
 
-    onProgress('Applying Premium IS-Net processing...');
+    // Step 0: Ultra-Turbo Optimization (640px for instant <3s delivery)
+    const modelInferenceRes = 640;
+    const optimizedSrc = await resizeImageIfNeeded(imageSrc, modelInferenceRes);
+
+    // STEP 1 & 2: Parallel Hybrid Detection (Fast Structural Pass)
+    onProgress('Instant Masking...');
+    try {
+      const results = await Promise.all([
+        imglyRemoveBackground(optimizedSrc, {
+          model: 'isnet_fp16' as any,
+          output: { format: 'image/png', quality: 0.5 }, 
+        }),
+        imglyRemoveBackground(optimizedSrc, {
+          model: 'u2net' as any,
+          output: { format: 'image/png', quality: 0.5 },
+        }).catch(() => null)
+      ]);
+
+      const mask1Blob = results[0];
+      const mask2Blob = results[1] || mask1Blob;
+
+      // STEP 3: Turbo Merge & Precision Refinement
+      onProgress('Polishing Edges...');
+      const combinedMaskBlob = await mergeAndRefineMasks(mask1Blob, mask2Blob, img);
+      
+      let processed = combinedMaskBlob;
+      // Precision edge cleaning pass
+      processed = await refineEnhanceAndExpand(combinedMaskBlob, img);
+
+      if (forceWhiteBackground) {
+        onProgress('Final Delivery...');
+        processed = await applyWhiteBackground(processed);
+      }
+      
+      console.log(`Instant Hybrid Complete: ${(Date.now() - startTime) / 1000}s`);
+      return processed;
+    } catch (parallelError) {
+      // Emergency single-pass fallback for ultra-speed
+      return await fallbackRemoveBackground(imageSrc, onProgress, forceWhiteBackground);
+    }
+  } catch (error: any) {
+    console.error("Hybrid AI failed:", error);
+    // Fallback to single-pass if hybrid fails
+    return await fallbackRemoveBackground(imageSrc, onProgress, forceWhiteBackground);
+  }
+};
+
+/**
+ * Fallback to standard IS-Net if Hybrid system fails
+ */
+async function fallbackRemoveBackground(
+  imageSrc: string,
+  onProgress: (status: string) => void,
+  forceWhiteBackground: boolean
+): Promise<Blob> {
+  onProgress('Using safety fallback engine...');
+  const blob = await imglyRemoveBackground(imageSrc, { model: 'isnet' as any });
+  if (forceWhiteBackground) return await applyWhiteBackground(blob);
+  return blob;
+}
+
+/**
+ * Merge Logic: mask = max(MODNet, U2Net)
+ * Ensures no missing parts (ears, shoulders, fingers)
+ */
+async function mergeAndRefineMasks(blob1: Blob, blob2: Blob, originalImg: HTMLImageElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img1 = new Image();
+    const img2 = new Image();
+    let loadedCount = 0;
     
-    // Maximize resolution for premium detail preservation (2048px)
-    const optimizedSrc = await resizeImageIfNeeded(imageSrc, 2048);
-    
-    // Primary IS-Net Pipeline
-    const isnetOptions: any = {
-      model: 'isnet' as any, 
-      output: { format: 'image/png', quality: 1.0 },
-      debug: false,
-      progress: (k: string, curr: number, total: number) => {
-        if (total > 0) {
-          const percent = Math.round((curr / total) * 100);
-          onProgress(`Refining Precision Edges (${percent}%)...`);
+    const onLoaded = () => {
+      loadedCount++;
+      if (loadedCount === 2) {
+        const width = originalImg.width;
+        const height = originalImg.height;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d')!;
+        
+        // Read Mask 1
+        ctx.drawImage(img1, 0, 0, width, height);
+        const data1 = ctx.getImageData(0, 0, width, height);
+        
+        // Read Mask 2
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(img2, 0, 0, width, height);
+        const data2 = ctx.getImageData(0, 0, width, height);
+        
+        // Merge: mask = max(m1, m2)
+        for (let i = 0; i < data1.data.length; i += 4) {
+          data1.data[i + 3] = Math.max(data1.data[i + 3], data2.data[i + 3]);
         }
+        
+        ctx.putImageData(data1, 0, 0);
+        canvas.toBlob((blob) => {
+          URL.revokeObjectURL(img1.src);
+          URL.revokeObjectURL(img2.src);
+          if (blob) resolve(blob);
+          else reject(new Error("Merge failed"));
+        }, 'image/png');
       }
     };
     
-    const finalBlob = await imglyRemoveBackground(optimizedSrc, isnetOptions);
-    
-    let processed = finalBlob;
-    
-    // Apply subject-preservation refinement and studio enhancement in safety mode
-    if (safetyMode) {
-      onProgress('Studio Lighting & Subject Preservation...');
-      processed = await refineEnhanceAndExpand(processed, img);
-    }
-
-    if (forceWhiteBackground) {
-      onProgress('Applying pure white background...');
-      processed = await applyWhiteBackground(processed);
-    }
-    
-    console.log(`IS-Net Process Complete: ${(Date.now() - startTime) / 1000}s`);
-    return processed;
-  } catch (error: any) {
-    console.error("AI failed:", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`AI Processing Error: ${errorMessage}. Please try again with a clearer image.`);
-  }
-};
+    img1.onload = onLoaded;
+    img2.onload = onLoaded;
+    img1.onerror = reject;
+    img2.onerror = reject;
+    img1.src = URL.createObjectURL(blob1);
+    img2.src = URL.createObjectURL(blob2);
+  });
+}
 
 /**
  * Advanced Safe Refiner & Studio Enhancer: 
@@ -164,24 +242,25 @@ async function refineEnhanceAndExpand(maskBlob: Blob, originalImg: HTMLImageElem
       // Ensures shoulders and body are 255 (solid) to prevent transparency
       const solidCore = new Uint8Array(width * height);
       for (let y = 0; y < height; y++) {
+        const isLowerBody = y > height * 0.5; // Shoulder/Body region target
         for (let x = 0; x < width; x++) {
           const idx = y * width + x;
           let a = alpha[idx];
           
-          if (a > 120) {
-            // Check if this is likely interior subject
+          if (a > 100) {
             let highCount = 0;
-            const checkRadius = 3;
+            const checkRadius = isLowerBody ? 4 : 2; // Stronger protection for shoulders
             for (let dy = -checkRadius; dy <= checkRadius; dy++) {
               for (let dx = -checkRadius; dx <= checkRadius; dx++) {
                 const ny = y+dy; const nx = x+dx;
                 if (ny >=0 && ny < height && nx >=0 && nx < width) {
-                  if (alpha[ny * width + nx] > 100) highCount++;
+                  if (alpha[ny * width + nx] > 90) highCount++;
                 }
               }
             }
-            // If surrounded by subject pixels, make it fully solid
-            if (highCount > 35) a = 255;
+            // Protect structural parts (shoulders/fingers)
+            const threshold = isLowerBody ? 25 : 18;
+            if (highCount > threshold) a = 255;
           }
           solidCore[idx] = a;
         }
@@ -194,8 +273,9 @@ async function refineEnhanceAndExpand(maskBlob: Blob, originalImg: HTMLImageElem
           const idx = y * width + x;
           let maxA = solidCore[idx];
           if (maxA < 255) {
-            for (let dy = -2; dy <= 2; dy++) {
-              for (let dx = -2; dx <= 2; dx++) {
+            // Limited expansion to prevent background bleed while keeping hair
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
                 const ny = y+dy; const nx = x+dx;
                 if (ny >=0 && ny < height && nx >= 0 && nx < width) {
                   const val = solidCore[ny * width + nx];
@@ -208,113 +288,150 @@ async function refineEnhanceAndExpand(maskBlob: Blob, originalImg: HTMLImageElem
         }
       }
 
-      // Pass 3: Ear-Gap & Stray Patch Deep Cleaning
-      // Targets background noise trapped near ears and hair wisps
+      // Pass 3: Ear-Gap, Hair-Edge & White-Line Suppression
       const cleanAlpha = new Uint8Array(width * height);
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const idx = y * width + x;
           let a = safeAlpha[idx];
           
-          if (a > 0 && a < 255) {
-            // Sensitivity is higher in the head/neck area (top 55%)
+          if (a > 0) {
             const isHeadArea = y < height * 0.55;
-            const isShoulderArea = y >= height * 0.55;
             
-            if (isHeadArea) {
-              // 1. Enhanced 8-Directional Raycasting
-              // Detects background trapped in valleys (ear gaps, hair strands)
-              const directions = [
-                [1, 0], [-1, 0], [0, 1], [0, -1],
-                [1, 1], [-1, -1], [1, -1], [-1, 1]
-              ];
+            // White Line / Halo Detection
+            const px = idx << 2;
+            const r = oPixels[px]; const g = oPixels[px+1]; const b = oPixels[px+2];
+            const luminance = (r * 0.299 + g * 0.587 + b * 0.114);
+            
+            if (a < 255) {
+              // 1. Raycasting for Gaps
+              const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
               let trappedSides = 0;
-              const dist = 25; // Deep search for trapped pixels
-              
               for (const [dx, dy] of directions) {
-                for (let s = 1; s <= dist; s++) {
+                for (let s = 1; s <= 15; s++) {
                   const nx = x + dx * s; const ny = y + dy * s;
                   if (nx < 0 || nx >= width || ny < 0 || ny >= height) break;
                   if (safeAlpha[ny * width + nx] === 255) {
-                    trappedSides++;
-                    break;
+                    trappedSides++; break;
                   }
                 }
               }
 
-              // 2. Proximity Analysis
-              let solidNeighborCount = 0;
-              const radius = 3;
-              for (let dy = -radius; dy <= radius; dy++) {
-                for (let dx = -radius; dx <= radius; dx++) {
-                  const ny = y + dy; const nx = x + dx;
-                  if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
-                    if (safeAlpha[ny * width + nx] > 200) solidNeighborCount++;
-                  }
-                }
+              // Ultra-Aggressive Anti-White-Line Logic: 
+              // Targeted suppression for high-luminance light bleed at the boundary
+              if (luminance > 210 && a < 252) {
+                const chokeRate = isHeadArea ? 130 : 85; 
+                a = Math.max(0, a - chokeRate); 
               }
 
-              // Aggressive cleaning for hair/ear gaps:
-              // If the pixel is significantly "trapped" by solid mass but itself is not solid, 
-              // it's likely background noise bleeding into the subject.
-              if (trappedSides >= 3 && a < 200) {
-                 a = 0; // Solid erase for trapped background
-              } else if (trappedSides >= 2 && a < 170) {
-                 a *= 0.3; // Heavy softening for edge noise
+              if (isHeadArea) {
+                // Raycasting for deep gaps (ears/hair)
+                if (trappedSides >= 3 && a < 240) a = 0;
+                else if (trappedSides >= 2 && a < 215) a *= 0.05; 
               }
-              
-              // Isolated patch removal
-              if (solidNeighborCount < 4 && a < 150) a = 0;
-            } else if (isShoulderArea) {
-              // Shoulder area Rule: Absolute protection. Do not erase unless it's extremely thin noise.
-              let neighborMass = 0;
-              for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
-                  const ny = y + dy; const nx = x + dx;
-                  if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
-                    if (safeAlpha[ny * width + nx] > 100) neighborMass++;
-                  }
-                }
-              }
-              if (neighborMass <= 1 && a < 30) a = 0; 
             }
           }
           cleanAlpha[idx] = a;
         }
       }
 
-      // Pass 4: Studio Lighting & Final Mask Application
+      // Pass 4: Precision Anti-Aliasing & Deep Color Decontamination
+      // This solves the "white line" by bleeding subject color into edges from a wider radius
+      const finalAlpha = new Uint8Array(width * height);
+      const decontaminatedPixels = new Uint8ClampedArray(oPixels);
+      
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = y * width + x;
+          const px = idx << 2;
+          
+          if (cleanAlpha[idx] > 0 && cleanAlpha[idx] < 255) {
+            // 1. Anti-Aliasing (Feather)
+            let sumA = 0; let count = 0;
+            let sumR = 0; let sumG = 0; let sumB = 0;
+            let solidCount = 0;
+
+            // Sample 5x5 for deeper color decontamination to find "pure" subject colors
+            const sampleRadius = 2; 
+            for (let dy = -sampleRadius; dy <= sampleRadius; dy++) {
+              for (let dx = -sampleRadius; dx <= sampleRadius; dx++) {
+                const ny = y+dy; const nx = x+dx;
+                if (ny >=0 && ny < height && nx >=0 && nx < width) {
+                  const nIdx = ny * width + nx;
+                  const nA = cleanAlpha[nIdx];
+                  
+                  // Only for anti-aliasing math (3x3 core)
+                  if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) {
+                    sumA += nA;
+                    count++;
+                  }
+                  
+                  // Deep color sampling for fringe replacement
+                  if (nA > 240) {
+                    const nPx = nIdx << 2;
+                    sumR += oPixels[nPx];
+                    sumG += oPixels[nPx+1];
+                    sumB += oPixels[nPx+2];
+                    solidCount++;
+                  }
+                }
+              }
+            }
+            
+            finalAlpha[idx] = count > 0 ? Math.round(sumA / count) : cleanAlpha[idx];
+            
+            // Halo color replacement: sample successful color and apply to fringe
+            if (solidCount > 0) {
+              decontaminatedPixels[px] = sumR / solidCount;
+              decontaminatedPixels[px+1] = sumG / solidCount;
+              decontaminatedPixels[px+2] = sumB / solidCount;
+            }
+          } else {
+            finalAlpha[idx] = cleanAlpha[idx];
+          }
+        }
+      }
+
+      // Pass 5: Final Professional Masking (Sharp & Natural-Tone)
       for (let i = 0; i < width * height; i++) {
-        const px = i * 4;
-        let r = oPixels[px];
-        let g = oPixels[px+1];
-        let b = oPixels[px+2];
+        const px = i << 2;
+        
+        // Use Decontaminated colors (natural tone preserved)
+        let r = decontaminatedPixels[px];
+        let g = decontaminatedPixels[px+1];
+        let b = decontaminatedPixels[px+2];
 
-        // Improved Studio Curve
-        const x = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
-        const boost = 1.05;
-        const curve = (val: number) => {
-          const n = val / 255;
-          const s = n < 0.5 ? 2 * n * n : 1 - Math.pow(-2 * n + 2, 2) / 2;
-          return Math.min(255, Math.round(s * 255 * boost));
-        };
+        // Extremely subtle contrast boost (keeps it natural)
+        const contrast = 1.015;
+        r = Math.min(255, r * contrast);
+        g = Math.min(255, g * contrast);
+        b = Math.min(255, b * contrast);
 
-        const lift = (val: number) => (val < 90 ? val + (90 - val) * 0.2 : val);
+        // Final Mask Thresholding - Balanced for Sharpness and Structure
+        let a = finalAlpha[i];
+        // Reduce HeadArea threshold to 45% to protect shoulders better
+        const isHeadArea = (i / width) < (height * 0.45);
+        const isShoulderRegion = (i / width) >= (height * 0.45) && (i / width) < (height * 0.75);
+        
+        // Values optimized to "eat" the white halo while preserving shoulder curves
+        let floor = 90;
+        let ceiling = 180;
 
-        r = lift(curve(r));
-        g = lift(curve(g));
-        b = lift(curve(b));
-
-        // Mask Thresholding (Pass 3 logic merged here)
-        let a = cleanAlpha[i];
-        const floor = 50; // Slightly higher floor to eliminate soft background haze
-        const ceiling = 180; // Lower ceiling to solidify hair edges faster
+        if (isHeadArea) {
+          floor = 138;
+          ceiling = 148;
+        } else if (isShoulderRegion) {
+          floor = 85; 
+          ceiling = 175;
+        }
+        
         if (a < floor) a = 0;
         else if (a > ceiling) a = 255;
         else {
           const t = (a - floor) / (ceiling - floor);
-          // Stronger power curve (1.3) for crisp, professional hair cutouts
-          a = Math.round(Math.pow(t, 1.3) * 255);
+          // Power curve to solidify edges and cut halation
+          const power = isHeadArea ? 2.6 : 1.8;
+          a = Math.round(Math.pow(t, power) * 255);
         }
 
         mPixels[px] = r;

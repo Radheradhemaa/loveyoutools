@@ -677,14 +677,7 @@ export default function PassportPhotoMaker() {
         // 2. Draw the processed subject
         ctx.drawImage(tempCanvas, 0, 0);
 
-        // 3. Add Border if requested
-        if (hasBorder) {
-          ctx.strokeStyle = '#000000';
-          const thickness = Math.max(4, Math.round(canvas.width / 60));
-          ctx.lineWidth = thickness;
-          // Draw rect slightly inside so the stroke isn't clipped
-          ctx.strokeRect(thickness / 2, thickness / 2, canvas.width - thickness, canvas.height - thickness);
-        }
+        // 3. Add Border removed from here to only show in print layout
         
         if (isMounted) {
           // Use toBlob + createObjectURL for better performance on high-res images
@@ -744,6 +737,14 @@ export default function PassportPhotoMaker() {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(printImageElement, 0, 0, photoWidth, photoHeight);
+        
+        // Add Border for Print Output if requested
+        if (hasBorder) {
+          ctx.strokeStyle = '#000000';
+          const thickness = Math.max(2, Math.round(photoWidth / 60));
+          ctx.lineWidth = thickness;
+          ctx.strokeRect(thickness / 2, thickness / 2, photoWidth - thickness, photoHeight - thickness);
+        }
         
         const dataURLtoBlob = (dataurl: string) => {
           if (!dataurl || typeof dataurl !== 'string') return new Blob();
@@ -831,6 +832,14 @@ export default function PassportPhotoMaker() {
         const y = startY + r * (photoHeight + margin);
         
         ctx.drawImage(printImageElement, x, y, photoWidth, photoHeight);
+        
+        // Add Border for Print Output if requested
+        if (hasBorder) {
+          ctx.strokeStyle = '#000000';
+          const thickness = Math.max(1.5, Math.round(photoWidth / 60));
+          ctx.lineWidth = thickness;
+          ctx.strokeRect(x + thickness / 2, y + thickness / 2, photoWidth - thickness, photoHeight - thickness);
+        }
         
         if (hasCutLines) {
           ctx.strokeStyle = '#cccccc';
@@ -955,7 +964,7 @@ export default function PassportPhotoMaker() {
                 <img 
                   src={finalImageSrc} 
                   alt="Copy" 
-                  className="w-full h-full object-cover shadow-sm" 
+                  className={`w-full h-full object-cover shadow-sm ${hasBorder ? 'border-[1px] border-black' : ''}`}
                   style={{ imageRendering: 'high-quality' }}
                 />
               </div>

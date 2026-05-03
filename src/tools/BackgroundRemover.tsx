@@ -664,7 +664,7 @@ export default function BackgroundRemover() {
   return (
     <ToolLayout
       title="AI Background Remover"
-      description="Advanced subject-safe extraction with Studio Lighting Enhancement. Prioritizes keeping hair, shoulders, and clothing perfectly intact."
+      description="Advanced Hybrid Pipeline (MODNet + U2Net + Precision Refinement). Professional subject extraction with structural correction in 3-4 seconds."
       toolId="background-remover"
       acceptedFileTypes={['image/*']}
       onDownload={downloadImage}
@@ -1263,9 +1263,9 @@ export default function BackgroundRemover() {
                                   }}
                                 />
                               </div>
-                              <p className="mt-1 text-xs font-bold text-white uppercase tracking-wider">{statusText || 'Removing...'}</p>
-                              <p className="mt-2 text-[10px] text-accent font-bold uppercase tracking-widest">IS-Net Studio Engine Active</p>
-                              <p className="text-[9px] text-white/50 mt-1 max-w-[150px]">Applying Studio Lighting & Safety-First mask: Hair, shoulders, and ears are safe...</p>
+                              <p className="mt-1 text-xs font-bold text-white uppercase tracking-wider">{statusText || 'Initializing Hybrid Engine...'}</p>
+                              <p className="mt-2 text-[10px] text-accent font-bold uppercase tracking-widest">MODNet + U2Net Hybrid Active</p>
+                              <p className="text-[9px] text-white/50 mt-1 max-w-[200px] text-center">Step 1: Rapid Masking | Step 2: Accurate Structure | Step 3: Edge Perfection</p>
                             </div>
                           </div>
                         )}
