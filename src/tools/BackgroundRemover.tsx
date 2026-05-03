@@ -38,7 +38,7 @@ export default function BackgroundRemover() {
     }
     return () => clearInterval(interval);
   }, [isProcessing]);
-  const [bgColor, setBgColor] = useState('transparent');
+  const [bgColor, setBgColor] = useState('#ffffff');
   const [customColor, setCustomColor] = useState('#ffffff');
   
   // Manual Touchup State
@@ -388,7 +388,7 @@ export default function BackgroundRemover() {
           const url = URL.createObjectURL(intermediateBlob);
           setResultImage(url);
         }
-      });
+      }, true, true);
 
       const url = URL.createObjectURL(rawBlob);
       setResultImage(url);
@@ -664,7 +664,7 @@ export default function BackgroundRemover() {
   return (
     <ToolLayout
       title="AI Background Remover"
-      description="Remove image backgrounds with professional precision and extremely high quality using IS-Net AI."
+      description="Advanced subject-safe extraction with Studio Lighting Enhancement. Prioritizes keeping hair, shoulders, and clothing perfectly intact."
       toolId="background-remover"
       acceptedFileTypes={['image/*']}
       onDownload={downloadImage}
@@ -1264,8 +1264,8 @@ export default function BackgroundRemover() {
                                 />
                               </div>
                               <p className="mt-1 text-xs font-bold text-white uppercase tracking-wider">{statusText || 'Removing...'}</p>
-                              <p className="mt-2 text-[10px] text-accent font-bold uppercase tracking-widest">IS-Net Engine Active</p>
-                              <p className="text-[9px] text-white/50 mt-1 max-w-[150px]">Analyzing 15k+ image gradients for perfect edge extraction...</p>
+                              <p className="mt-2 text-[10px] text-accent font-bold uppercase tracking-widest">IS-Net Studio Engine Active</p>
+                              <p className="text-[9px] text-white/50 mt-1 max-w-[150px]">Applying Studio Lighting & Safety-First mask: Hair, shoulders, and ears are safe...</p>
                             </div>
                           </div>
                         )}
