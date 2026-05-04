@@ -128,10 +128,10 @@ async function refineAlphaChannel(blob: Blob): Promise<Blob> {
         alphaBuffer[i / 4] = pixels[i + 3];
       }
 
-      // Step 1: Fast Separable Box Blur on Alpha (Radius = 2) to smooth jagged edges
+      // Step 1: Fast Separable Box Blur on Alpha (Radius = 1) to smooth jagged edges
       const tempAlpha = new Float32Array(w * h);
       const smoothedAlpha = new Float32Array(w * h);
-      const r = 2; // 5x5 blur
+      const r = 1; // 3x3 blur
 
       // Horizontal pass
       for (let y = 0; y < h; y++) {
@@ -168,16 +168,16 @@ async function refineAlphaChannel(blob: Blob): Promise<Blob> {
         let alpha = smoothedAlpha[i / 4] / 255;
         
         // Remove background patches/halos (lower boundary)
-        if (alpha < 0.20) {
+        if (alpha < 0.55) {
           alpha = 0; 
         } 
         // Solidify interior
-        else if (alpha > 0.80) {
+        else if (alpha > 0.85) {
           alpha = 1; 
         } 
         // Smooth transition (edge)
         else {
-          const normalized = (alpha - 0.20) / (0.80 - 0.20);
+          const normalized = (alpha - 0.55) / (0.85 - 0.55);
           // Cubic smoothstep (3x^2 - 2x^3) keeps boundary natural
           alpha = normalized * normalized * (3 - 2 * normalized);
         }
