@@ -40,6 +40,7 @@ export default function BackgroundRemover() {
   }, [isProcessing]);
   const [bgColor, setBgColor] = useState('#ffffff');
   const [customColor, setCustomColor] = useState('#ffffff');
+  const [blurAmount, setBlurAmount] = useState(10);
   
   // Manual Touchup State
   const [isManualMode, setIsManualMode] = useState(false);
@@ -382,13 +383,9 @@ export default function BackgroundRemover() {
     const startTime = Date.now();
     
     try {
-      const rawBlob = await runBgRemoval(targetSrc, async (status, intermediateBlob) => {
+      const rawBlob = await runBgRemoval(targetSrc, (status) => {
         setStatusText(status);
-        if (intermediateBlob) {
-          const url = URL.createObjectURL(intermediateBlob);
-          setResultImage(url);
-        }
-      }, true, true);
+      }, true);
 
       const url = URL.createObjectURL(rawBlob);
       setResultImage(url);
@@ -635,7 +632,21 @@ export default function BackgroundRemover() {
     
     // Now composite everything onto the final canvas
     // 1. Draw Background
-    if (bgColor !== 'transparent') {
+    if (bgColor === 'portrait') {
+      // Draw Blurred Original Background
+      if (imageSrc) {
+        // We use a temporary canvas to blur the original image
+        const bgCanvas = document.createElement('canvas');
+        bgCanvas.width = canvas.width;
+        bgCanvas.height = canvas.height;
+        const bgCtx = bgCanvas.getContext('2d');
+        if (bgCtx && originalImgRef.current) {
+          bgCtx.filter = `blur(${blurAmount}px)`;
+          bgCtx.drawImage(originalImgRef.current, 0, 0, canvas.width, canvas.height);
+          ctx.drawImage(bgCanvas, 0, 0);
+        }
+      }
+    } else if (bgColor !== 'transparent') {
       ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
@@ -664,7 +675,7 @@ export default function BackgroundRemover() {
   return (
     <ToolLayout
       title="AI Background Remover"
-      description="Advanced Hybrid Pipeline (MODNet + U2Net + Precision Refinement). Professional subject extraction with structural correction in 3-4 seconds."
+      description="Professional Elite AI Engine. Features ultra-high-precision subject extraction with specialized neural hair and edge refinement for studio-quality cutouts."
       toolId="background-remover"
       acceptedFileTypes={['image/*']}
       onDownload={downloadImage}
@@ -943,29 +954,30 @@ export default function BackgroundRemover() {
                             <ImageIcon className="w-5 h-5 text-accent" /> Background
                           </h3>
 
-                            <div className="grid grid-cols-4 gap-2">
+                            <div className="grid grid-cols-4 gap-3">
                               {[
                                 { color: 'transparent', label: 'Clear' },
+                                { color: 'portrait', label: 'Portrait' },
                                 { color: '#ffffff', label: 'White' },
-                                { color: '#000000', label: 'Black' },
                                 { color: '#1e3a8a', label: 'Blue' },
                                 { color: '#dc2626', label: 'Red' },
-                                { color: '#bae6fd', label: 'Sky' },
-                                { color: '#f3f4f6', label: 'Gray' }
+                                { color: '#9ca3af', label: 'Gray' },
+                                { color: '#000000', label: 'Black' },
                               ].map(item => (
                                 <button
                                   key={item.color}
                                   onClick={() => setBgColor(item.color)}
                                   title={item.label}
-                                  className={`w-full aspect-square rounded-xl border-2 transition-all relative group ${bgColor === item.color ? 'border-accent scale-110 shadow-md' : 'border-transparent hover:border-border'}`}
+                                  className={`w-full aspect-square rounded-xl border-2 transition-all relative group flex items-center justify-center ${bgColor === item.color ? 'border-accent scale-105 shadow-md' : 'border-transparent hover:border-border'}`}
                                   style={{ 
-                                    backgroundColor: item.color === 'transparent' ? 'white' : item.color,
-                                    backgroundImage: item.color === 'transparent' ? 'linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%, #eee 100%), linear-gradient(45deg, #eee 25%, white 25%, white 75%, #eee 75%, #eee 100%)' : 'none',
-                                    backgroundSize: item.color === 'transparent' ? '10px 10px' : 'auto',
-                                    backgroundPosition: item.color === 'transparent' ? '0 0, 5px 5px' : '0 0'
+                                    backgroundColor: item.color === 'transparent' || item.color === 'portrait' ? 'transparent' : item.color,
+                                    backgroundImage: item.color === 'transparent' ? 'linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%, #eee 100%), linear-gradient(45deg, #eee 25%, white 25%, white 75%, #eee 75%, #eee 100%)' : item.color === 'portrait' ? `url(${imageSrc})` : 'none',
+                                    backgroundSize: item.color === 'transparent' ? '10px 10px' : 'cover',
+                                    backgroundPosition: 'center'
                                   }}
                                 >
-                                  <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10">
+                                  {item.color === 'portrait' && <Sparkles className="w-5 h-5 text-white drop-shadow-md" />}
+                                  <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10 transition-all">
                                     {item.label}
                                   </span>
                                 </button>
@@ -973,14 +985,30 @@ export default function BackgroundRemover() {
                               <button
                                 onClick={() => setBgColor('custom')}
                                 title="Custom"
-                                className={`w-full aspect-square rounded-xl border-2 flex items-center justify-center bg-gradient-to-br from-red-500 via-green-500 to-blue-500 transition-all relative group ${bgColor === 'custom' ? 'border-accent scale-110 shadow-md' : 'border-transparent hover:border-border'}`}
+                                className={`w-full aspect-square rounded-xl border-2 flex items-center justify-center bg-gradient-to-br from-red-500 via-green-500 to-blue-500 transition-all relative group ${bgColor === 'custom' ? 'border-accent scale-105 shadow-md' : 'border-transparent hover:border-border'}`}
                               >
                                 <div className="w-4 h-4 rounded-full bg-white/50" />
-                                <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10">
+                                <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10 transition-all">
                                   Custom
                                 </span>
                               </button>
                             </div>
+
+                          {bgColor === 'portrait' && (
+                            <div className="space-y-3 p-3 bg-accent/5 border border-accent/20 rounded-xl animate-in slide-in-from-top-2">
+                              <div className="flex justify-between items-center text-[10px] font-bold text-accent">
+                                <span className="flex items-center gap-1"><Sparkles className="w-3 h-3" /> Portrait Blur</span>
+                                <span>{blurAmount}px</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="0" max="30" 
+                                value={blurAmount} 
+                                onChange={(e) => setBlurAmount(Number(e.target.value))}
+                                className="w-full h-1 bg-accent/20 rounded-lg appearance-none cursor-pointer accent-accent"
+                              />
+                            </div>
+                          )}
 
                           {bgColor === 'custom' && (
                             <div className="space-y-2">
@@ -1047,9 +1075,9 @@ export default function BackgroundRemover() {
                     </h4>
                     <ul className="text-[10px] text-text-secondary space-y-1.5 list-disc pl-4">
                       <li>Use well-lit photos for best results.</li>
-                      <li>Clear contrast between subject and background helps AI.</li>
-                      <li>Use "Manual Touchup" to fix tiny details.</li>
-                      <li>The background is automatically replaced with pure white.</li>
+                      <li>MediaPipe provides an instant preview, while U2Net refines the high-resolution details.</li>
+                      <li>Use "Portrait" mode with blur to keep your original high-quality background.</li>
+                      <li>Use "Manual Touchup" to fix tiny details or stray hair strands.</li>
                     </ul>
                   </div>
                 </div>

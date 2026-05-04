@@ -3,7 +3,7 @@ import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Ima
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded } from '../lib/bgRemoval';
 
 // --- Configuration ---
 const PRESETS = [
@@ -42,9 +42,7 @@ export default function PassportPhotoMaker() {
   
   // Preload AI on mount to make background removal instant later
   useEffect(() => {
-    import('../lib/bgRemoval').then(m => {
-      m.ensurePreloaded().catch(console.error);
-    });
+    ensurePreloaded().catch(console.error);
   }, []);
   
   // Image States
@@ -460,12 +458,8 @@ export default function PassportPhotoMaker() {
     setStatusText('Initializing AI Engine...');
     
     try {
-      const rawBlob = await runBgRemoval(src, async (status, intermediateBlob) => {
+      const rawBlob = await runBgRemoval(src, (status) => {
         setStatusText(status);
-        if (intermediateBlob) {
-          const url = URL.createObjectURL(intermediateBlob);
-          setBgRemovedImageSrc(url);
-        }
       }, false);
 
       const url = URL.createObjectURL(rawBlob);
@@ -677,7 +671,14 @@ export default function PassportPhotoMaker() {
         // 2. Draw the processed subject
         ctx.drawImage(tempCanvas, 0, 0);
 
-        // 3. Add Border removed from here to only show in print layout
+        // 3. Add Border if requested
+        if (hasBorder) {
+          ctx.strokeStyle = '#000000';
+          const thickness = Math.max(4, Math.round(canvas.width / 60));
+          ctx.lineWidth = thickness;
+          // Draw rect slightly inside so the stroke isn't clipped
+          ctx.strokeRect(thickness / 2, thickness / 2, canvas.width - thickness, canvas.height - thickness);
+        }
         
         if (isMounted) {
           // Use toBlob + createObjectURL for better performance on high-res images
@@ -737,14 +738,6 @@ export default function PassportPhotoMaker() {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(printImageElement, 0, 0, photoWidth, photoHeight);
-        
-        // Add Border for Print Output if requested
-        if (hasBorder) {
-          ctx.strokeStyle = '#000000';
-          const thickness = Math.max(2, Math.round(photoWidth / 60));
-          ctx.lineWidth = thickness;
-          ctx.strokeRect(thickness / 2, thickness / 2, photoWidth - thickness, photoHeight - thickness);
-        }
         
         const dataURLtoBlob = (dataurl: string) => {
           if (!dataurl || typeof dataurl !== 'string') return new Blob();
@@ -832,14 +825,6 @@ export default function PassportPhotoMaker() {
         const y = startY + r * (photoHeight + margin);
         
         ctx.drawImage(printImageElement, x, y, photoWidth, photoHeight);
-        
-        // Add Border for Print Output if requested
-        if (hasBorder) {
-          ctx.strokeStyle = '#000000';
-          const thickness = Math.max(1.5, Math.round(photoWidth / 60));
-          ctx.lineWidth = thickness;
-          ctx.strokeRect(x + thickness / 2, y + thickness / 2, photoWidth - thickness, photoHeight - thickness);
-        }
         
         if (hasCutLines) {
           ctx.strokeStyle = '#cccccc';
@@ -964,7 +949,7 @@ export default function PassportPhotoMaker() {
                 <img 
                   src={finalImageSrc} 
                   alt="Copy" 
-                  className={`w-full h-full object-cover shadow-sm ${hasBorder ? 'border-[1px] border-black' : ''}`}
+                  className="w-full h-full object-cover shadow-sm" 
                   style={{ imageRendering: 'high-quality' }}
                 />
               </div>
