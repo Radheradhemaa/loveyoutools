@@ -128,10 +128,10 @@ async function refineAlphaChannel(blob: Blob): Promise<Blob> {
         alphaBuffer[i / 4] = pixels[i + 3];
       }
 
-      // Step 1: Fast Separable Box Blur on Alpha (Radius = 1) to smooth jagged edges
+      // Step 1: Fast Separable Box Blur on Alpha (Radius = 2) to smooth jagged edges
       const tempAlpha = new Float32Array(w * h);
       const smoothedAlpha = new Float32Array(w * h);
-      const r = 1; // 3x3 blur
+      const r = 2; // 5x5 blur for higher-quality edge filtering
 
       // Horizontal pass
       for (let y = 0; y < h; y++) {
@@ -163,22 +163,42 @@ async function refineAlphaChannel(blob: Blob): Promise<Blob> {
         }
       }
 
-      // Step 2: Gentle Smoothstep to restore crispness without jaggedness and remove halo
+      // Step 2: Adaptive Non-linear Alpha Mapping
+      // Uses a strictly tuned vertical gradient to eliminate neck/head halos
+      // while maintaining the high-opacity fix for shoulders and clothing.
       for (let i = 0; i < pixels.length; i += 4) {
-        let alpha = smoothedAlpha[i / 4] / 255;
+        const idx = i / 4;
+        const relY = Math.floor(idx / w) / h;
+        let alpha = smoothedAlpha[idx] / 255;
         
-        // Remove background patches/halos (lower boundary)
-        if (alpha < 0.55) {
-          alpha = 0; 
+        let tLow: number;
+        let tHigh: number;
+
+        // Head & Neck Zone: Precision choke for halos and artifacts near ears
+        if (relY < 0.32) {
+          tLow = 0.58;  
+          tHigh = 0.72; // Tight window for sharp head/neck edges
         } 
-        // Solidify interior
-        else if (alpha > 0.85) {
-          alpha = 1; 
+        // Shoulder & Chest Zone: Optimized to prevent transparency in shirt
+        // while maintaining clear, rounded shoulder structure.
+        else if (relY > 0.48) {
+          tLow = 0.15;  // Restore missing shoulder parts
+          tHigh = 0.40; // Solidify interior faster
         } 
-        // Smooth transition (edge)
+        // Transition Zone: Dynamic interpolation between facial and body logic
         else {
-          const normalized = (alpha - 0.55) / (0.85 - 0.55);
-          // Cubic smoothstep (3x^2 - 2x^3) keeps boundary natural
+          const fade = (relY - 0.32) / (0.48 - 0.32);
+          tLow = 0.58 - (0.58 - 0.15) * fade;
+          tHigh = 0.72 - (0.72 - 0.40) * fade;
+        }
+
+        if (alpha < tLow) {
+          alpha = 0; // Cut residual noise/halos
+        } else if (alpha > tHigh) {
+          alpha = 1; // Solidify interior
+        } else {
+          const normalized = (alpha - tLow) / (tHigh - tLow);
+          // Cubic smoothstep for natural boundary look
           alpha = normalized * normalized * (3 - 2 * normalized);
         }
         
