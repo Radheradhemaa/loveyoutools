@@ -62,8 +62,8 @@ export default function Home() {
   return (
     <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-12">
       <SEO 
-        title="LoveyouTools - Free Online Professional Multi-Tools Hub" 
-        description="LoveyouTools is a free online platform offering 100+ professional tools for image editing, PDF conversion, SEO analysis, and more with zero signup."
+        title="LoveYouTools - Free Online Professional Multi-Tools Hub" 
+        description="LoveYouTools is a free online platform offering 100+ professional tools for image editing, PDF conversion, SEO analysis, and more with zero signup."
         url={window.location.href}
       />
       {/* Hero Section */}
@@ -199,8 +199,8 @@ export default function Home() {
 
       {/* SEO Content Block for Homepage */}
       <section className="bg-surface border border-border rounded-[14px] p-8 md:p-12 mt-16 max-w-5xl mx-auto text-center prose prose-lg dark:prose-invert">
-        <h2 className="text-3xl font-extrabold mb-6">Why LoveyouTools is the #1 Digital Utility Platform</h2>
-        <p>LoveyouTools offers users around the globe unparalleled access to over 100+ fully-functional digital utilities absolutely free. Unlike traditional web services, the majority of our tools operate strictly on the client side—which means your processing happens directly in your browser without ever communicating with external servers. This leads to exceptional data privacy, no internet lag, and blistering fast processing times.</p>
+        <h2 className="text-3xl font-extrabold mb-6">Why LoveYouTools is the #1 Digital Utility Platform</h2>
+        <p>LoveYouTools offers users around the globe unparalleled access to over 100+ fully-functional digital utilities absolutely free. Unlike traditional web services, the majority of our tools operate strictly on the client side—which means your processing happens directly in your browser without ever communicating with external servers. This leads to exceptional data privacy, no internet lag, and blistering fast processing times.</p>
         <p>Whether you need to manipulate a PDF, compress high-resolution images, generate web-ready icons, format code, or quickly perform an SEO structure analysis, we have the precise tool tailored for your needs. We are constantly expanding our library of utilities to ensure you never have to sign up for expensive software suites again.</p>
       </section>
       

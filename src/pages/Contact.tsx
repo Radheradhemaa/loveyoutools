@@ -14,8 +14,8 @@ export default function Contact() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-16">
       <SEO 
-        title="Contact Us - LoveyouTools" 
-        description="Get in touch with the LoveyouTools team for support, suggestions, or feedback."
+        title="Contact Us - LoveYouTools" 
+        description="Get in touch with the LoveYouTools team for support, suggestions, or feedback."
         url={window.location.href}
       />
       

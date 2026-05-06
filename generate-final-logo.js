@@ -31,7 +31,7 @@ const svgContent = `<svg width="1200" height="200" viewBox="0 0 1200 200" xmlns=
   <!-- Wordmark Group -->
   <g transform="translate(220, 135)">
     <text font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="100" letter-spacing="-3">
-      <tspan fill="#E8621A">Loveyou</tspan><tspan fill="#111827">Tools</tspan>
+      <tspan fill="#E8621A">LoveYou</tspan><tspan fill="#111827">Tools</tspan>
     </text>
   </g>
 </svg>`;

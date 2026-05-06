@@ -50,7 +50,7 @@ export default function FeedbackWidget() {
               <div className="text-center py-8">
                 <CheckCircle2 className="w-12 h-12 text-success mx-auto mb-4" />
                 <h4 className="font-bold text-lg mb-2">Thank You!</h4>
-                <p className="text-sm text-text-secondary">Your feedback helps us improve LoveyouTools.</p>
+                <p className="text-sm text-text-secondary">Your feedback helps us improve LoveYouTools.</p>
               </div>
             ) : mode === 'feedback' ? (
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -100,7 +100,7 @@ export default function FeedbackWidget() {
                 </div>
                 <label className="flex items-start gap-2 cursor-pointer mt-2 text-xs text-text-muted">
                   <input type="checkbox" required className="mt-0.5 rounded text-accent" />
-                  <span>I agree to receive messages from LoveyouTools. I can opt out anytime.</span>
+                  <span>I agree to receive messages from LoveYouTools. I can opt out anytime.</span>
                 </label>
                 <div className="flex gap-2">
                    <button type="button" onClick={() => setMode('feedback')} className="btn bs flex-1">Back</button>

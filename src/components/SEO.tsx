@@ -11,7 +11,7 @@ interface SEOProps {
 }
 
 export default function SEO({ title, description, keywords, url, image = '/social-preview/og-image.png?v=2', type = 'website', schema }: SEOProps) {
-  const siteName = 'LoveyouTools';
+  const siteName = 'LoveYouTools';
   const fullTitle = `${title} | ${siteName}`;
 
   // Ensure canonical URL always uses the .in domain

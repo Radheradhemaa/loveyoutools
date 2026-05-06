@@ -137,7 +137,7 @@ export default function ToolSeoContent({ tool, categoryName, relatedTools }: Too
           </div>
           <div className="bg-surface border border-border rounded-[14px] p-6 shadow-sm">
             <h3 className="font-bold text-lg mb-2">3. Are there any hidden limits?</h3>
-            <p className="text-text-secondary">LoveyouTools believes in a free internet. While browser memory may limit extreme file sizes, there are no artificial paywall limits imposed by us.</p>
+            <p className="text-text-secondary">LoveYouTools believes in a free internet. While browser memory may limit extreme file sizes, there are no artificial paywall limits imposed by us.</p>
           </div>
           <div className="bg-surface border border-border rounded-[14px] p-6 shadow-sm">
             <h3 className="font-bold text-lg mb-2">4. Can I use this on my mobile phone?</h3>

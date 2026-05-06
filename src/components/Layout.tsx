@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, Outlet, useLocation, useSearchParams } from 'react-router-dom';
-import { Search, Moon, Sun, Menu, X, ChevronRight } from 'lucide-react';
+import { Search, Moon, Sun, Menu, X, ChevronRight, Heart, Wrench } from 'lucide-react';
 import { categories, tools } from '../data/tools';
 import SEO from './SEO';
 import { useFocusMode } from '../contexts/FocusModeContext';
@@ -36,13 +36,13 @@ export default function Layout() {
   return (
     <div className={`min-h-screen flex flex-col transition-all duration-500 ${isFocusMode ? 'bg-bg-primary' : ''}`}>
       <SEO 
-        title="LoveyouTools - Professional Multi-Tools Hub" 
+        title="LoveYouTools - Professional Multi-Tools Hub" 
         description="A fully functional, professional, and production-ready multi-tools website. Free online tools for images, PDFs, SEO, and more."
         url={typeof window !== 'undefined' ? window.location.href : ''}
         schema={{
           "@context": "https://schema.org",
           "@type": "Organization",
-          "name": "LoveyouTools",
+          "name": "LoveYouTools",
           "url": "https://loveyoutools.in/",
           "logo": "https://loveyoutools.in/logo.png?v=2",
           "sameAs": [
@@ -56,26 +56,14 @@ export default function Layout() {
       {!isFocusMode && (
         <header className="sticky top-0 z-[70] bg-white/90 dark:bg-surface/80 backdrop-blur-md border-b border-border shadow-sm">
           <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between gap-4 md:gap-8">
-            <Link to="/" className="flex items-center gap-2 group shrink-0" onClick={() => setSearchQuery('')}>
+            <Link to="/" className="flex items-center group shrink-0" onClick={() => setSearchQuery('')}>
               <div className="relative flex items-center">
-                <img 
-                  src="/logo.png?v=2" 
-                  alt="LoveyouTools - Professional Multi-Tools Platform" 
-                  title="LoveyouTools - Professional Multi-Tools Platform"
-                  width="240"
-                  height="40"
-                  loading="eager"
-                  decoding="async"
-                  className="logo"
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement;
-                    target.style.display = 'none';
-                    const fallback = target.parentElement?.querySelector('.logo-fallback');
-                    if (fallback) fallback.classList.remove('hidden');
-                  }}
-                />
-                <span className="logo-fallback hidden font-black text-2xl sm:text-3xl tracking-tighter text-accent">
-                  Loveyou<span className="text-text-primary">Tools</span>
+                <div className="relative flex items-center justify-center -mr-1">
+                  <Heart className="w-12 h-12 sm:w-14 sm:h-14 fill-accent text-accent transition-transform group-hover:scale-105" />
+                  <Wrench className="w-6 h-6 sm:w-7 sm:h-7 absolute text-white" strokeWidth={2.5} />
+                </div>
+                <span className="font-black text-2xl sm:text-3xl tracking-tighter text-accent">
+                  LoveYou<span className="text-text-primary">Tools</span>
                 </span>
               </div>
             </Link>
@@ -226,26 +214,14 @@ export default function Layout() {
           <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 py-12">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
               <div>
-                <Link to="/" className="flex items-center mb-6" onClick={() => setSearchQuery('')}>
+                <Link to="/" className="flex items-center mb-6 group" onClick={() => setSearchQuery('')}>
                   <div className="relative flex items-center">
-                    <img 
-                      src="/logo.png?v=2" 
-                      alt="LoveyouTools - Professional Multi-Tools Platform" 
-                      title="LoveyouTools - Professional Multi-Tools Platform"
-                      width="240"
-                      height="40"
-                      loading="lazy"
-                      decoding="async"
-                      className="logo mb-4"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.style.display = 'none';
-                        const fallback = target.parentElement?.querySelector('.logo-fallback-footer');
-                        if (fallback) fallback.classList.remove('hidden');
-                      }}
-                    />
-                    <span className="logo-fallback-footer hidden font-black text-3xl tracking-tighter text-accent">
-                      Loveyou<span className="text-text-primary">Tools</span>
+                    <div className="relative flex items-center justify-center -mr-1">
+                      <Heart className="w-14 h-14 sm:w-16 sm:h-16 fill-accent text-accent transition-transform group-hover:scale-105" />
+                      <Wrench className="w-7 h-7 sm:w-8 sm:h-8 absolute text-white" strokeWidth={2.5} />
+                    </div>
+                    <span className="font-black text-3xl sm:text-4xl tracking-tighter text-accent">
+                      LoveYou<span className="text-text-primary">Tools</span>
                     </span>
                   </div>
                 </Link>
@@ -298,7 +274,7 @@ export default function Layout() {
               </div>
             </div>
             <div className="border-t border-border mt-12 pt-8 flex flex-col md:flex-row items-center justify-between text-sm text-text-muted">
-              <p>&copy; {new Date().getFullYear()} LoveyouTools. All rights reserved.</p>
+              <p>&copy; {new Date().getFullYear()} LoveYouTools. All rights reserved.</p>
               <div className="flex gap-4 mt-4 md:mt-0">
                 <span>Made with love for the web</span>
               </div>

@@ -439,7 +439,7 @@ export default function ToolPage() {
                 <Info className="w-5 h-5" /> Did you know?
               </h3>
               <p className="text-sm text-text-secondary">
-                LoveyouTools runs entirely in your browser using modern Web APIs. This means it's lightning fast and your data never leaves your device.
+                LoveYouTools runs entirely in your browser using modern Web APIs. This means it's lightning fast and your data never leaves your device.
               </p>
             </div>
 
