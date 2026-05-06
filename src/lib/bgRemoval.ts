@@ -175,21 +175,21 @@ async function refineAlphaChannel(blob: Blob): Promise<Blob> {
         let tHigh: number;
 
         // Head & Neck Zone: Precision choke for halos and artifacts near ears
-        if (relY < 0.32) {
-          tLow = 0.58;  
-          tHigh = 0.72; // Tight window for sharp head/neck edges
+        if (relY < 0.30) {
+          tLow = 0.68;  // Increased to aggressively remove white line halos
+          tHigh = 0.80; // Sharp transition for facial contours
         } 
         // Shoulder & Chest Zone: Optimized to prevent transparency in shirt
         // while maintaining clear, rounded shoulder structure.
-        else if (relY > 0.48) {
-          tLow = 0.15;  // Restore missing shoulder parts
-          tHigh = 0.40; // Solidify interior faster
+        else if (relY > 0.45) {
+          tLow = 0.15;  // Keep low to prevent shoulder clipping
+          tHigh = 0.40; 
         } 
         // Transition Zone: Dynamic interpolation between facial and body logic
         else {
-          const fade = (relY - 0.32) / (0.48 - 0.32);
-          tLow = 0.58 - (0.58 - 0.15) * fade;
-          tHigh = 0.72 - (0.72 - 0.40) * fade;
+          const fade = (relY - 0.30) / (0.45 - 0.30);
+          tLow = 0.68 - (0.68 - 0.15) * fade;
+          tHigh = 0.80 - (0.80 - 0.40) * fade;
         }
 
         if (alpha < tLow) {
