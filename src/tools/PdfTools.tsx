@@ -425,6 +425,18 @@ export default function PdfTools({ toolId }: { toolId: string }) {
     document.body.removeChild(a);
   };
 
+  const downloadAllIndividually = async () => {
+    for (const f of outputFiles) {
+      const a = document.createElement('a');
+      a.href = f.url;
+      a.download = f.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  };
+
   const isMultiFileTool = ['merge-pdf', 'jpg-to-pdf', 'png-to-pdf'].includes(toolId);
   const acceptedTypes = toolId === 'jpg-to-pdf' ? 'image/jpeg' : toolId === 'png-to-pdf' ? 'image/png' : 'application/pdf';
 
@@ -620,7 +632,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
               </div>
             )}
 
-            <div className="flex gap-4 mt-auto">
+            <div className="flex flex-col sm:flex-row gap-4 mt-auto">
               <button onClick={() => { setFiles([]); setOutput(null); setOutputFiles([]); setError(null); setWarning(null); }} className="btn bs flex-1">
                 Start Over
               </button>
@@ -630,9 +642,14 @@ export default function PdfTools({ toolId }: { toolId: string }) {
                 </button>
               )}
               {outputFiles.length > 0 && (
-                <button onClick={downloadAllAsZip} className="btn bp flex-1 gap-2">
-                  <Download className="w-4 h-4" /> Download All as ZIP
-                </button>
+                <>
+                  <button onClick={downloadAllIndividually} className="btn bp flex-1 gap-2">
+                    <Download className="w-4 h-4" /> Download {outputFiles.length === 1 ? (toolId === 'pdf-to-png' ? 'PNG' : 'JPG') : (toolId === 'pdf-to-png' ? 'PNGs' : 'JPGs')}
+                  </button>
+                  <button onClick={downloadAllAsZip} className="btn bs flex-1 gap-2">
+                    <Download className="w-4 h-4" /> Download All as ZIP
+                  </button>
+                </>
               )}
             </div>
           </div>
