@@ -12,6 +12,7 @@ export const ensurePreloaded = async () => {
       console.log(`Preloading AI Engine...`);
       await preload({ 
         model: 'medium',
+        publicPath: 'https://unpkg.com/@imgly/background-removal-data@1.4.5/dist/',
         proxyToWorker: false
       });
       isPreloaded = true;
@@ -40,6 +41,7 @@ export const removeBackground = async (
     const runAI = async () => {
       const config = {
         model: 'medium',
+        publicPath: 'https://unpkg.com/@imgly/background-removal-data@1.4.5/dist/',
         proxyToWorker: false,
         output: { 
           quality: 1.0, 
@@ -135,42 +137,24 @@ async function refineAlphaChannel(blob: Blob): Promise<Blob> {
         }
       }
 
-      // Step 2: Adaptive Non-linear Alpha Mapping
-      // Uses a strictly tuned vertical gradient to eliminate neck/head halos
-      // while maintaining the high-opacity fix for shoulders and clothing.
+      // Step 2: Global Adaptive Non-linear Alpha Mapping
+      // Uniform treatment across the image prevents arbitrary cutting of body parts
+      // while effectively removing faint background shadows/fragments.
       for (let i = 0; i < pixels.length; i += 4) {
-        const idx = i / 4;
-        const relY = Math.floor(idx / w) / h;
-        let alpha = smoothedAlpha[idx] / 255;
+        let alpha = smoothedAlpha[i / 4] / 255;
         
-        let tLow: number;
-        let tHigh: number;
-
-        // Head & Neck Zone: Precision choke for halos and artifacts near ears
-        if (relY < 0.30) {
-          tLow = 0.68;  // Increased to aggressively remove white line halos
-          tHigh = 0.80; // Sharp transition for facial contours
-        } 
-        // Shoulder & Chest Zone: Optimized to prevent transparency in shirt
-        // while maintaining clear, rounded shoulder structure.
-        else if (relY > 0.45) {
-          tLow = 0.15;  // Keep low to prevent shoulder clipping
-          tHigh = 0.40; 
-        } 
-        // Transition Zone: Dynamic interpolation between facial and body logic
-        else {
-          const fade = (relY - 0.30) / (0.45 - 0.30);
-          tLow = 0.68 - (0.68 - 0.15) * fade;
-          tHigh = 0.80 - (0.80 - 0.40) * fade;
-        }
+        // tLow: High enough to cut faint chair parts, shadows, and halos
+        // tHigh: Low enough to solidify white shirts and skin tones
+        const tLow = 0.20; 
+        const tHigh = 0.80; 
 
         if (alpha < tLow) {
-          alpha = 0; // Cut residual noise/halos
+          alpha = 0; // Completely erase faint background fragments
         } else if (alpha > tHigh) {
-          alpha = 1; // Solidify interior
+          alpha = 1; // Solidify subject (prevents semi-transparent shirts)
         } else {
           const normalized = (alpha - tLow) / (tHigh - tLow);
-          // Cubic smoothstep for natural boundary look
+          // Cubic smoothstep for a natural, anti-aliased edge
           alpha = normalized * normalized * (3 - 2 * normalized);
         }
         
