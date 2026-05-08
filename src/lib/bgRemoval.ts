@@ -3,47 +3,21 @@ import { removeBackground as imglyRemoveBackground, preload } from '@imgly/backg
 let isPreloaded = false;
 let preloadPromise: Promise<void> | null = null;
 
-// v1.4.5 Aligned Release
-const PRIMARY_CDN = 'https://unpkg.com/@imgly/background-removal-data@1.4.5/dist/';
-const SECONDARY_CDN = 'https://cdn.jsdelivr.net/npm/@imgly/background-removal-data@1.4.5/dist/';
-const TERTIARY_CDN = 'https://static.imgly.com/packages/@imgly/background-removal-data/1.4.5/dist/';
-
-let currentPublicPath = PRIMARY_CDN;
-
 export const ensurePreloaded = async () => {
   if (isPreloaded) return;
   if (preloadPromise) return preloadPromise;
   
   preloadPromise = (async () => {
-    const tryPreload = async (path: string) => {
-      console.log(`Preloading AI Engine (v1.4.5) from ${path}...`);
+    try {
+      console.log(`Preloading AI Engine...`);
       await preload({ 
-        model: 'medium', 
-        publicPath: path,
+        model: 'medium',
         proxyToWorker: false
       });
-    };
-
-    try {
-      await tryPreload(PRIMARY_CDN);
-      currentPublicPath = PRIMARY_CDN;
+      isPreloaded = true;
     } catch (e) {
-      console.warn("Primary CDN failed, trying secondary...", e);
-      try {
-        await tryPreload(SECONDARY_CDN);
-        currentPublicPath = SECONDARY_CDN;
-      } catch (ee) {
-        console.warn("Secondary CDN failed, trying tertiary...", ee);
-        try {
-          await tryPreload(TERTIARY_CDN);
-          currentPublicPath = TERTIARY_CDN;
-        } catch (eee) {
-          console.error("All preloads failed. Check network connection or CDN availability.", eee);
-        }
-      }
+      console.error("AI Engine preload failed. Check network connection or CDN availability.", e);
     }
-
-    isPreloaded = true;
   })();
   return preloadPromise;
 };
@@ -63,10 +37,9 @@ export const removeBackground = async (
   try {
     console.log("Running AI Mode (v1.4.5)...");
     
-    const runAI = async (path: string) => {
+    const runAI = async () => {
       const config = {
         model: 'medium',
-        publicPath: path,
         proxyToWorker: false,
         output: { 
           quality: 1.0, 
@@ -79,12 +52,11 @@ export const removeBackground = async (
 
     let primaryBlob: Blob;
     try {
-      primaryBlob = await runAI(currentPublicPath);
+      primaryBlob = await runAI();
     } catch (error) {
-      console.warn("Primary extraction failed, trying fallback...", error);
-      const fallbackPath = currentPublicPath === PRIMARY_CDN ? SECONDARY_CDN : PRIMARY_CDN;
+      console.warn("Primary extraction failed...", error);
       onProgress('Retrying AI...');
-      primaryBlob = await runAI(fallbackPath);
+      primaryBlob = await runAI();
     }
 
     onProgress('Studio Edge Refinement...');
