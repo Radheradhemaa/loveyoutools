@@ -38,7 +38,6 @@ const SvgToPngConverter = lazy(() => import('../tools/SvgToPngConverter'));
 const DynamicPreviewer = lazy(() => import('../components/DynamicPreviewer'));
 const KeyboardShortcutGuide = lazy(() => import('../tools/KeyboardShortcutGuide'));
 const InternetSpeedTest = lazy(() => import('../tools/InternetSpeedTest'));
-const DocumentScanner = lazy(() => import('../tools/DocumentScanner'));
 const PregnancyCalculator = lazy(() => import('../tools/PregnancyCalculator'));
 const DueDateCalculator = lazy(() => import('../tools/DueDateCalculator'));
 const OvulationCalculator = lazy(() => import('../tools/OvulationCalculator'));
@@ -119,7 +118,6 @@ export default function ToolPage() {
     if (tool.id === 'dynamic-previewer') return <DynamicPreviewer />;
     if (tool.id === 'keyboard-shortcut-guide') return <KeyboardShortcutGuide />;
     if (tool.id === 'internet-speed-test') return <InternetSpeedTest />;
-    if (tool.id === 'document-scanner') return <DocumentScanner />;
     if (tool.id === 'pregnancy-calculator') return <PregnancyCalculator />;
     if (tool.id === 'due-date-calculator') return <DueDateCalculator />;
     if (tool.id === 'ovulation-calculator') return <OvulationCalculator />;

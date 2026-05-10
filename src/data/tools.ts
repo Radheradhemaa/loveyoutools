@@ -62,7 +62,6 @@ export const tools = [
   { id: 'flatten-pdf', c: 'pdf', n: 'Flatten PDF', d: 'Flatten PDF forms and layers.', i: '🥞', b: '#fef3c7' },
   { id: 'pdf-to-zip', c: 'pdf', n: 'PDF to ZIP', d: 'Extract PDF pages to ZIP.', i: '🗜️', b: '#fef3c7' },
   { id: 'pdf-reader-online', c: 'pdf', n: 'PDF Reader Online', d: 'Read PDF files online.', i: '👁️', b: '#fef3c7' },
-  { id: 'document-scanner', c: 'pdf', n: 'Document Scanner', d: 'Scan documents using your camera and export as PDF or JPG with professional filters.', i: '📸', b: '#fef3c7', popular: true },
   { id: 'kdp-margin-bleed-fixer', c: 'pdf', n: 'Amazon KDP Book Margin & Bleed Fixer', d: 'Fix margins, trim size, and bleed for Amazon KDP books.', i: '📚', b: '#fef3c7' },
 
   // SEO TOOLS (bg: #d1fae5)
