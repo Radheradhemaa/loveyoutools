@@ -100,13 +100,31 @@ async function refineAlphaChannel(blob: Blob): Promise<Blob> {
 
       // Fast Single-Pass Alpha Mapping (Zero-allocation, Instant)
       // Completely removes blur passes and runs directly on the image data.
-      // Optimized to eliminate remaining chair halos instantly.
+      // Optimized to eliminate remaining chair halos instantly while keeping shoulders solid.
       for (let i = 3; i < pixels.length; i += 4) {
         let a = pixels[i];
         
-        // Thresholds: ~0.45 and ~0.75 of 255
-        const low = 115;
-        const high = 190;
+        const pixelIndex = (i - 3) / 4;
+        const x = pixelIndex % w;
+        const y = Math.floor(pixelIndex / w);
+
+        // Base Thresholds:
+        // 'low' strictly cuts out background noise (chairs, halos)
+        // 'high' is now lowered (135) so that shoulders and clothing with moderate confidence solidify completely.
+        let low = 95;
+        let high = 135;
+
+        // Spatially Adaptive Thresholding to preserve the left shoulder area:
+        // Gradually relax the thresholds in the bottom-left area of the image
+        // to prevent the shoulder from becoming transparent, without affecting hair/neck.
+        if (y > h * 0.4 && x < w * 0.5) {
+          const leftWeight = 1 - (x / (w * 0.5)); // 1 at far left edge, 0 at horizontal center
+          const bottomWeight = (y - h * 0.4) / (h * 0.6); // 0 at y=40%, 1 at bottom edge
+          const preserveMask = leftWeight * bottomWeight; 
+          
+          low = 95 - (80 * preserveMask); // Drops down to 15 at lowest, most left
+          high = 135 - (80 * preserveMask); // Drops to 55 at lowest, most left
+        }
 
         if (a < low) {
           pixels[i] = 0; // Aggressively erase low-confidence background (chairs)
