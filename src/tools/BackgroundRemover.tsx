@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval, ensurePreloaded } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded } from '../lib/bgRemoval';
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -15,10 +16,9 @@ export default function BackgroundRemover() {
   
   // Preload AI assets quietly in the background after mount
   useEffect(() => {
-    const timer = setTimeout(() => {
-      ensurePreloaded().catch(console.error);
-    }, 1500);
-    return () => clearTimeout(timer);
+    ensurePreloaded().catch(console.error);
+    ensureModnetLoaded().catch(console.error);
+    ensureIsnetLoaded().catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -28,11 +28,17 @@ export default function BackgroundRemover() {
       setProcessingError(null);
       interval = setInterval(() => {
         setTimer((prev) => {
-          // Optimized timer targeting ~0.8s average completion with the new ultra-fast model
-          if (prev >= 0.8) return 0.8;
-          return prev + 0.1;
+          // Studio Precision Timer: Slower, more deliberate pacing for U2Net quality
+          // Reaches ~95% in about 4.5 - 5 seconds, staying "busy" for the perfect finishing touch.
+          if (prev >= 98) return prev; 
+          
+          let increment = 0.3; // Base speed (~10s total)
+          if (prev > 70) increment = 0.15; // Slow down for final refinement phase
+          if (prev > 90) increment = 0.05; // Savor the last few bits of precision
+          
+          return Math.min(prev + increment, 98.8);
         });
-      }, 100);
+      }, 30);
     } else {
       setTimer(0);
     }
@@ -292,10 +298,7 @@ export default function BackgroundRemover() {
 
   // Removed preload engine model on mount to prevent concurrent loading deadlocks
 
-  // Preload AI models on mount for "instant" feel
-  useEffect(() => {
-    ensurePreloaded();
-  }, []);
+  // Removed redundant preload
 
   const updateCanvasFromSrc = (src: string | null) => {
     const canvas = canvasRef.current;
@@ -675,7 +678,7 @@ export default function BackgroundRemover() {
   return (
     <ToolLayout
       title="AI Background Remover"
-      description="Ultra-Fast Hybrid AI Engine (U2Net + ISNet). Features lightning-speed neural processing with specialized studio-grade edge refinement for instant, professional cutouts in under 2 seconds."
+      description="Professional Studio-Quality Extraction. Powered by MediaPipe Selfie Segmentation for instant, sharp, and natural results."
       toolId="background-remover"
       acceptedFileTypes={['image/*']}
       onDownload={downloadImage}
@@ -694,13 +697,15 @@ export default function BackgroundRemover() {
                 setHistory([]);
                 setHistoryIndex(-1);
                 setIsManualMode(false);
-                setIsCropping(false); // Skip crop mode by default for "instant" feel
+                setIsCropping(false); 
                 setHasCropped(false);
                 setZoom(0.3); // Default to 30% on new upload
                 
                 const img = new Image();
               img.onload = () => { 
                 originalImgRef.current = img;
+                // AUTO-TRIGGER removal on upload
+                removeBackground(src);
               };
               img.src = src;
             };
@@ -849,18 +854,31 @@ export default function BackgroundRemover() {
                         <div className="space-y-2">
                           <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">Background Removal</label>
                           <p className="text-[10px] text-text-muted px-1">
-                            High quality IS-Net AI processing.
+                            Ultra-fast AI processing optimized for speed.
                           </p>
                         </div>
 
                         <button 
                           onClick={removeBackground}
-                        disabled={isProcessing}
-                        className={`w-full btn py-4 rounded-2xl gap-2 text-lg shadow-lg ${processingError ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/20' : 'bp shadow-accent/20'}`}
-                      >
-                        {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : processingError ? <RefreshCw className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
-                        {processingError ? 'Retry AI Removal' : 'Remove Background'}
-                      </button>
+                          disabled={isProcessing}
+                          className={`w-full btn py-4 rounded-2xl gap-2 text-lg shadow-lg ${processingError ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/20' : 'bp shadow-accent/20'}`}
+                        >
+                          {isProcessing ? (
+                             <motion.div animate={{ rotate: 360 }} transition={{ duration: 0.5, repeat: Infinity, ease: "linear" }}>
+                               <Loader2 className="w-6 h-6" />
+                             </motion.div>
+                          ) : processingError ? (
+                            <>
+                              <RefreshCw className="w-5 h-5" />
+                              Retry AI Removal
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-5 h-5" />
+                              Remove Background
+                            </>
+                          )}
+                        </button>
                       <button 
                         onClick={() => setIsCropping(true)}
                         className="w-full py-2 text-xs font-bold text-text-muted hover:text-accent transition-colors flex items-center justify-center gap-2"
@@ -1075,7 +1093,7 @@ export default function BackgroundRemover() {
                     </h4>
                     <ul className="text-[10px] text-text-secondary space-y-1.5 list-disc pl-4">
                       <li>Use well-lit photos for best results.</li>
-                      <li>MediaPipe provides an instant preview, while U2Net refines the high-resolution details.</li>
+                      <li>High-precision MediaPipe segmentation captures complex edges like hair and fine fabrics.</li>
                       <li>Use "Portrait" mode with blur to keep your original high-quality background.</li>
                       <li>Use "Manual Touchup" to fix tiny details or stray hair strands.</li>
                     </ul>
@@ -1271,30 +1289,72 @@ export default function BackgroundRemover() {
                         )}
                         
                         {isProcessing && !processingError && (
-                          <div className="preview-loading-overlay backdrop-blur-sm bg-black/40 rounded-lg">
-                            <div className="flex flex-col items-center text-center max-w-xs w-full px-6 bg-gray-900/80 p-6 rounded-xl border border-white/10 shadow-2xl">
-                              <div className="relative mb-3">
-                                <div className="w-12 h-12 rounded-full border-2 border-white/10 border-t-accent animate-spin" />
-                                <div className="absolute inset-0 flex items-center justify-center font-mono font-bold text-white text-[10px]">
-                                  {timer.toFixed(1)}s
+                          <div className="preview-loading-overlay backdrop-blur-md bg-black/40 rounded-lg">
+                            <motion.div 
+                              initial={{ scale: 0.8, opacity: 0 }}
+                              animate={{ scale: 1, opacity: 1 }}
+                              className="flex flex-col items-center justify-center p-10 bg-gray-900/40 rounded-3xl border border-white/10 shadow-2xl relative"
+                            >
+                              {/* Damru AI Animation - Ultra Fast Mode */}
+                              <motion.div
+                                animate={{
+                                  rotate: [0, -45, 45, -45, 45, -45, 45, 0],
+                                  scale: [1, 1.2, 0.8, 1.2, 0.9, 1.1, 1]
+                                }}
+                                transition={{
+                                  duration: 0.15,
+                                  repeat: Infinity,
+                                  ease: "linear"
+                                }}
+                                className="relative w-24 h-28 flex flex-col items-center justify-center filter drop-shadow-[0_0_20px_rgba(var(--accent-rgb,255,100,100),0.6)]"
+                              >
+                                {/* Upper Head */}
+                                <div className="w-16 h-12 bg-accent rounded-t-[100%] rounded-b-[20%] relative overflow-hidden shadow-inner">
+                                  <div className="absolute inset-x-0 top-0 h-1 bg-white/40" />
                                 </div>
-                              </div>
-                              <div className="w-full h-1.5 bg-white/10 rounded-full mb-2 overflow-hidden">
-                                <div 
-                                  className="h-full bg-accent transition-all duration-300 ease-out"
-                                  style={{ 
-                                    width: statusText.match(/(\d+)%/) ? statusText.match(/(\d+)%/)![0] :
-                                           statusText.includes('Downloading') ? '20%' : 
-                                           statusText.includes('Processing') ? '50%' : 
-                                           statusText.includes('Refining Edges') ? '80%' : 
-                                           statusText.includes('Finalizing') ? '95%' : '5%'
-                                  }}
+                                {/* Waist */}
+                                <div className="w-5 h-5 bg-white/90 z-10 border-2 border-accent rounded-sm shadow-sm" />
+                                {/* Lower Head */}
+                                <div className="w-16 h-12 bg-accent rounded-b-[100%] rounded-t-[20%] relative overflow-hidden shadow-inner">
+                                  <div className="absolute inset-x-0 bottom-0 h-1 bg-white/40" />
+                                </div>
+                                
+                                {/* Side Beads/Strings for Damru */}
+                                <motion.div 
+                                  animate={{ rotate: [-60, 60] }} 
+                                  transition={{ duration: 0.08, repeat: Infinity, repeatType: "mirror" }}
+                                  className="absolute left-[-25px] top-1/2 w-12 h-[3px] bg-white origin-right rounded-full"
+                                >
+                                   <div className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-2 border-accent shadow-sm" />
+                                </motion.div>
+                                <motion.div 
+                                  animate={{ rotate: [60, -60] }} 
+                                  transition={{ duration: 0.08, repeat: Infinity, repeatType: "mirror" }}
+                                  className="absolute right-[-25px] top-1/2 w-12 h-[3px] bg-white origin-left rounded-full"
+                                >
+                                   <div className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-2 border-accent shadow-sm" />
+                                </motion.div>
+                              </motion.div>
+
+                              {/* Progress Pulse */}
+                              <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 flex gap-3">
+                                <motion.div 
+                                  animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} 
+                                  transition={{ duration: 0.6, repeat: Infinity }}
+                                  className="w-2.5 h-2.5 bg-accent rounded-full" 
+                                />
+                                <motion.div 
+                                  animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} 
+                                  transition={{ duration: 0.6, repeat: Infinity, delay: 0.15 }}
+                                  className="w-2.5 h-2.5 bg-accent rounded-full shadow-[0_0_8px_rgba(var(--accent-rgb,255,100,100),0.8)]" 
+                                />
+                                <motion.div 
+                                  animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} 
+                                  transition={{ duration: 0.6, repeat: Infinity, delay: 0.3 }}
+                                  className="w-2.5 h-2.5 bg-accent rounded-full" 
                                 />
                               </div>
-                              <p className="mt-1 text-xs font-bold text-white uppercase tracking-wider">{statusText || 'Initializing Hybrid Engine...'}</p>
-                              <p className="mt-2 text-[10px] text-accent font-bold uppercase tracking-widest">MODNet + U2Net Hybrid Active</p>
-                              <p className="text-[9px] text-white/50 mt-1 max-w-[200px] text-center">Step 1: Rapid Masking | Step 2: Accurate Structure | Step 3: Edge Perfection</p>
-                            </div>
+                            </motion.div>
                           </div>
                         )}
                       </div>

@@ -3,7 +3,7 @@ import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Ima
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval, ensurePreloaded } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded } from '../lib/bgRemoval';
 
 // --- Configuration ---
 const PRESETS = [
@@ -43,6 +43,8 @@ export default function PassportPhotoMaker() {
   // Preload AI on mount to make background removal instant later
   useEffect(() => {
     ensurePreloaded().catch(console.error);
+    ensureModnetLoaded().catch(console.error);
+    ensureIsnetLoaded().catch(console.error);
   }, []);
   
   // Image States
