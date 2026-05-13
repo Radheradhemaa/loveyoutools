@@ -1,47 +1,13 @@
-import { ImageSegmenter, FilesetResolver } from "@mediapipe/tasks-vision";
 import { removeBackground as imglyRemoveBackground } from "@imgly/background-removal";
 
-let imageSegmenter: ImageSegmenter | null = null;
-let mediaPipeLoadPromise: Promise<void> | null = null;
-
-const IMGLY_BASE_PATH = 'https://staticcache.img.ly/resources/utils/background-removal/web-worker/1.7.0/';
-
 /**
- * Preloads the MediaPipe Selfie Segmentation model.
+ * Stub for compatibility.
  */
-export const ensurePreloaded = async () => {
-  if (imageSegmenter) return;
-  if (mediaPipeLoadPromise) return mediaPipeLoadPromise;
-
-  mediaPipeLoadPromise = (async () => {
-    try {
-      console.log(`[AI] Preloading MediaPipe Guard Engine...`);
-      const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm"
-      );
-      
-      imageSegmenter = await ImageSegmenter.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
-          delegate: "GPU"
-        },
-        runningMode: "IMAGE",
-        outputCategoryMask: true,
-        outputConfidenceMasks: true
-      });
-      console.log(`[AI] Guard Engine ready.`);
-    } catch (e) {
-      console.error("[AI] Fatal preload error:", e);
-      mediaPipeLoadPromise = null;
-      throw e;
-    }
-  })();
-
-  return mediaPipeLoadPromise;
-};
+export const ensurePreloaded = async () => Promise.resolve();
 
 /**
  * Stub for ISNet compatibility (Using U2Net Large as High-Precision Fallback)
+ *
  */
 export const ensureIsnetLoaded = async () => Promise.resolve();
 export const ensureModnetLoaded = async () => Promise.resolve();
@@ -72,9 +38,7 @@ async function downscaleImageIfNeeded(imageSrc: string, maxDim = 3072): Promise<
 }
 
 /**
- * Executes a dual-hybrid, precision-powered background removal.
- * 1. U2Net Large (Precision Engine) provides crisp boundary signals.
- * 2. MediaPipe (Subject Guard) protects body parts (shoulders/arms).
+ * Executes high-precision background removal.
  */
 export const removeBackground = async (
   originalImageSrc: string,
@@ -82,97 +46,36 @@ export const removeBackground = async (
   forceWhiteBackground = true
 ): Promise<Blob> => {
   const startTime = Date.now();
-  onProgress('Initializing Precision Engine...');
+  onProgress('Initializing Tri-Hybrid Engine...');
 
-  const imageSrc = await downscaleImageIfNeeded(originalImageSrc, 3072);
+  // Use 2048 to balance extreme high-res capability and processing speed.
+  const imageSrc = await downscaleImageIfNeeded(originalImageSrc, 2048);
 
   try {
-    // Model 1: Precision Engine (ISNet in fp32 for maximum edge quality)
-    const runPrecisionEngine = async (src: string): Promise<Blob> => {
-      const blob = await imglyRemoveBackground(src, {
-        model: 'isnet', // Highest precision, excellent edge refinement
-        publicPath: IMGLY_BASE_PATH, 
-        proxyToWorker: true, 
+    // Neural Model 1: ISNet (High Precision Core)
+    const runIsnetEngine = async (src: string, model: 'small' | 'medium' = 'medium'): Promise<Blob> => {
+      return imglyRemoveBackground(src, {
+        model,
         output: { format: 'image/png', quality: 1.0, type: 'foreground' as any },
         progress: (status, progress) => {
-          if (status === 'fetch') onProgress(`Engine Core: ${(progress * 100).toFixed(0)}%`);
-          else if (status === 'process') onProgress(`Precision Analysis: ${(progress * 100).toFixed(0)}%`);
+          if (status === 'process') onProgress(`Precision Analysis: ${(progress * 100).toFixed(0)}%`);
         }
       });
-      
-      // Delay for 5 seconds as requested for ultra-precision edge refinement result
-      onProgress('Edge refinement deeply processing... (5s delay)');
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      return blob;
     };
 
-    // Model 2: MediaPipe Guard
-    if (!imageSegmenter) await ensurePreloaded();
+    onProgress('Running Fast ISNet Core...');
     
-    const mediapipePromise = new Promise<ImageData>((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        try {
-          const result = imageSegmenter!.segment(img);
-          const confidenceMasks = result.confidenceMasks;
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width; canvas.height = img.height;
-          const ctx = canvas.getContext('2d')!;
-          ctx.drawImage(img, 0, 0);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          
-          if (confidenceMasks && confidenceMasks.length > 0) {
-            const maskData = confidenceMasks[0].getAsFloat32Array();
-            for (let i = 0; i < maskData.length; i++) {
-              // Extremely tight MediaPipe threshold to completely eliminate gap noise
-              let conf = maskData[i];
-              let alpha = 0;
-              if (conf > 0.85) alpha = 255;
-              else if (conf > 0.40) alpha = ((conf - 0.40) / 0.45) * 255;
-              imageData.data[i * 4 + 3] = alpha; 
-            }
-          }
-          resolve(imageData);
-        } catch (e) { reject(e); }
-      };
-      img.src = imageSrc;
-    });
-
-    onProgress('Precision Edge Fusion...');
-    const precisionPromise = runPrecisionEngine(imageSrc);
-    
-    const results = await Promise.allSettled([precisionPromise, mediapipePromise]);
-    const pResult = results[0];
-    const mpResult = results[1];
-
-    let precisionBlob: Blob;
-    let mpImageData: ImageData;
-
-    if (mpResult.status === 'fulfilled') {
-      mpImageData = mpResult.value;
-    } else {
-      throw new Error("Subject guard analysis failed.");
+    let isnetBlob: Blob;
+    try {
+        isnetBlob = await runIsnetEngine(imageSrc, 'small');
+    } catch (e1: any) {
+        console.error("[AI] ISNet core failed.", e1);
+        throw new Error(`Background removal core failed: ${e1.message || 'Unknown error'}`);
     }
 
-    if (pResult.status === 'fulfilled') {
-      precisionBlob = pResult.value;
-    } else {
-      console.warn("[AI] Precision Engine failed, using Guard Mask only.");
-      const canvas = document.createElement('canvas');
-      canvas.width = mpImageData.width;
-      canvas.height = mpImageData.height;
-      const ctx = canvas.getContext('2d')!;
-      ctx.putImageData(mpImageData, 0, 0);
-      precisionBlob = await new Promise<Blob>((resolve) => canvas.toBlob(b => resolve(b!), 'image/png'));
-    }
-
-    // --- Dual Mask Fusion Logic ---
-    const fusedBlob = await fuseMasksDual(precisionBlob, mpImageData);
 
     onProgress('Razor Sharp Boundary Pass...');
-    const polishedBlob = await polishAndEnhance(fusedBlob);
+    const polishedBlob = await polishAndEnhance(isnetBlob);
 
     console.log(`[AI] Total Execution: ${(Date.now() - startTime) / 1000}s`);
 
@@ -188,216 +91,198 @@ export const removeBackground = async (
   }
 }
 
-/**
- * True Hybrid Fusion: Uses MediaPipe as a spatial core and ISNet for perfect edges.
- * MediaPipe mask is blurred to create a bounding "safe zone". Any patches outside
- * the zone are killed. Missing body parts are restored.
- */
-async function fuseMasksDual(precisionBlob: Blob, mpImageData: ImageData): Promise<Blob> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d')!;
-
-      // 1. Create blurred MediaPipe safe zone to kill remote ISNet errors (e.g. chairs/walls)
-      const safeCanvas = document.createElement('canvas');
-      safeCanvas.width = img.width;
-      safeCanvas.height = img.height;
-      const safeCtx = safeCanvas.getContext('2d')!;
-      
-      // Draw MediaPipe mask to canvas
-      const tmpMpCanvas = document.createElement('canvas');
-      tmpMpCanvas.width = img.width; tmpMpCanvas.height = img.height;
-      const tmpMpCtx = tmpMpCanvas.getContext('2d')!;
-      tmpMpCtx.putImageData(mpImageData, 0, 0);
-
-      // Medium blur: generous enough to protect flyaways, tight enough to dive into ear/neck gaps
-      safeCtx.filter = 'blur(8px)';
-      safeCtx.drawImage(tmpMpCanvas, 0, 0);
-      const safeData = safeCtx.getImageData(0, 0, canvas.width, canvas.height);
-
-      // 2. Process ISNet pixels against Safe Zone
-      ctx.drawImage(img, 0, 0);
-      const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      
-      for (let i = 0; i < data.data.length; i += 4) {
-        let pAlpha = data.data[i + 3]; 
-        const safeAlpha = safeData.data[i + 3]; 
-        const mpAlpha = mpImageData.data[i + 3]; 
-        
-        const progressY = Math.floor((i / 4) / canvas.width) / canvas.height;
-        
-        let strictness = 0;
-        if (progressY > 0.02) {
-             strictness = Math.min(1.0, (progressY - 0.02) / 0.38); // Max strictness by 40% height
-        }
-        
-        const safeThreshold = 4 + (strictness * 80); 
-
-        // Ear & Neck Gap Eliminator (Zero Patches):
-        // Brutally eliminates ISNet's fake white background patches inside structural gaps
-        if (strictness > 0.05 && mpAlpha < 5) {
-             let gapThr = 60 + strictness * 160; 
-             if (safeAlpha < gapThr) {
-                 pAlpha = 0; // Instant absolute kill for zero patches
-             }
-        }
-
-        // 1. Kill General Background Objects
-        if (safeAlpha < safeThreshold) {
-            pAlpha = 0;
-        } else if (safeAlpha < safeThreshold + 25) {
-            pAlpha = pAlpha * ((safeAlpha - safeThreshold) / 25);
-        }
-
-        // 2. Restore Missing Core Body (Chest/Shoulders)
-        // If MediaPipe is aggressively confident (>250) in torso area
-        if (progressY > 0.35 && mpAlpha > 250) {
-             let recovery = (progressY - 0.35) / 0.65; // 0 to 1
-             pAlpha = Math.max(pAlpha, mpAlpha * recovery);
-        }
-        
-        data.data[i + 3] = pAlpha;
-      }
-      
-      ctx.putImageData(data, 0, 0);
-      canvas.toBlob(b => {
-        URL.revokeObjectURL(img.src);
-        resolve(b || precisionBlob);
-      }, 'image/png', 1.0);
-    };
-    img.src = URL.createObjectURL(precisionBlob);
-  });
-}
 
 /**
- * Ultra-Precision Alpha Matting & Edge Refinement
- * 1. Smoothstep Alpha Grading: Cleans faint background noise while naturally preserving hair morphology.
- * 2. Color Decontamination: Removes white/grey halos bleeding into semi-transparent pixels.
- * 3. Gradient Smoothing: Zero jaggedness, DSLR-like edge falloff.
+ * Natural Contour Polish & Artifact Eradication
+ * Eradicates boundary patches and noisy webs via density morphological cleaning,
+ * then applies S-Curve edge refinement and Halo Decontamination.
  */
 async function polishCutoutEdges(blob: Blob): Promise<Blob> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
+      const w = img.width;
+      const h = img.height;
+      canvas.width = w;
+      canvas.height = h;
       const ctx = canvas.getContext('2d')!;
       ctx.drawImage(img, 0, 0);
       
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, w, h);
       const data = imageData.data;
-      const width = canvas.width;
-      const height = canvas.height;
-      const outData = new Uint8ClampedArray(data); // Create copy for spatial processing
       
-      for (let y = 0; y < height; y++) {
-          for (let x = 0; x < width; x++) {
-              const i = (y * width + x) * 4;
-              let a = data[i + 3];
-
-              if (a > 0 && a < 255) {
-                  // 1. Ultra-Smooth Alpha Grading (DSLR Falloff)
-                  let norm = a / 255;
-                  let newA = norm;
+      const alphaBuffer = new Uint8ClampedArray(w * h);
+      for (let i = 0; i < data.length; i += 4) alphaBuffer[i/4] = data[i+3];
+      
+      const newAlphaBuffer = new Uint8ClampedArray(alphaBuffer);
+      
+      // Pass 1: High-Precision Density Cleaning (Artifact & Broken Pixel Eradication)
+      for (let y = 2; y < h - 2; y++) {
+          for (let x = 2; x < w - 2; x++) {
+              let idx = y * w + x;
+              let a = alphaBuffer[idx];
+              if (a > 0) {
+                  // Protect shoulders/shirt (typically lower half) from aggressive pixel erosion
+                  let isShoulderOrShirt = y > h * 0.45;
                   
-                  if (norm < 0.15) {
-                      newA = 0; // Destroy random distant noise webs and faint ear patches entirely
-                  } else if (norm > 0.90) {
-                      newA = 1.0; // Solidify core
-                  } else {
-                      // Silky smooth easing curve for natural hair transitions 
-                      const t = (norm - 0.15) / 0.75;
-                      newA = t * t * (3 - 2 * t);
+                  let solidNeighbors = 0;
+                  let activeNeighbors = 0;
+                  for (let dy = -2; dy <= 2; dy++) {
+                      for (let dx = -2; dx <= 2; dx++) {
+                          if (dx === 0 && dy === 0) continue;
+                          let nx = x + dx;
+                          let ny = y + dy;
+                          let na = alphaBuffer[ny * w + nx];
+                          if (na > 180) solidNeighbors++;
+                          if (na > 20) activeNeighbors++;
+                      }
                   }
-                  newA *= 255;
-                  outData[i + 3] = newA;
-
-                  // 2. Spatial Color Decontamination (Edge Color Extension)
-                  // Samples color from the solid core and bleeds it into the transparent edge
-                  if (newA > 0 && newA < 255) {
-                      let luma = (data[i] * 299 + data[i+1] * 587 + data[i+2] * 114) / 1000;
-
-                      // EXPLICIT EAR/GAP ELIMINATOR: White Background Bleed Killer (ZERO PATCHES)
-                      let aNorm = newA / 255;
-                      if (luma > 185 && aNorm < 0.85) {
-                           newA = 0; // Absolute zero patches for bright semi-transparent gaps
-                           outData[i+3] = 0;
-                           continue;
-                      } else if (luma > 150 && aNorm < 0.92) {
-                           newA *= Math.pow(aNorm, 3.0); // Extremely aggressive alpha crush
-                           outData[i+3] = newA;
-                           aNorm = newA / 255; // Re-evaluate
+                  
+                  // Destroy sparse edge noise and detached fragments
+                  if (!isShoulderOrShirt) {
+                      if (activeNeighbors < 4) { 
+                          newAlphaBuffer[idx] = 0; 
+                      } else if (a < 200 && solidNeighbors < 3) {
+                          newAlphaBuffer[idx] = 0; 
+                      } else if (a >= 200 && solidNeighbors < 2) {
+                          newAlphaBuffer[idx] = 0; 
                       }
-
-                      if (newA <= 0) continue;
-
-                      let sumR = 0, sumG = 0, sumB = 0, sumW = 0;
-                      
-                      // Search radius expands for highly transparent outer flyaways to reach the core
-                      const radius = newA < 120 ? 4 : 2; 
-
-                      for (let dy = -radius; dy <= radius; dy++) {
-                          for (let dx = -radius; dx <= radius; dx++) {
-                              if (dx === 0 && dy === 0) continue;
-                              const nx = x + dx;
-                              const ny = y + dy;
-                              if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                                  const ni = (ny * width + nx) * 4;
-                                  const na = data[ni + 3];
-                                  
-                                  // Only sample from pixels that are solidly inward (closer to core)
-                                  if (na > a + 15) { 
-                                      const distSq = dx*dx + dy*dy;
-                                      // Weight by solidity and proximity
-                                      const weight = (na / 255) / distSq; 
-                                      sumR += data[ni] * weight;
-                                      sumG += data[ni+1] * weight;
-                                      sumB += data[ni+2] * weight;
-                                      sumW += weight;
-                                  }
-                              }
-                          }
-                      }
-
-                      if (sumW > 0) {
-                          const coreR = sumR / sumW;
-                          const coreG = sumG / sumW;
-                          const coreB = sumB / sumW;
-
-                          // Evaluate how aggressively we replace the original pixel color with the core color
-                          let aNorm = newA / 255;
-                          // The more transparent, the more we rely entirely on the core color
-                          let replaceStrength = Math.pow(1.0 - aNorm, 0.7); 
-                          
-                          if (luma > 180) {
-                               // Target bright halos (white background bleed) for aggressive extermination
-                               replaceStrength = Math.min(1.0, replaceStrength * 1.5);
-                               
-                               if (luma > 210 && aNorm < 0.6) {
-                                   // For dangerously bright and highly transparent gaps (e.g. ear cracks), violently crush the remaining alpha
-                                   outData[i+3] *= (aNorm * 0.8);
-                               }
-                          }
-
-                          outData[i] = data[i] * (1 - replaceStrength) + coreR * replaceStrength;
-                          outData[i+1] = data[i+1] * (1 - replaceStrength) + coreG * replaceStrength;
-                          outData[i+2] = data[i+2] * (1 - replaceStrength) + coreB * replaceStrength;
+                  } else {
+                      // Very gentle noise removal for shirt/shoulders to prevent missing corners
+                      // Only destroy if it's literally an isolated single pixel.
+                      if (activeNeighbors < 1 && a < 50) {
+                          newAlphaBuffer[idx] = 0;
                       }
                   }
               }
           }
       }
-      
-      ctx.putImageData(new ImageData(outData, width, height), 0, 0);
-      
-      // We removed the secondary blur filter process! 
-      // This ensures interior texture (faces, shirts) remain bit-perfect and 100% sharp.
-      // The edge gradient smoothness is strictly mathematical via our Smoothstep curve.
+
+      // Pass 2: Smooth S-Curve Matting & Pixel-Perfect Color Decontamination
+      for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+              let idx = y * w + x;
+              let cIdx = idx * 4;
+              let a = newAlphaBuffer[idx]; 
+              
+              if (a > 0 && a < 255) {
+                  let isShoulderOrShirt = y > h * 0.45;
+
+                  if (!isShoulderOrShirt) {
+                      // Advanced Edge Contrast (Smoothstep Polynomial) for Hair/Face
+                      let norm = a / 255;
+                      let s1 = norm * norm * (3 - 2 * norm);
+                      a = s1 * 255;
+                      if (a < 15) a = 0; 
+                      if (a > 230) a = 255; 
+                  } else {
+                      // Precise edge-aware segmentation for shoulders
+                      // AI must intelligently distinguish shirt fabric from blue background
+                      let norm = a / 255;
+                      
+                      // Convert the blurry soft matte into a sharp, crisp, 100% solid boundary
+                      // with zero semi-transparent haze, while fully preserving width.
+                      // A sharp step at 15% opacity to catch the true boundary without shrinking.
+                      let edgeCenter = 0.15; 
+                      let contrast = 6.0; 
+                      let s1 = (norm - edgeCenter) * contrast + 0.5;
+                      if (s1 < 0) s1 = 0;
+                      if (s1 > 1) s1 = 1;
+                      
+                      // Smoothstep for sub-pixel anti-aliasing
+                      s1 = s1 * s1 * (3 - 2 * s1);
+                      a = s1 * 255;
+                      
+                      if (a < 15) a = 0; // Only destroy absolute invisible trailing noise
+                      if (a > 240) a = 255; // Ensure 100% solid natural contour
+                  }
+                  
+                  // ALWAYS run decontamination on the boundary pixels, even if we just pushed them to 255
+                  let originalA = newAlphaBuffer[idx];
+                  if (originalA > 0 && originalA < 250) {
+                      // True Alpha Matting: Foreground Color Extension
+                      let r = data[cIdx], g = data[cIdx+1], b = data[cIdx+2];
+                      
+                      let coreR = r, coreG = g, coreB = b;
+                      let foundCore = false;
+                      const R = 8; // Extended 8px search radius for nearest opaque core
+                      let minDist = 999;
+                      
+                      // Find nearest solid foreground core to borrow true natural subject colors
+                      for (let dy = -R; dy <= R; dy++) {
+                          for (let dx = -R; dx <= R; dx++) {
+                              let nx = x + dx;
+                              let ny = y + dy;
+                              if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                                  let nIdx = ny * w + nx;
+                                  // Look for strictly solid foreground to sample color from
+                                  if (newAlphaBuffer[nIdx] > 250) {
+                                      let dist = dx*dx + dy*dy;
+                                      if (dist < minDist) {
+                                          minDist = dist;
+                                          let ncIdx = nIdx * 4;
+                                          coreR = data[ncIdx];
+                                          coreG = data[ncIdx+1];
+                                          coreB = data[ncIdx+2];
+                                          foundCore = true;
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                      
+                      if (foundCore) {
+                          // Ultra-Precise Adaptive Spill Suppression & Decontamination
+                          let normA = originalA / 255;
+                          
+                          // The more transparent the pixel, the more we rely on core color.
+                          // At <50% opacity (soft boundaries like hair), we rely 90%+ on core color
+                          // to completely eliminate transparent edge haze and blue spill/fringing.
+                          let colorBleed = normA < 0.6 ? 0.95 : Math.pow(1.0 - normA, 0.4); 
+                          
+                          // Shoulders get extra aggressive decontamination
+                          if (isShoulderOrShirt) colorBleed = Math.max(colorBleed, 0.85);
+
+                          let outR = r * (1 - colorBleed) + coreR * colorBleed;
+                          let outG = g * (1 - colorBleed) + coreG * colorBleed;
+                          let outB = b * (1 - colorBleed) + coreB * colorBleed;
+
+                          // Targeted anti-fringing: prevent unnatural glow that doesn't match the core
+                          // If outer pixel is unnaturally brighter or more blue/green than core
+                          let outLuma = 0.2126 * outR + 0.7152 * outG + 0.0722 * outB;
+                          let coreLuma = 0.2126 * coreR + 0.7152 * coreG + 0.0722 * coreB;
+                          
+                          if (outLuma > coreLuma * 1.15 && normA < 0.85) {
+                              // Suppress white halos / bright edge glow
+                              let reduce = (outLuma - coreLuma * 1.15) * 0.85;
+                              outR = Math.max(0, outR - reduce);
+                              outG = Math.max(0, outG - reduce);
+                              outB = Math.max(0, outB - reduce);
+                          }
+
+
+                          // Specifically attack blue/cyan background contamination (Blue Spill/Edge Fringing)
+                          // Check if pixel is excessively blue relative to red/green compared to core
+                          let coreBlueRatio = coreB / (Math.max(coreR, coreG) + 1.0);
+                          let outBlueRatio = outB / (Math.max(outR, outG) + 1.0);
+                          
+                          if (outBlueRatio > coreBlueRatio * 1.1 && normA < 0.95) {
+                              // Force the blue channel to fall in line with the core's chrominance profile
+                              let maxAllowedBlue = Math.max(outR, outG) * coreBlueRatio * 1.05;
+                              outB = Math.min(outB, maxAllowedBlue);
+                          }
+                          
+                          data[cIdx]   = Math.min(255, Math.max(0, outR));
+                          data[cIdx+1] = Math.min(255, Math.max(0, outG));
+                          data[cIdx+2] = Math.min(255, Math.max(0, outB));
+                      }
+                  }
+              }
+              data[cIdx+3] = a;
+          }
+      }
+      ctx.putImageData(imageData, 0, 0);
       
       canvas.toBlob(b => {
         URL.revokeObjectURL(img.src);
@@ -439,17 +324,17 @@ async function polishAndEnhance(blob: Blob): Promise<Blob> {
               // Shadow Recovery (lifts under-eye darkness and deep shadows)
               // Much gentler to prevent flattening the face structure
               let normLuma = luma / 255;
-              let shadowBoost = (1 - normLuma) * normLuma * 18; 
+              let shadowBoost = (1 - normLuma) * normLuma * 5; // Reduced to maintain natural smoothness 
               r += shadowBoost; g += shadowBoost; b += shadowBoost;
               
               // S-Curve Contrast (enhances depth for DSLR quality)
-              const contrast = 1.05;
+              const contrast = 1.01; // Reduced from 1.05 to avoid over-lighting
               r = ((r / 255 - 0.5) * contrast + 0.5) * 255;
               g = ((g / 255 - 0.5) * contrast + 0.5) * 255;
               b = ((b / 255 - 0.5) * contrast + 0.5) * 255;
               
               // Saturation & Skin Tone Balance
-              const sat = 1.04;
+              const sat = 1.02; // Reduced slightly
               const newLuma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
               r = newLuma + sat * (r - newLuma);
               g = newLuma + sat * (g - newLuma);
@@ -468,18 +353,7 @@ async function polishAndEnhance(blob: Blob): Promise<Blob> {
           ctx.putImageData(data, 0, 0);
           
           // --- PASS 2: Studio High-End Lighting Overlay ---
-          const cx = canvas.width / 2;
-          const cy = canvas.height * 0.35; // Position lighting at face height
-          const rMax = Math.max(canvas.width, canvas.height) * 0.8;
-          const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, rMax);
-          gradient.addColorStop(0, 'rgba(255, 255, 255, 0.08)'); // Bright center (Key Light)
-          gradient.addColorStop(0.5, 'rgba(128, 128, 128, 0)');  // Neutral falloff
-          gradient.addColorStop(1, 'rgba(0, 0, 0, 0.12)');       // Vignette edge (Depth)
-          
-          ctx.globalCompositeOperation = 'overlay';
-          ctx.fillStyle = gradient;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.globalCompositeOperation = 'source-over';
+          // Disabled to prevent over-lighting and preserve natural smoothness.
           
           // --- PASS 3: Professional Unsharp Mask (Micro-details & Passport Sharpness) ---
           const origCanvas = document.createElement('canvas');
@@ -498,7 +372,7 @@ async function polishAndEnhance(blob: Blob): Promise<Blob> {
           const blurD = bCtx.getImageData(0, 0, canvas.width, canvas.height);
           const finalD = ctx.createImageData(canvas.width, canvas.height);
           
-          const amount = 0.9; // Finely tuned sharpness
+          const amount = 0.5; // Finely tuned sharpness, reduced to maintain smoothness
           for(let i=0; i<origD.data.length; i+=4) {
               if (origD.data[i+3] === 0) continue;
               

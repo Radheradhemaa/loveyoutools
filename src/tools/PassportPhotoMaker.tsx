@@ -176,7 +176,7 @@ export default function PassportPhotoMaker() {
   const [statusText, setStatusText] = useState('');
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: any;
     if (isProcessing) {
       setTimer(1);
       interval = setInterval(() => {

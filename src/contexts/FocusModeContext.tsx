@@ -10,8 +10,10 @@ const FocusModeContext = createContext<FocusModeContextType | undefined>(undefin
 export function FocusModeProvider({ children }: { children: ReactNode }) {
   const [isFocusMode, setIsFocusMode] = useState(false);
 
+  const value = React.useMemo(() => ({ isFocusMode, setIsFocusMode }), [isFocusMode]);
+
   return (
-    <FocusModeContext.Provider value={{ isFocusMode, setIsFocusMode }}>
+    <FocusModeContext.Provider value={value}>
       {children}
     </FocusModeContext.Provider>
   );
