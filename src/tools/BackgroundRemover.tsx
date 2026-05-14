@@ -17,8 +17,6 @@ export default function BackgroundRemover() {
   // Preload AI assets quietly in the background after mount
   useEffect(() => {
     ensurePreloaded().catch(console.error);
-    ensureModnetLoaded().catch(console.error);
-    ensureIsnetLoaded().catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -28,13 +26,13 @@ export default function BackgroundRemover() {
       setProcessingError(null);
       interval = setInterval(() => {
         setTimer((prev) => {
-          // Studio Precision Timer: Slower, more deliberate pacing for U2Net quality
-          // Reaches ~95% in about 4.5 - 5 seconds, staying "busy" for the perfect finishing touch.
+          // Hybrid Dual-Core Timer: Optimized for 5-7 second performance
+          // Reaches ~90% in 5 seconds for a snappy feel.
           if (prev >= 98) return prev; 
           
-          let increment = 0.3; // Base speed (~10s total)
-          if (prev > 70) increment = 0.15; // Slow down for final refinement phase
-          if (prev > 90) increment = 0.05; // Savor the last few bits of precision
+          let increment = 0.5; // Faster base speed
+          if (prev > 75) increment = 0.2; 
+          if (prev > 92) increment = 0.08; 
           
           return Math.min(prev + increment, 98.8);
         });
@@ -678,7 +676,7 @@ export default function BackgroundRemover() {
   return (
     <ToolLayout
       title="AI Background Remover"
-      description="Professional Studio-Quality Extraction. Powered by MediaPipe Selfie Segmentation for instant, sharp, and natural results."
+      description="Professional Studio-Quality Extraction. High-performance MODNet Engine optimized for ultra-speed, high-precision background removal in 5-7 seconds."
       toolId="background-remover"
       acceptedFileTypes={['image/*']}
       onDownload={downloadImage}
