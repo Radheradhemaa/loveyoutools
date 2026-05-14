@@ -184,15 +184,15 @@ export async function removeBackground(
         const maskIsnet = getMask(resIsnet);
         const maskU2net = getMask(resU2net);
 
-        // Load original image to get dimensions
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        await new Promise((res) => { img.onload = res; img.src = imageSrc; });
+        // Load Full Original Image to get maximum quality output
+        const origImg = new Image();
+        origImg.crossOrigin = 'anonymous';
+        await new Promise((res) => { origImg.onload = res; origImg.src = imageSrcForDownscale; });
 
         const canvas = document.createElement('canvas');
-        canvas.width = img.width; canvas.height = img.height;
+        canvas.width = origImg.width; canvas.height = origImg.height;
         const ctx = canvas.getContext('2d')!;
-        ctx.drawImage(img, 0, 0);
+        ctx.drawImage(origImg, 0, 0);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const pixels = imageData.data;
 
@@ -243,6 +243,15 @@ export async function removeBackground(
                 if (aIsnet > 200 && aU2net > 200) finalA = Math.max(finalA, 255);
             } else {
                 finalA = dataIsnet ? aIsnet : aU2net;
+            }
+
+            // Stricter Thresholding to eradicate faint distant objects (chairs, shadows)
+            if (finalA < 90) {
+                finalA = 0;
+            } else if (finalA > 220) {
+                finalA = 255;
+            } else {
+                finalA = Math.pow((finalA - 90) / 130, 1.2) * 255;
             }
 
             pixels[i + 3] = Math.min(255, Math.max(0, Math.round(finalA)));
@@ -348,21 +357,109 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
         components.sort((a,b) => b.size - a.size);
         const maxSize = components[0].size;
         
-        // Keep components that are realistically parts of a subject
-        components.forEach(c => {
-          const isLarge = c.size > maxSize * 0.005;
-          const isCentral = Math.abs(c.cx - w/2) < w*0.3 && Math.abs(c.cy - h/2) < h*0.3;
-          const isSignificant = c.size > 200;
+        // Aggressive background object removal - keep only the primary subject and highly relevant strong attachments
+        components.forEach((c, index) => {
+          // Always keep the absolute largest foreground component
+          if (index === 0) {
+            c.indices.forEach(i => finalAlpha[i] = alphaBuffer[i]);
+            return;
+          }
           
-          if (isLarge || isCentral || isSignificant) {
+          const isMegaComponent = c.size > maxSize * 0.3; // Must be very large
+          const centralX = c.cx / w;
+          const centralY = c.cy / h;
+          const isCentral = centralX > 0.25 && centralX < 0.75 && centralY > 0.1 && centralY < 0.9;
+          const isLargeAndCentral = isCentral && c.size > maxSize * 0.1;
+
+          if (isMegaComponent || isLargeAndCentral) {
             c.indices.forEach(i => finalAlpha[i] = alphaBuffer[i]);
           }
         });
       }
       
-      // Step 2: Edge Smoothing
-      for (let i = 0; i < data.length; i += 4) {
-        data[i+3] = finalAlpha[i/4];
+      // Step 2: Edge Refinement and Defringing
+      // We avoid aggressive erosion because it deletes fine details like hair and shoulders.
+      // Instead, we use a targeted edge tighter (1px) and a light feather to remove white halos.
+      const tightenedAlpha = new Uint8ClampedArray(w * h);
+      
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = y * w + x;
+          const a = finalAlpha[idx];
+          
+          if (a === 0) {
+            tightenedAlpha[idx] = 0;
+            continue;
+          }
+
+          // Very light edge tightening (soft min filter) to reduce halos
+          let minA = a;
+          const neighbors = [
+             (y-1)*w + x, (y+1)*w + x, y*w + (x-1), y*w + (x+1)
+          ];
+          
+          let edgeCount = 0;
+          for (let n of neighbors) {
+              if (n >= 0 && n < w*h) {
+                 const nA = finalAlpha[n];
+                 if (nA < minA) minA = nA;
+                 if (nA < 200) edgeCount++;
+              } else {
+                 minA = 0;
+                 edgeCount++;
+              }
+          }
+
+          // If we are at an edge, we tighten (erode) slightly
+          if (edgeCount > 0) {
+             // For semi-transparent pixels (hair), we keep them mostly intact
+             // For solid edges, we shrink them slightly
+             if (a > 100) {
+                tightenedAlpha[idx] = minA; // Shrink
+             } else {
+                tightenedAlpha[idx] = a; // Preserve soft hair
+             }
+          } else {
+             tightenedAlpha[idx] = a;
+          }
+        }
+      }
+
+      // Step 3: Gentle Feather (Box Blur on Alpha) to soften the cut and eliminate harsh jagged edges
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = y * w + x;
+          const centerA = tightenedAlpha[idx];
+          
+          // Optimization: Skip fully transparent or fully opaque non-edges
+          if (centerA === 0 || centerA === 255) {
+             let isUniform = true;
+             if (y>0 && tightenedAlpha[idx-w] !== centerA) isUniform = false;
+             else if (y<h-1 && tightenedAlpha[idx+w] !== centerA) isUniform = false;
+             else if (x>0 && tightenedAlpha[idx-1] !== centerA) isUniform = false;
+             else if (x<w-1 && tightenedAlpha[idx+1] !== centerA) isUniform = false;
+             
+             if (isUniform) {
+                 data[idx * 4 + 3] = centerA;
+                 continue;
+             }
+          }
+
+          let sum = 0;
+          let count = 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            const ny = y + dy;
+            if (ny < 0 || ny >= h) continue;
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = x + dx;
+              if (nx >= 0 && nx < w) {
+                sum += tightenedAlpha[ny * w + nx];
+                count++;
+              }
+            }
+          }
+          data[idx * 4 + 3] = count > 0 ? (sum / count) : 0;
+        }
       }
       
       ctx.putImageData(imageData, 0, 0);

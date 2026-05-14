@@ -1,16 +1,18 @@
 import { pipeline, env } from '@huggingface/transformers';
 env.allowLocalModels = false;
-
 async function test() {
-  try {
-    const pipe = await pipeline('image-segmentation', 'Xenova/modnet', { device: 'wasm' });
-    console.log("Success! modnet wasm pipeline created", typeof pipe);
-    
-    // Attempt base64
-    const res = await pipe('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
-    console.log("Result", res.length);
-  } catch (e) {
-    console.error("wasm modnet pipeline failed:", e.message);
+  const models = [
+    'briaai/RMBG-1.4',
+    'Xenova/rmbg-1.4',
+    'onnx-community/modnet',
+  ]; 
+  for (const model of models) {
+     try {
+       await pipeline('image-segmentation', model, { device: 'cpu' });
+       console.log("Success:", model);
+     } catch (e) {
+       console.error("Failed:", model, e.message);
+     }
   }
 }
 test();
