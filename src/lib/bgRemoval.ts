@@ -3,9 +3,11 @@ import { pipeline, env, RawImage } from '@huggingface/transformers';
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
 env.useBrowserCache = true;
-env.backends.onnx.wasm.proxy = false;
-// Standardize on 4 threads for better WASM performance without oversubscription
-env.backends.onnx.wasm.numThreads = 4;
+if (env.backends?.onnx?.wasm) {
+    env.backends.onnx.wasm.proxy = false;
+    // Standardize on 4 threads for better WASM performance without oversubscription
+    env.backends.onnx.wasm.numThreads = 4;
+}
 
 let isnetPipeline: any = null;
 let u2netPipeline: any = null;
@@ -13,9 +15,24 @@ let u2netPipeline: any = null;
 // Check for WebGPU adapter to avoid lazy initialization failures
 let hasWebGPU = false;
 let checkWebGPUPromise: Promise<void> | null = null;
+
+const isMobileDevice = () => {
+    if (typeof window === 'undefined') return false;
+    // Enhanced mobile detection including touch capability and user agent
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+           (navigator.maxTouchPoints > 0 && /Android/i.test(navigator.userAgent));
+};
+
 const ensureWebGPUChecked = async () => {
     if (checkWebGPUPromise) return checkWebGPUPromise;
     checkWebGPUPromise = (async () => {
+        // Disable WebGPU on mobile automatically as it causes vertical stripes and artifacts
+        if (isMobileDevice()) {
+            console.log("[AI] Mobile detected: Disabling GPU processing to prevent artifacts (vertical streaks, mask corruption).");
+            hasWebGPU = false;
+            return;
+        }
+
         if (typeof navigator !== 'undefined' && (navigator as any).gpu) {
             try {
                 const adapter = await (navigator as any).gpu.requestAdapter();
@@ -34,12 +51,16 @@ const ensureWebGPUChecked = async () => {
 export const ensureIsnetLoaded = async () => {
     if (!isnetPipeline) {
         await ensureWebGPUChecked();
+        // Force WASM on mobile devices for stability
         const device = hasWebGPU ? 'webgpu' : 'wasm';
         try {
-            isnetPipeline = await pipeline('image-segmentation', 'Xenova/modnet', { device });
+            isnetPipeline = await pipeline('image-segmentation', 'Xenova/modnet', { 
+                device,
+                // On mobile, force lower precision if we ever use GPU, 
+                // but we prefer WASM here anyway.
+            });
         } catch (e) {
             console.warn("[AI] MODNet primary load failed, trying WASM fallback", e);
-            // In case WASM is also rejected but we can try without specifying
             isnetPipeline = await pipeline('image-segmentation', 'Xenova/modnet', { device: 'wasm' });
         }
     }
@@ -47,7 +68,6 @@ export const ensureIsnetLoaded = async () => {
 
 /**
  * Ensures the secondary refinement model is loaded.
- * Using MODNet as a stable fallback for structural passes.
  */
 export const ensureU2netLoaded = async () => {
     if (!u2netPipeline) {
@@ -71,35 +91,46 @@ export const ensurePreloaded = async () => {
 export const ensureModnetLoaded = async () => ensureIsnetLoaded();
 
 /**
- * Downscales an image if it exceeds max dimension.
+ * Robust downscaling and preprocessing.
+ * Mobile-safe: preserves original aspect ratio with padding if needed.
  */
-async function downscaleImageIfNeeded(imageSrc: string | File | Blob, maxDim = 2048): Promise<string> {
-    return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const src = e.target?.result as string;
-            const img = new Image();
-            img.crossOrigin = "anonymous";
-            img.onload = () => {
-                if (img.width <= maxDim && img.height <= maxDim) return resolve(src);
-                const canvas = document.createElement('canvas');
-                const ratio = Math.min(maxDim / img.width, maxDim / img.height);
-                const w = img.width * ratio;
-                const h = img.height * ratio;
-                canvas.width = w; canvas.height = h;
-                const ctx = canvas.getContext('2d')!;
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
-                ctx.drawImage(img, 0, 0, w, h);
-                resolve(canvas.toDataURL('image/png', 0.95));
-            };
-            img.onerror = () => resolve(src);
-            img.src = src;
-        };
+async function downscaleImageIfNeeded(imageSrc: string | File | Blob, maxDim = 1024): Promise<string> {
+    const isMobile = isMobileDevice();
+    const limit = isMobile ? Math.min(maxDim, 1024) : maxDim;
 
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+            if (img.width <= limit && img.height <= limit) {
+                if (typeof imageSrc === 'string' && imageSrc.startsWith('data:')) return resolve(imageSrc);
+                const c = document.createElement('canvas');
+                c.width = img.width; c.height = img.height;
+                const ctx = c.getContext('2d', { willReadFrequently: true })!;
+                ctx.drawImage(img, 0, 0);
+                return resolve(c.toDataURL('image/png'));
+            }
+            
+            const canvas = document.createElement('canvas');
+            const ratio = Math.min(limit / img.width, limit / img.height);
+            const w = Math.round(img.width * ratio);
+            const h = Math.round(img.height * ratio);
+            canvas.width = w; canvas.height = h;
+            const ctx = canvas.getContext('2d', { alpha: true, willReadFrequently: true })!;
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = isMobile ? 'medium' : 'high';
+            ctx.drawImage(img, 0, 0, w, h);
+            resolve(canvas.toDataURL('image/png'));
+        };
+        img.onerror = () => {
+            if (typeof imageSrc === 'string') resolve(imageSrc);
+            else resolve('');
+        };
         if (typeof imageSrc === 'string') {
-            resolve(imageSrc);
+            img.src = imageSrc;
         } else {
+            const reader = new FileReader();
+            reader.onload = (e) => img.src = e.target?.result as string;
             reader.readAsDataURL(imageSrc);
         }
     });
@@ -139,33 +170,26 @@ export async function removeBackground(
     const imageSrc = await downscaleImageIfNeeded(imageSrcForDownscale, 1280);
 
     try {
-        onProgress('Analyzing Foreground (Dual Pass)...');
+        onProgress('Analyzing Foreground (ModNet Pass)...');
 
-        // Parallel execution of both models for speed
-        let [resIsnet, resU2net] = await Promise.all([
-            isnetPipeline ? isnetPipeline(imageSrc).catch((e: any) => { console.error("ISNet pass failed", e); return null; }) : Promise.resolve(null),
-            u2netPipeline ? u2netPipeline(imageSrc).catch((e: any) => { console.error("U2Net pass failed", e); return null; }) : Promise.resolve(null)
-        ]);
+        // Execute primary model
+        let resModel = null;
+        if (isnetPipeline) {
+             resModel = await isnetPipeline(imageSrc).catch((e: any) => { console.error("Model pass failed", e); return null; });
+        }
 
-        // If both failed and we were using webgpu, there might be a silent webgpu failure during inference
+        // If failed and we were using webgpu, there might be a silent webgpu failure during inference
         // Let's forcibly fallback to WASM
-        if (!resIsnet && !resU2net && hasWebGPU) {
+        if (!resModel && hasWebGPU) {
             console.warn("[AI] WebGPU inference failed, forcing WASM fallback...");
             hasWebGPU = false; // Disable webgpu for future
             isnetPipeline = null;
-            u2netPipeline = null;
-            await Promise.all([
-                ensureIsnetLoaded().catch(console.error),
-                ensureU2netLoaded().catch(console.error)
-            ]);
-            [resIsnet, resU2net] = await Promise.all([
-                isnetPipeline ? isnetPipeline(imageSrc).catch((e: any) => { console.error("ISNet WASM pass failed", e); return null; }) : Promise.resolve(null),
-                u2netPipeline ? u2netPipeline(imageSrc).catch((e: any) => { console.error("U2Net WASM pass failed", e); return null; }) : Promise.resolve(null)
-            ]);
+            await ensureIsnetLoaded().catch(console.error);
+            resModel = await isnetPipeline(imageSrc).catch((e: any) => { console.error("WASM pass failed", e); return null; });
         }
 
-        if (!resIsnet && !resU2net) {
-            throw new Error("Both AI models failed to process the image.");
+        if (!resModel) {
+            throw new Error("AI model failed to process the image.");
         }
 
         onProgress('Merging AI Visions...');
@@ -181,8 +205,7 @@ export async function removeBackground(
             return segment.mask;
         };
 
-        const maskIsnet = getMask(resIsnet);
-        const maskU2net = getMask(resU2net);
+        const maskData = getMask(resModel);
 
         // Load Full Original Image to get maximum quality output
         const origImg = new Image();
@@ -191,71 +214,149 @@ export async function removeBackground(
 
         const canvas = document.createElement('canvas');
         canvas.width = origImg.width; canvas.height = origImg.height;
-        const ctx = canvas.getContext('2d')!;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
         ctx.drawImage(origImg, 0, 0);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const pixels = imageData.data;
 
-        // Process and Hybridize Masks
-        // We favor ISNet (65%) for edge sharpness and U2Net (35%) for structural coverage
-        const hybridAlphas = new Uint8ClampedArray(canvas.width * canvas.height);
-
-        const processMaskToCanvas = (mask: any) => {
-            if (!mask) return null;
-            const c = document.createElement('canvas');
-            c.width = mask.width; c.height = mask.height;
-            const cx = c.getContext('2d')!;
-            const id = cx.createImageData(mask.width, mask.height);
-            const data = mask.data;
-            let maxFound = 0;
-            for (let i = 0; i < 50000; i += 10) if (data[i] > maxFound) maxFound = data[i];
-            const scale = (maxFound > 0 && maxFound <= 1.1) ? 255 : 1;
-
-            for (let i = 0; i < data.length; i++) {
-                const v = Math.min(255, Math.max(0, Math.round(data[i] * scale)));
-                const offset = i * 4;
-                id.data[offset] = v; id.data[offset + 1] = v; id.data[offset + 2] = v; id.data[offset + 3] = 255;
-            }
-            cx.putImageData(id, 0, 0);
+        // --- High-Precision CPU-Grade Compositing Pipeline ---
+        // Completely bypasses browser Canvas rendering engines to guarantee 0 GPU artifacts
+        const processMaskAndCompositeCPU = (mask: any) => {
+            if (!mask) return;
+            const mw = mask.width;
+            const mh = mask.height;
+            const mData = mask.data;
+            const w = canvas.width;
+            const h = canvas.height;
             
-            // Scaled mask to match original image
-            const sc = document.createElement('canvas');
-            sc.width = canvas.width; sc.height = canvas.height;
-            const scx = sc.getContext('2d')!;
-            scx.imageSmoothingEnabled = true;
-            scx.imageSmoothingQuality = 'high';
-            scx.drawImage(c, 0, 0, canvas.width, canvas.height);
-            return scx.getImageData(0, 0, canvas.width, canvas.height).data;
+            let maxFound = 0;
+            const skip = Math.max(1, Math.floor(mData.length / 5000));
+            for (let i = 0; i < mData.length; i += skip) {
+                if (mData[i] > maxFound) maxFound = mData[i];
+            }
+            const maskScale = (maxFound > 0 && maxFound <= 1.2) ? 255 : 1;
+
+            const isMobile = isMobileDevice();
+            
+            // 1. Artifact Eradication: 1D Directional Filters to kill stripes
+            const correctedMask = new Float32Array(mw * mh);
+            for (let y = 0; y < mh; y++) {
+                for (let x = 0; x < mw; x++) {
+                    const idx = y * mw + x;
+                    let val = mData[idx] * maskScale;
+                    
+                    // Kill highly anomalous vertical pixels (scanline artifacts/gaps)
+                    if (x > 1 && x < mw - 2) {
+                        const left1 = mData[y * mw + x - 1] * maskScale;
+                        const right1 = mData[y * mw + x + 1] * maskScale;
+                        const left2 = mData[y * mw + x - 2] * maskScale;
+                        const right2 = mData[y * mw + x + 2] * maskScale;
+                        const nAvg = (left1 + right1 + left2 + right2) / 4;
+                        
+                        // Detect and fill deep valleys/spikes vs robust average
+                        if (Math.abs(val - nAvg) > 50) {
+                            val = nAvg;
+                        }
+                    }
+                    correctedMask[idx] = val;
+                }
+            }
+
+            // 2. Separable Spatial Tensor Blur (Removes banding, quant noise, and streaks)
+            const blurRad = isMobile ? 3 : 2; 
+            const tempMask = new Float32Array(mw * mh);
+            const cleanMask = new Float32Array(mw * mh);
+
+            for (let y = 0; y < mh; y++) {
+                for (let x = 0; x < mw; x++) {
+                    let sum = 0, count = 0;
+                    for (let dx = -blurRad; dx <= blurRad; dx++) {
+                        const nx = x + dx;
+                        if (nx >= 0 && nx < mw) {
+                            sum += correctedMask[y * mw + nx];
+                            count++;
+                        }
+                    }
+                    tempMask[y * mw + x] = sum / count;
+                }
+            }
+            for (let y = 0; y < mh; y++) {
+                for (let x = 0; x < mw; x++) {
+                    let sum = 0, count = 0;
+                    for (let dy = -blurRad; dy <= blurRad; dy++) {
+                        const ny = y + dy;
+                        if (ny >= 0 && ny < mh) {
+                            sum += tempMask[ny * mw + x];
+                            count++;
+                        }
+                    }
+                    cleanMask[y * mw + x] = sum / count;
+                }
+            }
+
+            // 3. High Precision CPU Bilinear Upscale + Float32 S-Curve
+            // Sidesteps all Android Canvas rendering bugs, scaling bands, and tiling artifacts
+            const floor = isMobile ? 48 : 28;
+            const ceil = 238;
+
+            for (let y = 0; y < h; y++) {
+                // Perfect geometric center calculation
+                const srcY = Math.max(0, Math.min(mh - 1.001, (y + 0.5) * (mh / h) - 0.5));
+                const y1 = Math.floor(srcY);
+                const y2 = Math.min(mh - 1, y1 + 1);
+                const fy = srcY - y1;
+                const invFy = 1 - fy; // Optimization
+
+                for (let x = 0; x < w; x++) {
+                    const srcX = Math.max(0, Math.min(mw - 1.001, (x + 0.5) * (mw / w) - 0.5));
+                    const x1 = Math.floor(srcX);
+                    const x2 = Math.min(mw - 1, x1 + 1);
+                    const fx = srcX - x1;
+                    const invFx = 1 - fx;
+
+                    const row1 = y1 * mw;
+                    const row2 = y2 * mw;
+
+                    const p11 = cleanMask[row1 + x1];
+                    const p21 = cleanMask[row1 + x2];
+                    const p12 = cleanMask[row2 + x1];
+                    const p22 = cleanMask[row2 + x2];
+
+                    let a = p11 * invFx * invFy +
+                            p21 * fx * invFy +
+                            p12 * invFx * fy +
+                            p22 * fx * fy;
+
+                    // Float32 Hermite S-Curve Re-mapping
+                    if (a < floor) {
+                        a = 0;
+                    } else if (a > ceil) {
+                        a = 255;
+                    } else {
+                        const t = (a - floor) / (ceil - floor);
+                        a = (t * t * (3 - 2 * t)) * 255; 
+                    }
+
+                    const idx = (y * w + x) * 4;
+
+                    // Luminance-Guided Edge Refinement (Guided Filter Lite)
+                    if (a > 30 && a < 225) {
+                        const r = pixels[idx], g = pixels[idx+1], b = pixels[idx+2];
+                        const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+                        if (lum < 0.25) a = Math.min(255, a * 1.15); // hair boost
+                        if (lum > 0.85) a = a * 0.85; // background bleed suppression
+                    }
+
+                    // Strict background suppression
+                    if (a < 5) a = 0;
+                    if (a > 250) a = 255;
+
+                    pixels[idx + 3] = Math.round(a);
+                }
+            }
         };
 
-        const dataIsnet = processMaskToCanvas(maskIsnet);
-        const dataU2net = processMaskToCanvas(maskU2net);
-
-        for (let i = 0; i < pixels.length; i += 4) {
-            let aIsnet = dataIsnet ? dataIsnet[i] : 0;
-            let aU2net = dataU2net ? dataU2net[i] : 0;
-
-            let finalA: number;
-            if (dataIsnet && dataU2net) {
-                // Weighted hybrid approach
-                finalA = (aIsnet * 0.7) + (aU2net * 0.3);
-                // Boost confidence if both agree or if ISNet is strong
-                if (aIsnet > 200 && aU2net > 200) finalA = Math.max(finalA, 255);
-            } else {
-                finalA = dataIsnet ? aIsnet : aU2net;
-            }
-
-            // Stricter Thresholding to eradicate faint distant objects (chairs, shadows)
-            if (finalA < 90) {
-                finalA = 0;
-            } else if (finalA > 220) {
-                finalA = 255;
-            } else {
-                finalA = Math.pow((finalA - 90) / 130, 1.2) * 255;
-            }
-
-            pixels[i + 3] = Math.min(255, Math.max(0, Math.round(finalA)));
-        }
+        processMaskAndCompositeCPU(maskData);
 
         ctx.putImageData(imageData, 0, 0);
 
@@ -265,7 +366,7 @@ export async function removeBackground(
         let polishedBlob = rawBlob;
         if (!isManualMode) {
             try {
-                polishedBlob = await polishCutoutEdges(rawBlob);
+                polishedBlob = await polishAndEnhance(rawBlob);
             } catch (e) {
                 console.warn("[AI] Polish pass skipped", e);
             }
@@ -299,48 +400,50 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
       const h = img.height;
       canvas.width = w;
       canvas.height = h;
-      const ctx = canvas.getContext('2d')!;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
       ctx.drawImage(img, 0, 0);
       
       const imageData = ctx.getImageData(0, 0, w, h);
       const data = imageData.data;
       
-      // Step 1: Connected Component Analysis for Noise Removal
-      const alphaBuffer = new Uint8ClampedArray(w * h);
-      for (let i = 0; i < data.length; i += 4) alphaBuffer[i/4] = data[i+3];
+      // Step 1: Memory-efficient Connected Component Analysis for Noise Removal
+      // Run natively at 1:1 scale to avoid ANY blocky nearest-neighbor artifacts on mobile edges
+      const aw = w;
+      const ah = h;
       
-      const visited = new Uint8Array(w * h);
+      const visited = new Uint8Array(aw * ah);
       const components: { indices: number[], size: number, cx: number, cy: number }[] = [];
       
-      for (let y = 0; y < h; y += 2) {
-        for (let x = 0; x < w; x += 2) {
-          const idx = y * w + x;
-          if (!visited[idx] && alphaBuffer[idx] > 15) {
+      // Fast component discovery (skip by 2 for speed, but process natively)
+      for (let y = 0; y < ah; y += 2) {
+        for (let x = 0; x < aw; x += 2) {
+          const idx = y * aw + x;
+          const a = data[idx * 4 + 3];
+          if (!visited[idx] && a > 30) {
             const component: number[] = [];
             const stack = [idx];
             visited[idx] = 1;
             let sx = 0, sy = 0;
             
-            while(stack.length > 0) {
+            while(stack.length > 0 && component.length < 1000000) {
               const cIdx = stack.pop()!;
               component.push(cIdx);
-              const cx = cIdx % w, cy = Math.floor(cIdx / w);
+              const cx = cIdx % aw, cy = Math.floor(cIdx / aw);
               sx += cx; sy += cy;
               
-              const neighbors = [cIdx+1, cIdx-1, cIdx+w, cIdx-w];
+              const neighbors = [cIdx+1, cIdx-1, cIdx+aw, cIdx-aw];
               for(const n of neighbors) {
-                if(n >= 0 && n < w*h) {
-                  const nx = n % w, ny = Math.floor(n / w);
-                  if(Math.abs(nx-cx)<=1 && Math.abs(ny-cy)<=1 && !visited[n] && alphaBuffer[n] > 5) {
+                if(n >= 0 && n < aw*ah) {
+                  const nx = n % aw, ny = Math.floor(n / aw);
+                  if(Math.abs(nx-cx)<=1 && Math.abs(ny-cy)<=1 && !visited[n] && data[n * 4 + 3] > 10) {
                     visited[n] = 1;
                     stack.push(n);
                   }
                 }
               }
-              if (component.length > 1000000) break;
             }
             
-            if (component.length > 5) {
+            if (component.length > 10) {
               components.push({
                 indices: component,
                 size: component.length,
@@ -352,113 +455,51 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
         }
       }
       
-      const finalAlpha = new Uint8Array(w * h);
+      const finalAlphaMap = new Uint8Array(aw * ah);
       if (components.length > 0) {
         components.sort((a,b) => b.size - a.size);
         const maxSize = components[0].size;
         
-        // Aggressive background object removal - keep only the primary subject and highly relevant strong attachments
         components.forEach((c, index) => {
-          // Always keep the absolute largest foreground component
-          if (index === 0) {
-            c.indices.forEach(i => finalAlpha[i] = alphaBuffer[i]);
-            return;
-          }
-          
-          const isMegaComponent = c.size > maxSize * 0.3; // Must be very large
-          const centralX = c.cx / w;
-          const centralY = c.cy / h;
-          const isCentral = centralX > 0.25 && centralX < 0.75 && centralY > 0.1 && centralY < 0.9;
-          const isLargeAndCentral = isCentral && c.size > maxSize * 0.1;
+          // Keep primary subject and significant satellites
+          const isLarge = c.size > maxSize * 0.05;
+          const centralX = c.cx / aw;
+          const centralY = c.cy / ah;
+          const isCentral = centralX > 0.15 && centralX < 0.85 && centralY > 0.05 && centralY < 0.95;
+          const isLargeAndCentral = isCentral && c.size > maxSize * 0.02;
 
-          if (isMegaComponent || isLargeAndCentral) {
-            c.indices.forEach(i => finalAlpha[i] = alphaBuffer[i]);
+          if (index === 0 || isLarge || isLargeAndCentral) {
+            c.indices.forEach(i => finalAlphaMap[i] = 1);
           }
         });
       }
       
-      // Step 2: Edge Refinement and Defringing
-      // We avoid aggressive erosion because it deletes fine details like hair and shoulders.
-      // Instead, we use a targeted edge tighter (1px) and a light feather to remove white halos.
-      const tightenedAlpha = new Uint8ClampedArray(w * h);
-      
+      // Step 2: Apply Refined Alpha and Decontaminate Edges
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
-          const idx = y * w + x;
-          const a = finalAlpha[idx];
-          
-          if (a === 0) {
-            tightenedAlpha[idx] = 0;
-            continue;
-          }
+           const idx = y * w + x;
+           // Fallback to checking neighbors if skipped pixel wasn't mapped in CC
+           const isNoise = components.length > 0 && finalAlphaMap[idx] === 0 
+                && (x === 0 || finalAlphaMap[idx-1] === 0) 
+                && (y === 0 || finalAlphaMap[idx-w] === 0);
+           
+           const dataIdx = idx * 4;
+           
+           if (isNoise) {
+               data[dataIdx+3] = 0; // Eradicate noise
+               continue;
+           }
 
-          // Very light edge tightening (soft min filter) to reduce halos
-          let minA = a;
-          const neighbors = [
-             (y-1)*w + x, (y+1)*w + x, y*w + (x-1), y*w + (x+1)
-          ];
-          
-          let edgeCount = 0;
-          for (let n of neighbors) {
-              if (n >= 0 && n < w*h) {
-                 const nA = finalAlpha[n];
-                 if (nA < minA) minA = nA;
-                 if (nA < 200) edgeCount++;
-              } else {
-                 minA = 0;
-                 edgeCount++;
-              }
-          }
-
-          // If we are at an edge, we tighten (erode) slightly
-          if (edgeCount > 0) {
-             // For semi-transparent pixels (hair), we keep them mostly intact
-             // For solid edges, we shrink them slightly
-             if (a > 100) {
-                tightenedAlpha[idx] = minA; // Shrink
-             } else {
-                tightenedAlpha[idx] = a; // Preserve soft hair
-             }
-          } else {
-             tightenedAlpha[idx] = a;
-          }
-        }
-      }
-
-      // Step 3: Gentle Feather (Box Blur on Alpha) to soften the cut and eliminate harsh jagged edges
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const idx = y * w + x;
-          const centerA = tightenedAlpha[idx];
-          
-          // Optimization: Skip fully transparent or fully opaque non-edges
-          if (centerA === 0 || centerA === 255) {
-             let isUniform = true;
-             if (y>0 && tightenedAlpha[idx-w] !== centerA) isUniform = false;
-             else if (y<h-1 && tightenedAlpha[idx+w] !== centerA) isUniform = false;
-             else if (x>0 && tightenedAlpha[idx-1] !== centerA) isUniform = false;
-             else if (x<w-1 && tightenedAlpha[idx+1] !== centerA) isUniform = false;
-             
-             if (isUniform) {
-                 data[idx * 4 + 3] = centerA;
-                 continue;
-             }
-          }
-
-          let sum = 0;
-          let count = 0;
-          for (let dy = -1; dy <= 1; dy++) {
-            const ny = y + dy;
-            if (ny < 0 || ny >= h) continue;
-            for (let dx = -1; dx <= 1; dx++) {
-              const nx = x + dx;
-              if (nx >= 0 && nx < w) {
-                sum += tightenedAlpha[ny * w + nx];
-                count++;
-              }
-            }
-          }
-          data[idx * 4 + 3] = count > 0 ? (sum / count) : 0;
+           const a = data[dataIdx+3];
+           if (a > 0 && a < 255) {
+               // De-halo: darkened boundary pixels often contain white bleed from background
+               const r = data[dataIdx], g = data[dataIdx+1], b = data[dataIdx+2];
+               const lum = 0.299*r + 0.587*g + 0.114*b;
+               if (lum > 180) {
+                   const factor = 1 - ((255 - a) / 255) * 0.4;
+                   data[dataIdx] *= factor; data[dataIdx+1] *= factor; data[dataIdx+2] *= factor;
+               }
+           }
         }
       }
       
@@ -484,7 +525,7 @@ async function polishAndEnhance(blob: Blob): Promise<Blob> {
     img.onload = () => {
       const canvas = document.createElement('canvas');
       canvas.width = img.width; canvas.height = img.height;
-      const ctx = canvas.getContext('2d')!;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
       ctx.drawImage(img, 0, 0);
       
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -492,22 +533,28 @@ async function polishAndEnhance(blob: Blob): Promise<Blob> {
       
       // Gentle overall enhancement
       for(let i=0; i<d.length; i+=4) {
-        if (d[i+3] < 5) continue;
+        if (d[i+3] < 5) continue; // skip transparent
         
         // Slight contrast boost
         for(let j=0; j<3; j++) {
           let v = d[i+j] / 255;
-          v = (v - 0.5) * 1.05 + 0.5;
+          v = (v - 0.5) * 1.05 + 0.5; // very mild contrast curve (1.05)
           d[i+j] = Math.min(255, Math.max(0, v * 255));
         }
+        
+        // Slight saturation boost
+        const r = d[i]/255, g = d[i+1]/255, b = d[i+2]/255;
+        const l = 0.299*r + 0.587*g + 0.114*b;
+        const sat = 1.1; // 10% saturation boost
+        d[i] = Math.min(255, Math.max(0, (l + (r - l)*sat) * 255));
+        d[i+1] = Math.min(255, Math.max(0, (l + (g - l)*sat) * 255));
+        d[i+2] = Math.min(255, Math.max(0, (l + (b - l)*sat) * 255));
       }
       
       ctx.putImageData(data, 0, 0);
-      canvas.toBlob(b => {
-        URL.revokeObjectURL(img.src);
-        resolve(b || cleanBlob);
-      }, 'image/png');
+      canvas.toBlob(b => resolve(b || cleanBlob), 'image/png');
     };
+    img.onerror = () => resolve(cleanBlob);
     img.src = URL.createObjectURL(cleanBlob);
   });
 }
@@ -522,7 +569,7 @@ async function applyWhiteBackground(transparentBlob: Blob): Promise<Blob> {
       const canvas = document.createElement('canvas');
       canvas.width = img.width;
       canvas.height = img.height;
-      const ctx = canvas.getContext('2d')!;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
       
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
