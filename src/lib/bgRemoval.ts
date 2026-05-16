@@ -263,7 +263,8 @@ export async function removeBackground(
             }
 
             // 2. Separable Spatial Tensor Blur (Removes banding, quant noise, and streaks)
-            const blurRad = isMobile ? 3 : 2; 
+            // Reduced blur radius: huge blurs expand the person's alpha into nearby background objects (chairs)
+            const blurRad = isMobile ? 1 : 1; 
             const tempMask = new Float32Array(mw * mh);
             const cleanMask = new Float32Array(mw * mh);
 
@@ -296,8 +297,9 @@ export async function removeBackground(
 
             // 3. High Precision CPU Bilinear Upscale + Float32 S-Curve
             // Sidesteps all Android Canvas rendering bugs, scaling bands, and tiling artifacts
-            const floor = isMobile ? 48 : 28;
-            const ceil = 238;
+            // Very aggressive mask floor to completely sever background object connections (chairs/collars)
+            const floor = isMobile ? 185 : 165; 
+            const ceil = 250; 
 
             for (let y = 0; y < h; y++) {
                 // Perfect geometric center calculation
@@ -339,17 +341,23 @@ export async function removeBackground(
 
                     const idx = (y * w + x) * 4;
 
-                    // Luminance-Guided Edge Refinement (Guided Filter Lite)
-                    if (a > 30 && a < 225) {
+                    // Smooth Natural Edge Preservation (Replaces aggressive jagged color-defringer)
+                    if (a > 2 && a < 253) {
                         const r = pixels[idx], g = pixels[idx+1], b = pixels[idx+2];
                         const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-                        if (lum < 0.25) a = Math.min(255, a * 1.15); // hair boost
-                        if (lum > 0.85) a = a * 0.85; // background bleed suppression
+                        
+                        // Mild uniform halo suppression based strictly on edge brightness
+                        // avoids checking saturation which destroys gray/white clothing
+                        if (lum > 0.8) {
+                            a *= 0.85; // gently suppress very white edge bleed
+                        } else if (lum < 0.2) { 
+                            a = Math.min(255, a * 1.15); // preserve dark edge details (like hair)
+                        }
                     }
 
                     // Strict background suppression
-                    if (a < 5) a = 0;
-                    if (a > 250) a = 255;
+                    if (a < 8) a = 0;
+                    if (a > 248) a = 255;
 
                     pixels[idx + 3] = Math.round(a);
                 }
@@ -419,7 +427,7 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
         for (let x = 0; x < aw; x += 2) {
           const idx = y * aw + x;
           const a = data[idx * 4 + 3];
-          if (!visited[idx] && a > 30) {
+          if (!visited[idx] && a > 160) { // Require extremely strong core to start a region
             const component: number[] = [];
             const stack = [idx];
             visited[idx] = 1;
@@ -435,7 +443,8 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
               for(const n of neighbors) {
                 if(n >= 0 && n < aw*ah) {
                   const nx = n % aw, ny = Math.floor(n / aw);
-                  if(Math.abs(nx-cx)<=1 && Math.abs(ny-cy)<=1 && !visited[n] && data[n * 4 + 3] > 10) {
+                  // Very strong threshold to cut off faint chair segments attached to the body
+                  if(Math.abs(nx-cx)<=1 && Math.abs(ny-cy)<=1 && !visited[n] && data[n * 4 + 3] > 160) {
                     visited[n] = 1;
                     stack.push(n);
                   }
@@ -461,24 +470,29 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
         const maxSize = components[0].size;
         
         components.forEach((c, index) => {
-          // Keep primary subject and significant satellites
-          const isLarge = c.size > maxSize * 0.05;
+          // Extremely strict keeping: we only want the primary person
+          const isVeryLarge = c.size > maxSize * 0.7; 
           const centralX = c.cx / aw;
           const centralY = c.cy / ah;
-          const isCentral = centralX > 0.15 && centralX < 0.85 && centralY > 0.05 && centralY < 0.95;
-          const isLargeAndCentral = isCentral && c.size > maxSize * 0.02;
+          const isStrictCentral = centralX > 0.35 && centralX < 0.65 && centralY > 0.15 && centralY < 0.85;
+          const isLargeAndCentral = isStrictCentral && c.size > maxSize * 0.25;
 
-          if (index === 0 || isLarge || isLargeAndCentral) {
+          // Only keep the main component, or something genuinely huge/central that was split by a strong occlusion
+          if (index === 0 || isVeryLarge || isLargeAndCentral) {
             c.indices.forEach(i => finalAlphaMap[i] = 1);
           }
         });
       }
       
       // Step 2: Apply Refined Alpha and Decontaminate Edges
+      const tempAlpha = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        tempAlpha[i] = data[i * 4 + 3];
+      }
+
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
            const idx = y * w + x;
-           // Fallback to checking neighbors if skipped pixel wasn't mapped in CC
            const isNoise = components.length > 0 && finalAlphaMap[idx] === 0 
                 && (x === 0 || finalAlphaMap[idx-1] === 0) 
                 && (y === 0 || finalAlphaMap[idx-w] === 0);
@@ -487,10 +501,23 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
            
            if (isNoise) {
                data[dataIdx+3] = 0; // Eradicate noise
+               tempAlpha[idx] = 0;
                continue;
            }
 
-           const a = data[dataIdx+3];
+           let a = tempAlpha[idx];
+           
+           // Spatial Anti-Aliasing on Boundaries
+           if (a > 0 && a < 255 && x > 0 && x < w - 1 && y > 0 && y < h - 1) {
+               const aL = tempAlpha[idx - 1];
+               const aR = tempAlpha[idx + 1];
+               const aU = tempAlpha[idx - w];
+               const aD = tempAlpha[idx + w];
+               // Soft gaussian-like blur just for the edge pixels
+               a = (a * 4 + aL + aR + aU + aD) / 8;
+               data[dataIdx+3] = a;
+           }
+
            if (a > 0 && a < 255) {
                // De-halo: darkened boundary pixels often contain white bleed from background
                const r = data[dataIdx], g = data[dataIdx+1], b = data[dataIdx+2];
