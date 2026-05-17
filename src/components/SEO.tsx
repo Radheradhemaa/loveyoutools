@@ -33,6 +33,7 @@ export default function SEO({ title, description, keywords, url, image = '/socia
   return (
     <Helmet>
       <title>{fullTitle}</title>
+      <meta name="robots" content="index, follow" />
       <meta name="description" content={description} />
       {keywords && <meta name="keywords" content={keywords} />}
       <link rel="canonical" href={canonicalUrl} />
