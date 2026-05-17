@@ -297,9 +297,10 @@ export async function removeBackground(
 
             // 3. High Precision CPU Bilinear Upscale + Float32 S-Curve
             // Sidesteps all Android Canvas rendering bugs, scaling bands, and tiling artifacts
-            // Very aggressive mask floor to completely sever background object connections (chairs/collars)
-            const floor = isMobile ? 185 : 165; 
-            const ceil = 250; 
+            // Balanced floor to prevent internal holes in bright subjects (e.g., white shirts) 
+            // while still disconnecting faint background artifacts.
+            const floor = isMobile ? 80 : 60; 
+            const ceil = 245; 
 
             for (let y = 0; y < h; y++) {
                 // Perfect geometric center calculation
@@ -427,7 +428,7 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
         for (let x = 0; x < aw; x += 2) {
           const idx = y * aw + x;
           const a = data[idx * 4 + 3];
-          if (!visited[idx] && a > 160) { // Require extremely strong core to start a region
+          if (!visited[idx] && a > 80) { // Require strong core to start a region
             const component: number[] = [];
             const stack = [idx];
             visited[idx] = 1;
@@ -443,8 +444,8 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
               for(const n of neighbors) {
                 if(n >= 0 && n < aw*ah) {
                   const nx = n % aw, ny = Math.floor(n / aw);
-                  // Very strong threshold to cut off faint chair segments attached to the body
-                  if(Math.abs(nx-cx)<=1 && Math.abs(ny-cy)<=1 && !visited[n] && data[n * 4 + 3] > 160) {
+                  // Loosened threshold to keep textures of light-colored clothing (e.g. check shirts)
+                  if(Math.abs(nx-cx)<=1 && Math.abs(ny-cy)<=1 && !visited[n] && data[n * 4 + 3] > 20) {
                     visited[n] = 1;
                     stack.push(n);
                   }
@@ -470,18 +471,58 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
         const maxSize = components[0].size;
         
         components.forEach((c, index) => {
-          // Extremely strict keeping: we only want the primary person
-          const isVeryLarge = c.size > maxSize * 0.7; 
+          // Strict keeping: we want core subject integrity
+          const isVeryLarge = c.size > maxSize * 0.5; 
           const centralX = c.cx / aw;
           const centralY = c.cy / ah;
-          const isStrictCentral = centralX > 0.35 && centralX < 0.65 && centralY > 0.15 && centralY < 0.85;
-          const isLargeAndCentral = isStrictCentral && c.size > maxSize * 0.25;
+          // Tighter central window but inclusive of main subject
+          const isStrictCentral = centralX > 0.3 && centralX < 0.7 && centralY > 0.15 && centralY < 0.85;
+          const isLargeAndCentral = isStrictCentral && c.size > maxSize * 0.15;
 
-          // Only keep the main component, or something genuinely huge/central that was split by a strong occlusion
+          // Only keep the main component, or significant satellites
           if (index === 0 || isVeryLarge || isLargeAndCentral) {
             c.indices.forEach(i => finalAlphaMap[i] = 1);
           }
         });
+
+        // --- INTERNAL HOLE FILLING ---
+        // Prevents holes inside clothing caused by aggressive thresholding 
+        // Logic: if a pixel is 0 but fully enclosed by 1s, it should be 1.
+        const floodFill = new Uint8Array(aw * ah); // 0: unknown, 1: external background
+        const q: number[] = [];
+        for (let x = 0; x < aw; x++) {
+            if (finalAlphaMap[x] === 0) { floodFill[x] = 1; q.push(x); }
+            const botIdx = (ah - 1) * aw + x;
+            if (finalAlphaMap[botIdx] === 0) { floodFill[botIdx] = 1; q.push(botIdx); }
+        }
+        for (let y = 0; y < ah; y++) {
+            const leftIdx = y * aw;
+            if (finalAlphaMap[leftIdx] === 0) { floodFill[leftIdx] = 1; q.push(leftIdx); }
+            const rightIdx = y * aw + (aw - 1);
+            if (finalAlphaMap[rightIdx] === 0) { floodFill[rightIdx] = 1; q.push(rightIdx); }
+        }
+        
+        let head = 0;
+        while (head < q.length) {
+            const cIdx = q[head++]!;
+            const cx = cIdx % aw;
+            const cy = Math.floor(cIdx / aw);
+            const neighbors = [cIdx - 1, cIdx + 1, cIdx - aw, cIdx + aw];
+            for (const nIdx of neighbors) {
+                if (nIdx >= 0 && nIdx < aw * ah) {
+                    const nx = nIdx % aw, ny = Math.floor(nIdx / aw);
+                    if (Math.abs(nx-cx) <= 1 && Math.abs(ny-cy) <= 1 && floodFill[nIdx] === 0 && finalAlphaMap[nIdx] === 0) {
+                        floodFill[nIdx] = 1;
+                        q.push(nIdx);
+                    }
+                }
+            }
+        }
+        
+        // Finalize map: if it's not external background and not already 1, it's an internal hole
+        for (let i = 0; i < aw * ah; i++) {
+            if (floodFill[i] === 0) finalAlphaMap[i] = 1;
+        }
       }
       
       // Step 2: Apply Refined Alpha and Decontaminate Edges
@@ -519,12 +560,21 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
            }
 
            if (a > 0 && a < 255) {
-               // De-halo: darkened boundary pixels often contain white bleed from background
+               // Enhanced De-halo: darkened boundary pixels often contain white bleed from background.
+               // We push the color of semi-transparent bright pixels towards a darker, more natural subject tone.
                const r = data[dataIdx], g = data[dataIdx+1], b = data[dataIdx+2];
                const lum = 0.299*r + 0.587*g + 0.114*b;
-               if (lum > 180) {
-                   const factor = 1 - ((255 - a) / 255) * 0.4;
-                   data[dataIdx] *= factor; data[dataIdx+1] *= factor; data[dataIdx+2] *= factor;
+               if (lum > 130) { // Broad de-halo for bright edges
+                   const transFactor = (255 - a) / 255;
+                   const darkening = 1 - (transFactor * 0.7); // Aggressive darkening on the very edge
+                   data[dataIdx] *= darkening; 
+                   data[dataIdx+1] *= darkening; 
+                   data[dataIdx+2] *= darkening;
+                   
+                   // Targeted alpha choke for extremely faint, bright noise ONLY if near total transparency
+                   if (lum > 220 && a < 80) {
+                       data[dataIdx+3] = Math.max(0, a * 0.5);
+                   }
                }
            }
         }
