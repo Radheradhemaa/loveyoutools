@@ -13,6 +13,7 @@ export default function QrGenerator() {
   const [logoImage, setLogoImage] = useState<string | null>(null);
   const [logoSize, setLogoSize] = useState(40);
   const [downloadFormat, setDownloadFormat] = useState<'png' | 'svg'>('png');
+  const [upiType, setUpiType] = useState<'vpa' | 'account'>('vpa');
   
   const qrRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -124,36 +125,89 @@ export default function QrGenerator() {
       case 'upi':
         return (
           <div className="fg">
-            <label className="fl">UPI ID (VPA)</label>
-            <input 
-              type="text" 
-              className="fi mb-2" 
-              placeholder="example@upi" 
-              onChange={(e) => {
-                const name = value.match(/pn=(.*?)(&|$)/)?.[1] || '';
-                const am = value.match(/am=(.*?)(&|$)/)?.[1] || '';
-                setValue(`upi://pay?pa=${e.target.value}&pn=${name}&am=${am}&cu=INR`);
-              }} 
-            />
+            <div className="flex gap-2 mb-4">
+              <button 
+                className={`flex-1 py-1.5 rounded-lg border text-[10px] font-bold transition-colors uppercase tracking-wider ${upiType === 'vpa' ? 'bg-accent text-white border-accent' : 'border-border hover:bg-bg-secondary'}`}
+                onClick={() => setUpiType('vpa')}
+              >
+                UPI ID (VPA)
+              </button>
+              <button 
+                className={`flex-1 py-1.5 rounded-lg border text-[10px] font-bold transition-colors uppercase tracking-wider ${upiType === 'account' ? 'bg-accent text-white border-accent' : 'border-border hover:bg-bg-secondary'}`}
+                onClick={() => setUpiType('account')}
+              >
+                Bank Account
+              </button>
+            </div>
+            
+            {upiType === 'vpa' ? (
+              <>
+                <label className="fl">UPI ID (VPA)</label>
+                <input 
+                  type="text" 
+                  className="fi mb-2" 
+                  value={value.match(/pa=([^\&]+)/)?.[1]?.includes('.ifsc.npci') ? '' : (value.match(/pa=([^\&]+)/)?.[1] || '')}
+                  placeholder="example@upi" 
+                  onChange={(e) => {
+                    const name = value.match(/pn=(.*?)(&|$)/)?.[1] || '';
+                    const am = value.match(/am=(.*?)(&|$)/)?.[1] || '';
+                    setValue(`upi://pay?pa=${e.target.value}&pn=${name}&am=${am}&cu=INR`);
+                  }} 
+                />
+              </>
+            ) : (
+              <>
+                <label className="fl">Account Number</label>
+                <input 
+                  type="text" 
+                  className="fi mb-2" 
+                  value={value.match(/pa=([^\@]+)\@.*\.ifsc\.npci/)?.[1] || ''}
+                  placeholder="1234567890" 
+                  onChange={(e) => {
+                    const name = value.match(/pn=(.*?)(&|$)/)?.[1] || '';
+                    const am = value.match(/am=(.*?)(&|$)/)?.[1] || '';
+                    const ifsc = value.match(/pa=[^\@]+\@([a-zA-Z0-9]+)\.ifsc\.npci/)?.[1] || '';
+                    setValue(`upi://pay?pa=${e.target.value}@${ifsc}.ifsc.npci&pn=${name}&am=${am}&cu=INR`);
+                  }} 
+                />
+                <label className="fl">IFSC Code</label>
+                <input 
+                  type="text" 
+                  className="fi mb-2 uppercase" 
+                  value={value.match(/pa=[^\@]+\@([a-zA-Z0-9]+)\.ifsc\.npci/)?.[1] || ''}
+                  placeholder="ABCD0123456" 
+                  maxLength={11}
+                  onChange={(e) => {
+                    const name = value.match(/pn=(.*?)(&|$)/)?.[1] || '';
+                    const am = value.match(/am=(.*?)(&|$)/)?.[1] || '';
+                    const acc = value.match(/pa=([^\@]+)\@/)?.[1] || '';
+                    setValue(`upi://pay?pa=${acc}@${e.target.value.toUpperCase()}.ifsc.npci&pn=${name}&am=${am}&cu=INR`);
+                  }} 
+                />
+              </>
+            )}
+            
             <label className="fl">Payee Name</label>
             <input 
               type="text" 
               className="fi mb-2" 
+              value={decodeURIComponent(value.match(/pn=([^\&]+)/)?.[1] || '')}
               placeholder="John Doe" 
               onChange={(e) => {
-                const pa = value.match(/pa=(.*?)(&|$)/)?.[1] || '';
-                const am = value.match(/am=(.*?)(&|$)/)?.[1] || '';
-                setValue(`upi://pay?pa=${pa}&pn=${e.target.value}&am=${am}&cu=INR`);
+                const pa = value.match(/pa=([^\&]+)/)?.[1] || '';
+                const am = value.match(/am=([^\&]+)/)?.[1] || '';
+                setValue(`upi://pay?pa=${pa}&pn=${encodeURIComponent(e.target.value)}&am=${am}&cu=INR`);
               }} 
             />
             <label className="fl">Amount (Optional)</label>
             <input 
               type="number" 
               className="fi" 
+              value={value.match(/am=([^\&]+)/)?.[1] || ''}
               placeholder="0.00" 
               onChange={(e) => {
-                const pa = value.match(/pa=(.*?)(&|$)/)?.[1] || '';
-                const name = value.match(/pn=(.*?)(&|$)/)?.[1] || '';
+                const pa = value.match(/pa=([^\&]+)/)?.[1] || '';
+                const name = value.match(/pn=([^\&]+)/)?.[1] || '';
                 setValue(`upi://pay?pa=${pa}&pn=${name}&am=${e.target.value}&cu=INR`);
               }} 
             />

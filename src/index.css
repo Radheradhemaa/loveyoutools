@@ -237,9 +237,15 @@
   }
 
   .preview-content-wrapper img,
-  .preview-content-wrapper canvas,
+  .preview-content-wrapper > canvas,
   .preview-content-wrapper .main-preview-element {
     @apply max-w-full max-h-full object-contain shadow-lg rounded-lg transition-transform duration-200;
+  }
+  
+  .pdf-editor-canvas-container canvas {
+    max-width: none !important;
+    max-height: none !important;
+    object-fit: fill !important;
   }
 
   /* Sidebar Content Wrapper */
