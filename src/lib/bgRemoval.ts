@@ -62,8 +62,6 @@ export const ensureIsnetLoaded = async () => {
     try {
       isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", {
         device,
-        // On mobile, force lower precision if we ever use GPU,
-        // but we prefer WASM here anyway.
       });
     } catch (e) {
       console.warn("[AI] MODNet primary load failed, trying WASM fallback", e);
@@ -274,44 +272,217 @@ export async function removeBackground(
 
       const isMobile = isMobileDevice();
 
-      // 1. Artifact Eradication: 1D Directional Filters to kill stripes
+      // 1. High-Precision Morphological Opening (Erosion + Connected Component Filter + Dilation)
+      // This severs thin bridges connecting background clutter (chairs, wall shadows) to cheeks, head, neck, and shoulders.
+      const binMask = new Uint8Array(mw * mh);
+      for (let y = 0; y < mh; y++) {
+        const rowOffset = y * mw;
+        // Vertically-adaptive thresholding based on average human feature heights in passport photos:
+        // - Hair / Top of Head (y < mh * 0.22): low threshold of 25 to retain wispy hair details and fine structures.
+        // - Cheek, Ear, and Upper Neck (mh * 0.22 <= y < mh * 0.32): moderately high threshold of 95 to sever shadow artifacts.
+        // - Shoulders, Collar, and Chest (y >= mh * 0.32): solid clothes and skin, use high threshold of 115 to easily discard
+        //   low-to-medium confidence artifacts like chair backrests and shadow folds near the shoulder-neck junction.
+        const threshold = y < mh * 0.22 ? 25 : (y < mh * 0.32 ? 95 : 115);
+        for (let x = 0; x < mw; x++) {
+          const idx = rowOffset + x;
+          const val = mData[idx] * maskScale;
+          binMask[idx] = val >= threshold ? 1 : 0;
+        }
+      }
+
+      // 1b. Erosion Pass (Dynamic Radius based on vertical feature zones to aggressively sever broad background connections)
+      const erodedBin = new Uint8Array(mw * mh);
+      for (let y = 0; y < mh; y++) {
+        // - Hair region (y < mh * 0.22): minimum erosion (r=1) to preserve fine hair.
+        // - Cheek/Ear region (mh * 0.22 <= y < mh * 0.32): standard erosion (r=2) for shadow severance.
+        // - Shoulder/Torso junction (y >= mh * 0.32): aggressive erosion (r=4) to confidently sever even wide-rooted
+        //   chair connections or physical overlaps in the background.
+        const erRad = y < mh * 0.22 ? 1 : (y < mh * 0.32 ? 2 : 4);
+        for (let x = 0; x < mw; x++) {
+          const idx = y * mw + x;
+          if (binMask[idx] === 0) {
+            erodedBin[idx] = 0;
+            continue;
+          }
+          let allOne = 1;
+          for (let dy = -erRad; dy <= erRad; dy++) {
+            const ny = y + dy;
+            if (ny < 0 || ny >= mh) {
+              allOne = 0;
+              break;
+            }
+            for (let dx = -erRad; dx <= erRad; dx++) {
+              const nx = x + dx;
+              if (nx < 0 || nx >= mw) {
+                allOne = 0;
+                break;
+              }
+              if (binMask[ny * mw + nx] === 0) {
+                allOne = 0;
+                break;
+              }
+            }
+            if (allOne === 0) break;
+          }
+          erodedBin[idx] = allOne;
+        }
+      }
+
+      // 1c. Connected Component Analysis (CCA) to isolate target subject (the person)
+      const visited = new Uint8Array(mw * mh);
+      const stack = new Int32Array(mw * mh);
+      const compLabels = new Int32Array(mw * mh);
+      let bestCompId = 0;
+      let maxCompSize = 0;
+      let labelCounter = 0;
+
+      for (let y = 0; y < mh; y++) {
+        for (let x = 0; x < mw; x++) {
+          const idx = y * mw + x;
+          if (erodedBin[idx] === 1 && visited[idx] === 0) {
+            labelCounter++;
+            let head = 0;
+            let tail = 0;
+
+            stack[tail++] = idx;
+            visited[idx] = 1;
+            compLabels[idx] = labelCounter;
+
+            while (head < tail) {
+              const curr = stack[head++];
+              const cx = curr % mw;
+              const cy = Math.floor(curr / mw);
+
+              const neighbors = [curr - 1, curr + 1, curr - mw, curr + mw];
+              for (let n = 0; n < neighbors.length; n++) {
+                const nIdx = neighbors[n];
+                if (nIdx >= 0 && nIdx < mw * mh) {
+                  const nx = nIdx % mw;
+                  const ny = Math.floor(nIdx / mw);
+                  if (Math.abs(nx - cx) <= 1 && Math.abs(ny - cy) <= 1) {
+                    if (erodedBin[nIdx] === 1 && visited[nIdx] === 0) {
+                      visited[nIdx] = 1;
+                      compLabels[nIdx] = labelCounter;
+                      stack[tail++] = nIdx;
+                    }
+                  }
+                }
+              }
+            }
+
+            if (tail > maxCompSize) {
+              maxCompSize = tail;
+              bestCompId = labelCounter;
+            }
+          }
+        }
+      }
+
+      // Isolate only pixels belonging to the primary component
+      const cleanBin = new Uint8Array(mw * mh);
+      if (bestCompId > 0) {
+        for (let i = 0; i < mw * mh; i++) {
+          if (compLabels[i] === bestCompId) {
+            cleanBin[i] = 1;
+          }
+        }
+      }
+
+      // 1d. Morphological Dilation Pass (Radius = 6, completely restores natural contours)
+      let dilatedBin = cleanBin;
+      for (let iter = 0; iter < 6; iter++) {
+        const next = new Uint8Array(mw * mh);
+        for (let y = 0; y < mh; y++) {
+          for (let x = 0; x < mw; x++) {
+            const idx = y * mw + x;
+            if (dilatedBin[idx] === 1) {
+              next[idx] = 1;
+              continue;
+            }
+            let isDilated = false;
+            for (let dy = -1; dy <= 1; dy++) {
+              const ny = y + dy;
+              if (ny >= 0 && ny < mh) {
+                for (let dx = -1; dx <= 1; dx++) {
+                  const nx = x + dx;
+                  if (nx >= 0 && nx < mw) {
+                    if (dilatedBin[ny * mw + nx] === 1) {
+                      isDilated = true;
+                      break;
+                    }
+                  }
+                }
+              }
+              if (isDilated) break;
+            }
+            next[idx] = isDilated ? 1 : 0;
+          }
+        }
+        dilatedBin = next;
+      }
+
+      // Apply the dilated subject profile to mask, filtering all outside fragments (chairs, shadows, specks) completely.
       const correctedMask = new Float32Array(mw * mh);
       for (let y = 0; y < mh; y++) {
         for (let x = 0; x < mw; x++) {
           const idx = y * mw + x;
-          let val = mData[idx] * maskScale;
+          let val = mData[idx] * maskScale * dilatedBin[idx];
 
-          // Kill highly anomalous vertical pixels (scanline artifacts/gaps)
+          // Gentle internal thresholding inside subject container - keeps collar tips and fine outlines intact
+          if (val < 18) {
+            val = 0;
+          }
+
+          // Kill spikes
           if (x > 1 && x < mw - 2) {
-            const left1 = mData[y * mw + x - 1] * maskScale;
-            const right1 = mData[y * mw + x + 1] * maskScale;
-            const left2 = mData[y * mw + x - 2] * maskScale;
-            const right2 = mData[y * mw + x + 2] * maskScale;
-            const nAvg = (left1 + right1 + left2 + right2) / 4;
-
-            // Detect and fill deep valleys/spikes vs robust average
-            if (Math.abs(val - nAvg) > 50) {
-              val = nAvg;
-            }
+            const left1 = mData[y * mw + x - 1] * maskScale * dilatedBin[y * mw + x - 1];
+            const right1 = mData[y * mw + x + 1] * maskScale * dilatedBin[y * mw + x + 1];
+            const nAvg = (left1 + right1) / 2;
+            if (Math.abs(val - nAvg) > 50) val = nAvg;
           }
           correctedMask[idx] = val;
         }
       }
 
-      // 2. Separable Spatial Tensor Blur (Removes banding, quant noise, and streaks)
-      // Reduced blur radius: huge blurs expand the person's alpha into nearby background objects (chairs)
-      const blurRad = isMobile ? 1 : 1;
+      // 1e. Simple Erosion to eliminate wild flyaway fringes near head & template boundary
+      const erodedMask = new Float32Array(mw * mh);
+      const erR = 1;
+      for (let y = 0; y < mh; y++) {
+        // Soft erosion transition: Head has full erosion, collar & shoulders have zero erosion.
+        const erosionWeight = y < mh * 0.28 ? 1.0 : Math.max(0, 1.0 - (y - mh * 0.28) / (mh * 0.10));
+
+        for (let x = 0; x < mw; x++) {
+          const originalVal = correctedMask[y * mw + x];
+          if (erosionWeight <= 0) {
+            erodedMask[y * mw + x] = originalVal;
+            continue;
+          }
+
+          let minVal = 255;
+          for (let dy = -erR; dy <= erR; dy++) {
+            for (let dx = -erR; dx <= erR; dx++) {
+              const nx = Math.max(0, Math.min(mw - 1, x + dx));
+              const ny = Math.max(0, Math.min(mh - 1, y + dy));
+              minVal = Math.min(minVal, correctedMask[ny * mw + nx]);
+            }
+          }
+
+          erodedMask[y * mw + x] = originalVal * (1 - erosionWeight) + minVal * erosionWeight;
+        }
+      }
+
+      // 2. Separable Spatial Tensor Blur to soften the mask's micro-boundaries naturally
+      const blurRad = 2;
       const tempMask = new Float32Array(mw * mh);
       const cleanMask = new Float32Array(mw * mh);
 
       for (let y = 0; y < mh; y++) {
         for (let x = 0; x < mw; x++) {
-          let sum = 0,
-            count = 0;
+          let sum = 0, count = 0;
           for (let dx = -blurRad; dx <= blurRad; dx++) {
             const nx = x + dx;
             if (nx >= 0 && nx < mw) {
-              sum += correctedMask[y * mw + nx];
+              sum += erodedMask[y * mw + nx];
               count++;
             }
           }
@@ -334,11 +505,9 @@ export async function removeBackground(
       }
 
       // 3. High Precision CPU Bilinear Upscale + Float32 S-Curve
-      // Sidesteps all Android Canvas rendering bugs, scaling bands, and tiling artifacts
-      // Aggressive floor to violently disconnect background objects (chairs) from the neck/shoulder.
-      // Internal holes in the check shirt are fixed by the hole-filling algorithm later.
-      const floor = isMobile ? 160 : 140;
-      const ceil = 250;
+      // Softer floor to preserve soft details and natural organic contours around shoulders & neck.
+      const floor = isMobile ? 180 : 160;
+      const ceil = 245;
 
       for (let y = 0; y < h; y++) {
         // Perfect geometric center calculation
@@ -397,7 +566,14 @@ export async function removeBackground(
             // Mild uniform halo suppression based strictly on edge brightness
             // avoids checking saturation which destroys gray/white clothing
             if (lum > 0.8) {
-              a *= 0.85; // gently suppress very white edge bleed
+              // Ensure we do NOT suppress/translucify shoulder/shirt boundaries (causes color bleeding when overlaid 
+              // on a colored passport background). Keep them solid and natural.
+              const isShoulderRegion = y > h * 0.4;
+              if (isShoulderRegion) {
+                a = Math.min(255, a * 1.05); // boost slightly to solidify shirt edges
+              } else {
+                a *= 0.85; // gently suppress very white edge bleed on hair/head region
+              }
             } else if (lum < 0.2) {
               a = Math.min(255, a * 1.15); // preserve dark edge details (like hair)
             }
@@ -464,211 +640,196 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
       const imageData = ctx.getImageData(0, 0, w, h);
       const data = imageData.data;
 
-      // Step 1: Memory-efficient Connected Component Analysis for Noise Removal
-      // Run natively at 1:1 scale to avoid ANY blocky nearest-neighbor artifacts on mobile edges
-      const aw = w;
-      const ah = h;
-
-      const visited = new Uint8Array(aw * ah);
-      const components: {
-        indices: number[];
-        size: number;
-        cx: number;
-        cy: number;
-      }[] = [];
-
-      // Fast component discovery (skip by 2 for speed, but process natively)
-      for (let y = 0; y < ah; y += 2) {
-        for (let x = 0; x < aw; x += 2) {
-          const idx = y * aw + x;
-          const a = data[idx * 4 + 3];
-          if (!visited[idx] && a > 180) {
-            // Require very strong core to start a region
-            const component: number[] = [];
-            const stack = [idx];
-            visited[idx] = 1;
-            let sx = 0,
-              sy = 0;
-
-            while (stack.length > 0 && component.length < 1000000) {
-              const cIdx = stack.pop()!;
-              component.push(cIdx);
-              const cx = cIdx % aw,
-                cy = Math.floor(cIdx / aw);
-              sx += cx;
-              sy += cy;
-
-              const neighbors = [cIdx + 1, cIdx - 1, cIdx + aw, cIdx - aw];
-              for (const n of neighbors) {
-                if (n >= 0 && n < aw * ah) {
-                  const nx = n % aw,
-                    ny = Math.floor(n / aw);
-                  // Stricter threshold to strictly sever faint ghost artifacts like chairs near the shoulder
-                  if (
-                    Math.abs(nx - cx) <= 1 &&
-                    Math.abs(ny - cy) <= 1 &&
-                    !visited[n] &&
-                    data[n * 4 + 3] > 100
-                  ) {
-                    visited[n] = 1;
-                    stack.push(n);
-                  }
-                }
-              }
-            }
-
-            if (component.length > 10) {
-              components.push({
-                indices: component,
-                size: component.length,
-                cx: sx / component.length,
-                cy: sy / component.length,
-              });
-            }
-          }
-        }
-      }
-
-      const finalAlphaMap = new Uint8Array(aw * ah);
-      if (components.length > 0) {
-        components.sort((a, b) => b.size - a.size);
-        const maxSize = components[0].size;
-
-        components.forEach((c, index) => {
-          // Strict keeping: we want core subject integrity
-          const isVeryLarge = c.size > maxSize * 0.5;
-          const centralX = c.cx / aw;
-          const centralY = c.cy / ah;
-          // Tighter central window but inclusive of main subject
-          const isStrictCentral =
-            centralX > 0.3 &&
-            centralX < 0.7 &&
-            centralY > 0.15 &&
-            centralY < 0.85;
-          const isLargeAndCentral = isStrictCentral && c.size > maxSize * 0.15;
-
-          // Only keep the main component, or significant satellites
-          if (index === 0 || isVeryLarge || isLargeAndCentral) {
-            c.indices.forEach((i) => (finalAlphaMap[i] = 1));
-          }
-        });
-
-        // --- INTERNAL HOLE FILLING ---
-        // Prevents holes inside clothing caused by aggressive thresholding
-        // Logic: if a pixel is 0 but fully enclosed by 1s, it should be 1.
-        const floodFill = new Uint8Array(aw * ah); // 0: unknown, 1: external background
-        const q: number[] = [];
-        for (let x = 0; x < aw; x++) {
-          if (finalAlphaMap[x] === 0) {
-            floodFill[x] = 1;
-            q.push(x);
-          }
-          const botIdx = (ah - 1) * aw + x;
-          if (finalAlphaMap[botIdx] === 0) {
-            floodFill[botIdx] = 1;
-            q.push(botIdx);
-          }
-        }
-        for (let y = 0; y < ah; y++) {
-          const leftIdx = y * aw;
-          if (finalAlphaMap[leftIdx] === 0) {
-            floodFill[leftIdx] = 1;
-            q.push(leftIdx);
-          }
-          const rightIdx = y * aw + (aw - 1);
-          if (finalAlphaMap[rightIdx] === 0) {
-            floodFill[rightIdx] = 1;
-            q.push(rightIdx);
-          }
-        }
-
-        let head = 0;
-        while (head < q.length) {
-          const cIdx = q[head++]!;
-          const cx = cIdx % aw;
-          const cy = Math.floor(cIdx / aw);
-          const neighbors = [cIdx - 1, cIdx + 1, cIdx - aw, cIdx + aw];
-          for (const nIdx of neighbors) {
-            if (nIdx >= 0 && nIdx < aw * ah) {
-              const nx = nIdx % aw,
-                ny = Math.floor(nIdx / aw);
-              if (
-                Math.abs(nx - cx) <= 1 &&
-                Math.abs(ny - cy) <= 1 &&
-                floodFill[nIdx] === 0 &&
-                finalAlphaMap[nIdx] === 0
-              ) {
-                floodFill[nIdx] = 1;
-                q.push(nIdx);
-              }
-            }
-          }
-        }
-
-        // Finalize map: if it's not external background and not already 1, it's an internal hole
-        for (let i = 0; i < aw * ah; i++) {
-          if (floodFill[i] === 0) {
-            finalAlphaMap[i] = 1;
-            data[i * 4 + 3] = 255; // Physically restore alpha here to completely fix clothing holes
-          }
-        }
-      }
-
-      // Step 2: Apply Refined Alpha and Decontaminate Edges
-      const tempAlpha = new Uint8Array(w * h);
-      for (let i = 0; i < w * h; i++) {
-        tempAlpha[i] = data[i * 4 + 3];
-      }
+      // 1. High-precision 1:1 Connected Component Analysis to isolate subject and erase all background noise
+      const visited = new Uint32Array(w * h);
+      let componentCount = 0;
+      
+      const compSizes = [0];
+      const compSumX = [0];
+      const compSumY = [0];
+      
+      const stack = new Int32Array(w * h);
+      let stackLen = 0;
 
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
           const idx = y * w + x;
-          const isNoise =
-            components.length > 0 &&
-            finalAlphaMap[idx] === 0 &&
-            (x === 0 || finalAlphaMap[idx - 1] === 0) &&
-            (y === 0 || finalAlphaMap[idx - w] === 0);
+          const a = data[idx * 4 + 3];
 
-          const dataIdx = idx * 4;
+          if (a > 20 && visited[idx] === 0) {
+            componentCount++;
+            const compId = componentCount;
+            compSizes[compId] = 0;
+            compSumX[compId] = 0;
+            compSumY[compId] = 0;
 
-          if (isNoise) {
-            data[dataIdx + 3] = 0; // Eradicate noise
-            tempAlpha[idx] = 0;
-            continue;
-          }
+            stack[0] = idx;
+            stackLen = 1;
+            visited[idx] = compId;
 
-          let a = tempAlpha[idx];
+            while (stackLen > 0) {
+              const curr = stack[--stackLen];
+              const cx = curr % w;
+              const cy = Math.floor(curr / w);
 
-          // Spatial Anti-Aliasing on Boundaries
-          if (a > 0 && a < 255 && x > 0 && x < w - 1 && y > 0 && y < h - 1) {
-            const aL = tempAlpha[idx - 1];
-            const aR = tempAlpha[idx + 1];
-            const aU = tempAlpha[idx - w];
-            const aD = tempAlpha[idx + w];
-            // Soft gaussian-like blur just for the edge pixels
-            a = (a * 4 + aL + aR + aU + aD) / 8;
-            data[dataIdx + 3] = a;
-          }
+              compSizes[compId]++;
+              compSumX[compId] += cx;
+              compSumY[compId] += cy;
 
-          if (a > 0 && a < 255) {
-            // Enhanced De-halo: darkened boundary pixels often contain white bleed from background.
-            // We push the color of semi-transparent bright pixels towards a darker, more natural subject tone.
-            const r = data[dataIdx],
-              g = data[dataIdx + 1],
-              b = data[dataIdx + 2];
-            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-            if (lum > 130) {
-              // Broad de-halo for bright edges
-              const transFactor = (255 - a) / 255;
-              const darkening = 1 - transFactor * 0.7; // Aggressive darkening on the very edge
-              data[dataIdx] *= darkening;
-              data[dataIdx + 1] *= darkening;
-              data[dataIdx + 2] *= darkening;
-
-              // Targeted alpha choke for extremely faint, bright noise ONLY if near total transparency
-              if (lum > 220 && a < 80) {
-                data[dataIdx + 3] = Math.max(0, a * 0.5);
+              if (cx > 0) {
+                const n = curr - 1;
+                if (visited[n] === 0 && data[n * 4 + 3] > 20) {
+                  visited[n] = compId;
+                  stack[stackLen++] = n;
+                }
               }
+              if (cx < w - 1) {
+                const n = curr + 1;
+                if (visited[n] === 0 && data[n * 4 + 3] > 20) {
+                  visited[n] = compId;
+                  stack[stackLen++] = n;
+                }
+              }
+              if (cy > 0) {
+                const n = curr - w;
+                if (visited[n] === 0 && data[n * 4 + 3] > 20) {
+                  visited[n] = compId;
+                  stack[stackLen++] = n;
+                }
+              }
+              if (cy < h - 1) {
+                const n = curr + w;
+                if (visited[n] === 0 && data[n * 4 + 3] > 20) {
+                  visited[n] = compId;
+                  stack[stackLen++] = n;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      let bestCompId = 1;
+      let maxScore = -1;
+
+      for (let id = 1; id <= componentCount; id++) {
+        const size = compSizes[id];
+        if (size === 0) continue;
+
+        const avgX = compSumX[id] / size;
+        const avgY = compSumY[id] / size;
+
+        const dx = (avgX - w / 2) / (w / 2);
+        const dy = (avgY - h / 2) / (h / 2);
+        const centerDistance = Math.sqrt(dx * dx + dy * dy);
+
+        const score = size * (1.0 - 0.6 * centerDistance);
+        if (score > maxScore) {
+          maxScore = score;
+          bestCompId = id;
+        }
+      }
+
+      // Fill holes and build solid foreground mask
+      const alphaMap = new Uint8Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        if (visited[i] === bestCompId) {
+          alphaMap[i] = 1;
+        }
+      }
+
+      const isExternal = new Uint8Array(w * h);
+      const q = new Int32Array(w * h);
+      let qHead = 0;
+      let qTail = 0;
+
+      for (let x = 0; x < w; x++) {
+        const topIdx = x;
+        if (alphaMap[topIdx] === 0) {
+          isExternal[topIdx] = 1;
+          q[qTail++] = topIdx;
+        }
+        const botIdx = (h - 1) * w + x;
+        if (alphaMap[botIdx] === 0) {
+          isExternal[botIdx] = 1;
+          q[qTail++] = botIdx;
+        }
+      }
+      for (let y = 0; y < h; y++) {
+        const leftIdx = y * w;
+        if (alphaMap[leftIdx] === 0) {
+          isExternal[leftIdx] = 1;
+          q[qTail++] = leftIdx;
+        }
+        const rightIdx = y * w + (w - 1);
+        if (alphaMap[rightIdx] === 0) {
+          isExternal[rightIdx] = 1;
+          q[qTail++] = rightIdx;
+        }
+      }
+
+      while (qHead < qTail) {
+        const curr = q[qHead++];
+        const cx = curr % w;
+        const cy = Math.floor(curr / w);
+
+        if (cx > 0) {
+          const n = curr - 1;
+          if (alphaMap[n] === 0 && isExternal[n] === 0) {
+            isExternal[n] = 1;
+            q[qTail++] = n;
+          }
+        }
+        if (cx < w - 1) {
+          const n = curr + 1;
+          if (alphaMap[n] === 0 && isExternal[n] === 0) {
+            isExternal[n] = 1;
+            q[qTail++] = n;
+          }
+        }
+        if (cy > 0) {
+          const n = curr - w;
+          if (alphaMap[n] === 0 && isExternal[n] === 0) {
+            isExternal[n] = 1;
+            q[qTail++] = n;
+          }
+        }
+        if (cy < h - 1) {
+          const n = curr + w;
+          if (alphaMap[n] === 0 && isExternal[n] === 0) {
+            isExternal[n] = 1;
+            q[qTail++] = n;
+          }
+        }
+      }
+
+      // Erase all background pixels (either external/border-touching or non-subject components)
+      // to guarantee absolute elimination of any floating or partially touching background fragments, chairs, or shadows.
+      for (let i = 0; i < w * h; i++) {
+        if (isExternal[i] === 1 || visited[i] !== bestCompId) {
+          data[i * 4 + 3] = 0;
+        } else {
+          // Keep pristine original edge processing for the main subject!
+          // No dual blurring or S-curving to prevent ANY outline, haloing, or "double cutout lines".
+          const finalA = data[i * 4 + 3];
+          if (finalA > 0 && finalA < 255) {
+            const idx = i * 4;
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+            const maxVal = Math.max(r, g, b);
+            const minVal = Math.min(r, g, b);
+            const sat = maxVal > 0 ? (maxVal - minVal) / maxVal : 0;
+            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+
+            // Smart edge-only de-halo pass to purge light background halos from clothing, skin and hair
+            const isWhiteShirt = sat < 0.15 && lum > 160;
+            if (!isWhiteShirt && lum > 110) {
+              const transFactor = (255 - finalA) / 255;
+              const darkening = 1.0 - transFactor * 0.45;
+              data[idx] = Math.max(0, Math.min(255, Math.round(r * darkening)));
+              data[idx + 1] = Math.max(0, Math.min(255, Math.round(g * darkening)));
+              data[idx + 2] = Math.max(0, Math.min(255, Math.round(b * darkening)));
             }
           }
         }
