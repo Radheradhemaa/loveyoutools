@@ -277,28 +277,41 @@ export async function removeBackground(
       const binMask = new Uint8Array(mw * mh);
       for (let y = 0; y < mh; y++) {
         const rowOffset = y * mw;
-        // Vertically-adaptive thresholding based on average human feature heights in passport photos:
-        // - Hair / Top of Head (y < mh * 0.22): low threshold of 25 to retain wispy hair details and fine structures.
-        // - Cheek, Ear, and Upper Neck (mh * 0.22 <= y < mh * 0.32): moderately high threshold of 95 to sever shadow artifacts.
-        // - Shoulders, Collar, and Chest (y >= mh * 0.32): solid clothes and skin, use high threshold of 115 to easily discard
-        //   low-to-medium confidence artifacts like chair backrests and shadow folds near the shoulder-neck junction.
-        const threshold = y < mh * 0.22 ? 25 : (y < mh * 0.32 ? 95 : 115);
         for (let x = 0; x < mw; x++) {
           const idx = rowOffset + x;
           const val = mData[idx] * maskScale;
+          
+          let threshold;
+          if (y < mh * 0.22) {
+            threshold = 25;
+          } else if (y < mh * 0.32) {
+            threshold = 95;
+          } else {
+            // Asymmetric thresholding for torso/shoulders:
+            // - Left side (x < mw * 0.5): preserve left shoulder completely and naturally (threshold 20)
+            // - Right side (x >= mw * 0.5): strictly sever chair and shadow artifacts (threshold 115)
+            threshold = (x < mw * 0.5) ? 20 : 115;
+          }
           binMask[idx] = val >= threshold ? 1 : 0;
         }
       }
 
-      // 1b. Erosion Pass (Dynamic Radius based on vertical feature zones to aggressively sever broad background connections)
+      // 1b. Erosion Pass (Dynamic Radius based on vertical and horizontal zones to aggressively sever broad background connections)
       const erodedBin = new Uint8Array(mw * mh);
       for (let y = 0; y < mh; y++) {
-        // - Hair region (y < mh * 0.22): minimum erosion (r=1) to preserve fine hair.
-        // - Cheek/Ear region (mh * 0.22 <= y < mh * 0.32): standard erosion (r=2) for shadow severance.
-        // - Shoulder/Torso junction (y >= mh * 0.32): aggressive erosion (r=4) to confidently sever even wide-rooted
-        //   chair connections or physical overlaps in the background.
-        const erRad = y < mh * 0.22 ? 1 : (y < mh * 0.32 ? 2 : 4);
         for (let x = 0; x < mw; x++) {
+          let erRad;
+          if (y < mh * 0.22) {
+            erRad = 1;
+          } else if (y < mh * 0.32) {
+            erRad = 2;
+          } else {
+            // Asymmetric erosion for torso/shoulders:
+            // - Left side: minimal erosion (1) to preserve and extend the left shoulder perfectly.
+            // - Right side: heavy erosion (4) to guarantee background chair removal.
+            erRad = (x < mw * 0.5) ? 1 : 4;
+          }
+
           const idx = y * mw + x;
           if (binMask[idx] === 0) {
             erodedBin[idx] = 0;
@@ -428,13 +441,15 @@ export async function removeBackground(
           const idx = y * mw + x;
           let val = mData[idx] * maskScale * dilatedBin[idx];
 
-          // Gentle internal thresholding inside subject container - keeps collar tips and fine outlines intact
-          if (val < 18) {
+          // Gentle internal thresholding inside subject container
+          // Use near-zero threshold on the left side to perfectly preserve fading boundary alpha of the left shoulder
+          const internalThresh = x < mw * 0.5 ? 2 : 18;
+          if (val < internalThresh) {
             val = 0;
           }
 
-          // Kill spikes
-          if (x > 1 && x < mw - 2) {
+          // Kill spikes (skip on the left side to preserve all shoulder micro-contours)
+          if (x > 1 && x < mw - 2 && x >= mw * 0.5) {
             const left1 = mData[y * mw + x - 1] * maskScale * dilatedBin[y * mw + x - 1];
             const right1 = mData[y * mw + x + 1] * maskScale * dilatedBin[y * mw + x + 1];
             const nAvg = (left1 + right1) / 2;
