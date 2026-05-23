@@ -454,38 +454,6 @@ const PdfEditorWorkspace = React.forwardRef(
 
           if (!whiteoutRect) return;
 
-          text.on("mousedown", () => {
-            const currentState = stateRef.current;
-            if (currentState.tool === "select" || currentState.tool === "text") {
-                text.set({ visible: false });
-                canvas.renderAll();
-                const cssScaleX = canvas.getElement().clientWidth / canvas.getWidth();
-                const cssScaleY = canvas.getElement().clientHeight / canvas.getHeight();
-                const finalScaleX = currentState.zoom * cssScaleX;
-                const finalScaleY = currentState.zoom * cssScaleY;
-
-                setState((prev) => ({
-                  ...prev,
-                  editingText: {
-                    visible: true,
-                    text: text.text || "",
-                    left: (text.left || 0) * finalScaleX,
-                    top: (text.top || 0) * finalScaleY,
-                    width: (text.width || 0) * (text.scaleX || 1) * finalScaleX,
-                    height: (text.height || 0) * (text.scaleY || 1) * finalScaleY,
-                    fontSize: (text.fontSize || 12) * finalScaleY,
-                    fontFamily: text.fontFamily || "sans-serif",
-                    fontWeight: text.fontWeight || "normal",
-                    fontStyle: text.fontStyle || "normal",
-                    color: (text as any).data?.originalColor || text.fill || "#000",
-                    targetObj: text,
-                    cssScaleY: cssScaleY,
-                  },
-                  showFloatingMenu: false,
-                }));
-            }
-          });
-
           text.on("mousedblclick", () => {
             const currentState = stateRef.current;
             if (currentState.tool === "select" || currentState.tool === "text") {
@@ -818,6 +786,39 @@ const PdfEditorWorkspace = React.forwardRef(
                 hasControls: false,
                 hasBorders: true,
               });
+
+              text.on("mousedblclick", () => {
+                const stateAtClick = stateRef.current;
+                if (stateAtClick.tool === "select" || stateAtClick.tool === "text") {
+                    text.set({ visible: false });
+                    canvas.renderAll();
+                    const cssScaleX = canvas.getElement().clientWidth / canvas.getWidth();
+                    const cssScaleY = canvas.getElement().clientHeight / canvas.getHeight();
+                    const finalScaleX = stateAtClick.zoom * cssScaleX;
+                    const finalScaleY = stateAtClick.zoom * cssScaleY;
+
+                    setState((prev) => ({
+                      ...prev,
+                      editingText: {
+                        visible: true,
+                        text: text.text || "",
+                        left: (text.left || 0) * finalScaleX,
+                        top: (text.top || 0) * finalScaleY,
+                        width: (text.width || 0) * (text.scaleX || 1) * finalScaleX,
+                        height: (text.height || 0) * (text.scaleY || 1) * finalScaleY,
+                        fontSize: (text.fontSize || 12) * finalScaleY,
+                        fontFamily: text.fontFamily || "sans-serif",
+                        fontWeight: text.fontWeight || "normal",
+                        fontStyle: text.fontStyle || "normal",
+                        color: text.fill as string || "#000",
+                        targetObj: text,
+                        cssScaleY: cssScaleY,
+                      },
+                      showFloatingMenu: false,
+                    }));
+                }
+              });
+
               canvas.add(text);
               canvas.setActiveObject(text);
               text.set({ visible: false });
@@ -1076,6 +1077,39 @@ const PdfEditorWorkspace = React.forwardRef(
         hasControls: false,
         hasBorders: true,
       });
+
+      text.on("mousedblclick", () => {
+        const currentState = stateRef.current;
+        if (currentState.tool === "select" || currentState.tool === "text") {
+            text.set({ visible: false });
+            fabricCanvas.current?.renderAll();
+            const cssScaleX = fabricCanvas.current!.getElement().clientWidth / fabricCanvas.current!.getWidth();
+            const cssScaleY = fabricCanvas.current!.getElement().clientHeight / fabricCanvas.current!.getHeight();
+            const finalScaleX = currentState.zoom * cssScaleX;
+            const finalScaleY = currentState.zoom * cssScaleY;
+
+            setState((prev) => ({
+              ...prev,
+              editingText: {
+                visible: true,
+                text: text.text || "",
+                left: (text.left || 0) * finalScaleX,
+                top: (text.top || 0) * finalScaleY,
+                width: (text.width || 0) * (text.scaleX || 1) * finalScaleX,
+                height: (text.height || 0) * (text.scaleY || 1) * finalScaleY,
+                fontSize: (text.fontSize || 12) * finalScaleY,
+                fontFamily: text.fontFamily || "sans-serif",
+                fontWeight: text.fontWeight || "normal",
+                fontStyle: text.fontStyle || "normal",
+                color: text.fill as string || "#000",
+                targetObj: text,
+                cssScaleY: cssScaleY,
+              },
+              showFloatingMenu: false,
+            }));
+        }
+      });
+
       fabricCanvas.current.add(text);
       fabricCanvas.current.setActiveObject(text);
       

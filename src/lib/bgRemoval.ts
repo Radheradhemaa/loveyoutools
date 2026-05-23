@@ -85,7 +85,7 @@ export const ensureU2netLoaded = async () => {
       });
     } catch (e) {
       console.warn(
-        "[AI] MODNet secondary load failed, trying WASM fallback",
+        "[AI] U2Net secondary load failed, trying WASM fallback",
         e,
       );
       u2netPipeline = await pipeline("image-segmentation", "Xenova/modnet", {
@@ -220,6 +220,15 @@ export async function removeBackground(
       throw new Error("AI model failed to process the image.");
     }
 
+    onProgress("Analyzing Details (U2Net Pass)...");
+    let resModelU2 = null;
+    if (u2netPipeline) {
+      resModelU2 = await u2netPipeline(imageSrc).catch((e: any) => {
+        console.error("U2Net pass failed", e);
+        return null; // non-fatal
+      });
+    }
+
     onProgress("Merging AI Visions...");
 
     // Helper to extract mask data and normalize
@@ -236,6 +245,15 @@ export async function removeBackground(
     };
 
     const maskData = getMask(resModel);
+    const maskDataU2 = getMask(resModelU2);
+
+    // Merge the masks by multiplying or taking the minimum alpha to be extremely aggressive against background artifacts
+    if (maskData && maskDataU2 && maskData.width === maskDataU2.width && maskData.height === maskDataU2.height) {
+      for (let i = 0; i < maskData.data.length; i++) {
+         // Taking the minimum ensures that if either model thinks it is background (close to 0), it becomes background.
+         maskData.data[i] = Math.min(maskData.data[i], maskDataU2.data[i]);
+      }
+    }
 
     // Load Full Original Image to get maximum quality output
     const origImg = new Image();
@@ -282,34 +300,25 @@ export async function removeBackground(
           const val = mData[idx] * maskScale;
           
           let threshold;
-          if (y < mh * 0.22) {
-            threshold = 25;
-          } else if (y < mh * 0.32) {
-            threshold = 95;
+          if (y < mh * 0.25) {
+            threshold = 20; // lower threshold for hair/head details
           } else {
-            // Asymmetric thresholding for torso/shoulders:
-            // - Left side (x < mw * 0.5): preserve left shoulder completely and naturally (threshold 20)
-            // - Right side (x >= mw * 0.5): strictly sever chair and shadow artifacts (threshold 115)
-            threshold = (x < mw * 0.5) ? 20 : 115;
+            // High threshold for body/shoulders to sever chairs, relaxed slightly because we intersect two AI models now
+            threshold = 130; 
           }
           binMask[idx] = val >= threshold ? 1 : 0;
         }
       }
 
-      // 1b. Erosion Pass (Dynamic Radius based on vertical and horizontal zones to aggressively sever broad background connections)
+      // 1b. Erosion Pass (Dynamic Radius based on vertical zones to aggressively sever broad background connections)
       const erodedBin = new Uint8Array(mw * mh);
       for (let y = 0; y < mh; y++) {
         for (let x = 0; x < mw; x++) {
           let erRad;
-          if (y < mh * 0.22) {
-            erRad = 1;
-          } else if (y < mh * 0.32) {
-            erRad = 2;
+          if (y < mh * 0.25) {
+            erRad = 1; // gentle erosion for hair
           } else {
-            // Asymmetric erosion for torso/shoulders:
-            // - Left side: minimal erosion (1) to preserve and extend the left shoulder perfectly.
-            // - Right side: heavy erosion (4) to guarantee background chair removal.
-            erRad = (x < mw * 0.5) ? 1 : 4;
+            erRad = 3; // moderate erosion (models already mask out most chairs)
           }
 
           const idx = y * mw + x;
@@ -401,9 +410,9 @@ export async function removeBackground(
         }
       }
 
-      // 1d. Morphological Dilation Pass (Radius = 6, completely restores natural contours)
+      // 1d. Morphological Dilation Pass (Radius = 4, completely restores natural contours)
       let dilatedBin = cleanBin;
-      for (let iter = 0; iter < 6; iter++) {
+      for (let iter = 0; iter < 4; iter++) {
         const next = new Uint8Array(mw * mh);
         for (let y = 0; y < mh; y++) {
           for (let x = 0; x < mw; x++) {
@@ -442,14 +451,13 @@ export async function removeBackground(
           let val = mData[idx] * maskScale * dilatedBin[idx];
 
           // Gentle internal thresholding inside subject container
-          // Use near-zero threshold on the left side to perfectly preserve fading boundary alpha of the left shoulder
-          const internalThresh = x < mw * 0.5 ? 2 : 18;
+          const internalThresh = 15;
           if (val < internalThresh) {
             val = 0;
           }
 
-          // Kill spikes (skip on the left side to preserve all shoulder micro-contours)
-          if (x > 1 && x < mw - 2 && x >= mw * 0.5) {
+          // Kill spikes
+          if (x > 1 && x < mw - 2) {
             const left1 = mData[y * mw + x - 1] * maskScale * dilatedBin[y * mw + x - 1];
             const right1 = mData[y * mw + x + 1] * maskScale * dilatedBin[y * mw + x + 1];
             const nAvg = (left1 + right1) / 2;
