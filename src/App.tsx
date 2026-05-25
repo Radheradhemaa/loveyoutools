@@ -11,7 +11,6 @@ import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
 import Disclaimer from './pages/Disclaimer';
 import ScrollToTop from './components/ScrollToTop';
-import FeedbackWidget from './components/FeedbackWidget';
 import { FocusModeProvider } from './contexts/FocusModeContext';
 
 export default function App() {
@@ -34,7 +33,6 @@ export default function App() {
               <Route path="tool/:id" element={<ToolPage />} />
             </Route>
           </Routes>
-          <FeedbackWidget />
         </Router>
       </FocusModeProvider>
     </HelmetProvider>
