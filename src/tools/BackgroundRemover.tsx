@@ -6,8 +6,150 @@ import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
 import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded } from '../lib/bgRemoval';
 
+const reconstructLeftShoulder = (
+  originalSrc: string,
+  extendAmount: number,
+  shoulderStartRatio: number,
+  clothingSlope: number = 0.20,
+  shoulderCurve: number = 0.45
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const W = img.width;
+      const H = img.height;
+      
+      const canvas = document.createElement('canvas');
+      const W_new = W + extendAmount;
+      canvas.width = W_new;
+      canvas.height = H;
+      
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        resolve(originalSrc);
+        return;
+      }
+      
+      // Clear canvas
+      ctx.clearRect(0, 0, W_new, H);
+      
+      // Draw the original image shifted by `extendAmount` to the right to make space
+      ctx.drawImage(img, extendAmount, 0);
+      
+      // Get the column of pixels at the original image's left border to reconstruct the background
+      const originalLeftCol = ctx.getImageData(extendAmount, 0, 1, H);
+      const colData = originalLeftCol.data;
+      
+      // Get the full image data of the new padded canvas
+      const fullData = ctx.getImageData(0, 0, W_new, H);
+      const pixels = fullData.data;
+      
+      // Calculate start of the left shoulder (viewer's left)
+      const y_start = Math.floor(H * shoulderStartRatio);
+      
+      // Build an organic shoulder mask path on a helper canvas to ensure flawless anti-aliased edge calculation
+      const pathCanvas = document.createElement('canvas');
+      pathCanvas.width = W_new;
+      pathCanvas.height = H;
+      const pctx = pathCanvas.getContext('2d');
+      if (pctx) {
+        pctx.fillStyle = '#000000';
+        pctx.fillRect(0, 0, W_new, H);
+        
+        pctx.fillStyle = '#ffffff';
+        pctx.beginPath();
+        // Start from bottom-left corner of original image (new coordinate: x=extendAmount)
+        pctx.moveTo(extendAmount, H);
+        // Cover everything to the right in the body
+        pctx.lineTo(W_new, H);
+        // Go all the way up to where shoulder starts vertically
+        pctx.lineTo(W_new, y_start);
+        // Go left to upper body attachment
+        pctx.lineTo(extendAmount, y_start);
+        
+        // Curve downwards to the new bottom-left corner (x=0, y=H)
+        // Control points:
+        // cp1: smooth horizontal departure from body
+        const cp1x = extendAmount * 0.55;
+        const cp1y = y_start;
+        // cp2: shoulder tip curvature pulling outwards to the left frame edge
+        const cp2x = 0;
+        const cp2y = y_start + (H - y_start) * shoulderCurve;
+        
+        pctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, 0, H);
+        pctx.closePath();
+        pctx.fill();
+      }
+      
+      const maskData = pctx ? pctx.getImageData(0, 0, W_new, H).data : null;
+      
+      // Step-by-step Pixel Reconstruction Pipeline
+      for (let y = 0; y < H; y++) {
+        // Safe background color sampling at current Y to avoid grabbing clothing pixels
+        // (y < y_start are guaranteed background; we lock the lower portion to y_start - 1 to preserve background color)
+        const bgY = y < y_start ? y : Math.max(0, y_start - 1);
+        const bgR = colData[bgY * 4];
+        const bgG = colData[bgY * 4 + 1];
+        const bgB = colData[bgY * 4 + 2];
+        const bgA = colData[bgY * 4 + 3];
+        
+        for (let x = 0; x < extendAmount; x++) {
+          const idx = (y * W_new + x) * 4;
+          const maskVal = maskData ? maskData[idx] : 0;
+          const alpha = maskVal / 255; // Sub-pixel anti-aliased weight from native canvas path
+          
+          if (alpha > 0) {
+            // Reconstruct clothing texture inside the shoulder mask area
+            const distFromEdge = extendAmount - x;
+            
+            // Warp texture elegantly to model organic fabric folds
+            const srcY = Math.min(H - 1, Math.max(0, y - Math.floor(distFromEdge * clothingSlope)));
+            const srcX = Math.min(W_new - 1, extendAmount + Math.floor(distFromEdge * 0.75));
+            const srcIdx = (srcY * W_new + srcX) * 4;
+            
+            const texR = pixels[srcIdx];
+            const texG = pixels[srcIdx + 1];
+            const texB = pixels[srcIdx + 2];
+            const texA = pixels[srcIdx + 3];
+            
+            // Subtle lighting gradient to blend with surrounding shadows naturally
+            const lightingFactor = 1.0 - (distFromEdge / extendAmount) * 0.05;
+            const finalTexR = Math.max(0, Math.min(255, texR * lightingFactor));
+            const finalTexG = Math.max(0, Math.min(255, texG * lightingFactor));
+            const finalTexB = Math.max(0, Math.min(255, texB * lightingFactor));
+            
+            // Perform high-fidelity alpha-blending for perfect anti-aliased edge smoothness with no jagged lines
+            pixels[idx]     = Math.round(finalTexR * alpha + bgR * (1 - alpha));
+            pixels[idx + 1] = Math.round(finalTexG * alpha + bgG * (1 - alpha));
+            pixels[idx + 2] = Math.round(finalTexB * alpha + bgB * (1 - alpha));
+            pixels[idx + 3] = Math.round(texA * alpha + bgA * (1 - alpha));
+          } else {
+            // Outside the shoulder: pure natural background
+            pixels[idx]     = bgR;
+            pixels[idx + 1] = bgG;
+            pixels[idx + 2] = bgB;
+            pixels[idx + 3] = bgA;
+          }
+        }
+      }
+      
+      ctx.putImageData(fullData, 0, 0);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = (e) => reject(e);
+    img.src = originalSrc;
+  });
+};
+
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [originalUploadedSrc, setOriginalUploadedSrc] = useState<string | null>(null);
+  const [extendAmount, setExtendAmount] = useState<number>(60);
+  const [shoulderHeightRatio, setShoulderHeightRatio] = useState<number>(0.52);
+  const [clothingSlope, setClothingSlope] = useState<number>(0.20);
+  const [shoulderCurve, setShoulderCurve] = useState<number>(0.45);
+  const [isExtendingShoulder, setIsExtendingShoulder] = useState<boolean>(false);
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
@@ -184,6 +326,7 @@ export default function BackgroundRemover() {
     try {
       const cropped = await getCroppedImg(imageSrc, completedCrop, rotation);
       setImageSrc(cropped);
+      setOriginalUploadedSrc(cropped);
       setIsCropping(false);
       setHasCropped(true);
       setRotation(0); // Reset rotation after apply
@@ -319,6 +462,7 @@ export default function BackgroundRemover() {
     reader.onload = (event) => {
       const src = event.target?.result as string;
       setImageSrc(src);
+      setOriginalUploadedSrc(src);
       setResultImage(null);
       setHistory([]);
       setHistoryIndex(-1);
@@ -689,6 +833,7 @@ export default function BackgroundRemover() {
               reader.onload = (event) => {
                 const src = event.target?.result as string;
                 setImageSrc(src);
+                setOriginalUploadedSrc(src);
                 // Reset all states for new image
                 setResultImage(null);
                 setProcessingError(null);
@@ -1079,10 +1224,132 @@ export default function BackgroundRemover() {
                               ))}
                             </div>
                           </div>
+
+                        {/* AI Shoulder Restoration Section */}
+                        <div className="pt-4 border-t border-border space-y-4">
+                          <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
+                            <Sparkles className="w-5 h-5 text-accent animate-pulse" /> AI Shoulder Restoration
+                          </h3>
+                          <p className="text-[10px] text-text-muted leading-relaxed">
+                            Extend and preserve the left shoulder boundary seamlessly. Reconstructs missing shoulder portions naturally with pristine anti-aliased edges, keeping the original shirt texture, folds, and red background intact.
+                          </p>
+
+                          <div className="space-y-4 p-3 bg-accent/5 border border-accent/10 rounded-2xl animate-in slide-in-from-top-2">
+                            <div className="space-y-3">
+                              <div className="flex justify-between text-xs font-bold text-text-primary">
+                                <span>Extension Width</span>
+                                <span className="text-accent">{extendAmount}px</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="20" max="150" 
+                                value={extendAmount} 
+                                onChange={(e) => setExtendAmount(Number(e.target.value))}
+                                className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                              />
+                            </div>
+
+                            <div className="space-y-3">
+                              <div className="flex justify-between text-xs font-bold text-text-primary">
+                                <span>Shoulder Start Height</span>
+                                <span className="text-accent">{Math.round((1 - shoulderHeightRatio) * 100)}%</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="42" max="68" 
+                                value={Math.round(shoulderHeightRatio * 100)} 
+                                onChange={(e) => setShoulderHeightRatio(Number(e.target.value) / 100)}
+                                className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                              />
+                            </div>
+
+                            <div className="space-y-3">
+                              <div className="flex justify-between text-xs font-bold text-text-primary">
+                                <span>Fabric Texture Slope</span>
+                                <span className="text-accent">{Math.round(clothingSlope * 100)}%</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="0" max="60" 
+                                value={Math.round(clothingSlope * 100)} 
+                                onChange={(e) => setClothingSlope(Number(e.target.value) / 100)}
+                                className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                              />
+                            </div>
+
+                            <div className="space-y-3">
+                              <div className="flex justify-between text-xs font-bold text-text-primary">
+                                <span>Shoulder Curve Roundness</span>
+                                <span className="text-accent">{Math.round(shoulderCurve * 100)}%</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="25" max="75" 
+                                value={Math.round(shoulderCurve * 100)} 
+                                onChange={(e) => setShoulderCurve(Number(e.target.value) / 100)}
+                                className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-2 pt-2">
+                              <button
+                                type="button"
+                                disabled={isProcessing || isExtendingShoulder}
+                                onClick={async () => {
+                                  if (!originalUploadedSrc) return;
+                                  setIsExtendingShoulder(true);
+                                  setProcessingError(null);
+                                  try {
+                                    const restored = await reconstructLeftShoulder(
+                                      originalUploadedSrc,
+                                      extendAmount,
+                                      shoulderHeightRatio,
+                                      clothingSlope,
+                                      shoulderCurve
+                                    );
+                                    setImageSrc(restored);
+                                    // Trigger background removal on the reconstructed source image immediately
+                                    await removeBackground(restored);
+                                  } catch (err) {
+                                    console.error(err);
+                                    setProcessingError("Failed to reconstruct the shoulder naturally.");
+                                  } finally {
+                                    setIsExtendingShoulder(false);
+                                  }
+                                }}
+                                className="w-full btn bp py-2.5 rounded-xl font-bold text-xs gap-2 flex items-center justify-center bg-accent text-white hover:bg-accent/90 transition-all disabled:opacity-50"
+                              >
+                                {isExtendingShoulder ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 animate-spin" /> Reconstructing...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Wand2 className="w-4 h-4" /> Reconstruct Left Shoulder
+                                  </>
+                                )}
+                              </button>
+
+                              {imageSrc !== originalUploadedSrc && originalUploadedSrc && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setImageSrc(originalUploadedSrc);
+                                    setResultImage(null);
+                                    removeBackground(originalUploadedSrc);
+                                  }}
+                                  className="w-full py-2 border border-border hover:bg-bg-secondary rounded-xl text-[10px] font-bold text-text-muted hover:text-text-primary transition-all flex items-center justify-center gap-1.5"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" /> Reset to Original Photo
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                    </>
-                  )}
+                      </div>
+                    )}
+                  </>
+                )}
 
                   {/* Tips Box */}
                   <div className="bg-accent/5 border border-accent/20 rounded-2xl p-4">

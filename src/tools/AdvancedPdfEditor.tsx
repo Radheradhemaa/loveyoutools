@@ -119,6 +119,7 @@ interface EditorState {
   eraserWidth: number;
   showFloatingMenu: boolean;
   floatingMenuPos: { x: number; y: number };
+  textData: Record<number, any[]>;
   editingText: {
     visible: boolean;
     text: string;
@@ -234,6 +235,7 @@ const SortableThumbnail = ({
 
 export default function AdvancedPdfEditor() {
   const [lastExportedUrl, setLastExportedUrl] = useState<string | null>(null);
+  const [originalFilename, setOriginalFilename] = useState<string>("document");
   const editorRef = useRef<any>(null);
 
   const faq = [
@@ -259,7 +261,8 @@ export default function AdvancedPdfEditor() {
     if (lastExportedUrl) {
       const link = document.createElement("a");
       link.href = lastExportedUrl;
-      link.download = `loveyoutools_edited.pdf`;
+      const baseName = originalFilename.replace(/\.pdf$/i, "");
+      link.download = `edited-${baseName}.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -282,7 +285,10 @@ export default function AdvancedPdfEditor() {
           if (state === "BEFORE") {
             setLastExportedUrl(null);
           }
-        }, [state]);
+          if (file && file[0]) {
+            setOriginalFilename(file[0].name);
+          }
+        }, [state, file]);
 
         return (
           <PdfEditorWorkspace
@@ -327,8 +333,24 @@ const PdfEditorWorkspace = React.forwardRef(
       eraserWidth: 20,
       showFloatingMenu: false,
       floatingMenuPos: { x: 0, y: 0 },
+      textData: {},
       editingText: null,
     });
+
+    const updateActiveTextData = (updates: any) => {
+      setState(prev => {
+        if (!prev.editingText) return prev;
+        const newEditingText = { ...prev.editingText, ...updates };
+        const newTextData = { ...prev.textData };
+        const pageBlocks = [...(newTextData[prev.currentPage] || [])];
+        const idx = pageBlocks.findIndex(b => b.id === prev.editingText.blockId);
+        if (idx > -1) {
+          pageBlocks[idx] = { ...pageBlocks[idx], ...updates };
+        }
+        newTextData[prev.currentPage] = pageBlocks;
+        return { ...prev, textData: newTextData, editingText: newEditingText };
+      });
+    };
 
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const fabricCanvas = useRef<Canvas | null>(null);
@@ -336,7 +358,7 @@ const PdfEditorWorkspace = React.forwardRef(
     const pdfDocRef = useRef<any>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const originalDimensions = useRef({ width: 0, height: 0 });
-    
+
     const stateRef = useRef(state);
     useEffect(() => {
       stateRef.current = state;
@@ -456,45 +478,51 @@ const PdfEditorWorkspace = React.forwardRef(
 
           text.on("mousedblclick", () => {
             const currentState = stateRef.current;
-            if (currentState.tool === "select" || currentState.tool === "text") {
-                text.set({ visible: false });
-                canvas.renderAll();
-                const cssScaleX = canvas.getElement().clientWidth / canvas.getWidth();
-                const cssScaleY = canvas.getElement().clientHeight / canvas.getHeight();
-                const finalScaleX = currentState.zoom * cssScaleX;
-                const finalScaleY = currentState.zoom * cssScaleY;
+            if (
+              currentState.tool === "select" ||
+              currentState.tool === "text"
+            ) {
+              text.set({ visible: false });
+              canvas.renderAll();
+              const cssScaleX =
+                canvas.getElement().clientWidth / canvas.getWidth();
+              const cssScaleY =
+                canvas.getElement().clientHeight / canvas.getHeight();
+              const finalScaleX = currentState.zoom * cssScaleX;
+              const finalScaleY = currentState.zoom * cssScaleY;
 
-                setState((prev) => ({
-                  ...prev,
-                  editingText: {
-                    visible: true,
-                    text: text.text || "",
-                    left: (text.left || 0) * finalScaleX,
-                    top: (text.top || 0) * finalScaleY,
-                    width: (text.width || 0) * (text.scaleX || 1) * finalScaleX,
-                    height: (text.height || 0) * (text.scaleY || 1) * finalScaleY,
-                    fontSize: (text.fontSize || 12) * finalScaleY,
-                    fontFamily: text.fontFamily || "sans-serif",
-                    fontWeight: text.fontWeight || "normal",
-                    fontStyle: text.fontStyle || "normal",
-                    color: (text as any).data?.originalColor || text.fill || "#000",
-                    targetObj: text,
-                    cssScaleY: cssScaleY,
-                  },
-                  showFloatingMenu: false,
-                }));
+              setState((prev) => ({
+                ...prev,
+                editingText: {
+                  visible: true,
+                  text: text.text || "",
+                  left: (text.left || 0) * finalScaleX,
+                  top: (text.top || 0) * finalScaleY,
+                  width: (text.width || 0) * (text.scaleX || 1) * finalScaleX,
+                  height: (text.height || 0) * (text.scaleY || 1) * finalScaleY,
+                  fontSize: (text.fontSize || 12) * finalScaleY,
+                  fontFamily: text.fontFamily || "sans-serif",
+                  fontWeight: text.fontWeight || "normal",
+                  fontStyle: text.fontStyle || "normal",
+                  color:
+                    (text as any).data?.originalColor || text.fill || "#000",
+                  targetObj: text,
+                  cssScaleY: cssScaleY,
+                },
+                showFloatingMenu: false,
+              }));
             }
           });
 
           text.on("mouseover", () => {
-            if (text.fill === "transparent") {
+            if (text.fill === "transparent" || text.fill === "rgba(255, 255, 255, 0.01)") {
               text.set({ backgroundColor: "rgba(0, 123, 255, 0.1)" });
               canvas.renderAll();
             }
           });
 
           text.on("mouseout", () => {
-            if (text.fill === "transparent") {
+            if (text.fill === "transparent" || text.fill === "rgba(255, 255, 255, 0.01)") {
               text.set({ backgroundColor: "transparent" });
               canvas.renderAll();
             }
@@ -513,7 +541,7 @@ const PdfEditorWorkspace = React.forwardRef(
             if (text.text === (text as any).data.originalText) {
               whiteoutRect.set({ visible: false });
               text.set({
-                fill: "transparent",
+                fill: "rgba(255, 255, 255, 0.01)",
                 backgroundColor: "transparent",
               });
             } else {
@@ -555,7 +583,7 @@ const PdfEditorWorkspace = React.forwardRef(
 
     const renderPage = async (pageNum: number) => {
       if (!pdfDocRef.current || !canvasRef.current) return;
-      setState((prev) => ({ ...prev, isProcessing: true }));
+      setState((prev) => ({ ...prev, isProcessing: true, editingText: null }));
 
       try {
         const page = await pdfDocRef.current.getPage(pageNum);
@@ -596,6 +624,8 @@ const PdfEditorWorkspace = React.forwardRef(
           await (page as any).render({
             canvasContext: context,
             viewport: renderViewport,
+            annotationMode: 0, // Disable annotations overlay
+            textLayerMode: 0,
           }).promise;
 
           const bgImage = await FabricImage.fromURL(
@@ -622,68 +652,162 @@ const PdfEditorWorkspace = React.forwardRef(
         } else {
           const textContent = await page.getTextContent();
           let items = textContent.items as any[];
-          
+
           let validItems = items.filter((item) => item.str.trim().length > 0);
-          
+
           // OCR Fallback for scanned PDFs
           if (validItems.length === 0) {
             try {
-               const imgUrl = tempCanvas.toDataURL("image/png");
-               const worker = await Tesseract.createWorker("eng");
-               const ret = await worker.recognize(imgUrl);
-               await worker.terminate();
-               
-               if (ret.data && ret.data.words) {
-                  // Reconstruct Fabric objects from OCR
-                  ret.data.words.forEach((word) => {
-                     // Tesseract provides bounding box in the rendered tempCanvas scale (which is renderScale)
-                     // So we must scale it down by renderScale
-                     const left = word.bbox.x0 / renderScale;
-                     const top = word.bbox.y0 / renderScale;
-                     const width = (word.bbox.x1 - word.bbox.x0) / renderScale;
-                     const height = (word.bbox.y1 - word.bbox.y0) / renderScale;
-                     const fontSize = height; // approximate
-                     
-                     // Push as simulated text item
-                     items.push({
-                         str: word.text + " ",
-                         transform: [ fontSize, 0, 0, fontSize, left, top + fontSize * 0.8 ],
-                         fontName: "Arial",
-                         color: [0, 0, 0],
-                         width: width,
-                         height: fontSize,
-                         fontWeight: 400
-                     });
+              const imgUrl = tempCanvas.toDataURL("image/png");
+              const worker = await Tesseract.createWorker("eng");
+              const ret = await worker.recognize(imgUrl);
+              await worker.terminate();
+
+              if (ret.data && ret.data.words) {
+                // Reconstruct Fabric objects from OCR
+                ret.data.words.forEach((word) => {
+                  // Tesseract provides bounding box in the rendered tempCanvas scale (which is renderScale)
+                  // So we must scale it down by renderScale
+                  const left = word.bbox.x0 / renderScale;
+                  const top = word.bbox.y0 / renderScale;
+                  const width = (word.bbox.x1 - word.bbox.x0) / renderScale;
+                  const height = (word.bbox.y1 - word.bbox.y0) / renderScale;
+                  const fontSize = height; // approximate
+
+                  // Push as simulated text item
+                  items.push({
+                    str: word.text + " ",
+                    transform: [
+                      fontSize,
+                      0,
+                      0,
+                      fontSize,
+                      left,
+                      top + fontSize * 0.8,
+                    ],
+                    fontName: "Arial",
+                    color: [0, 0, 0],
+                    width: width,
+                    height: fontSize,
+                    fontWeight: 400,
+                    isOCR: true,
                   });
-               }
+                });
+              }
             } catch (err) {
-               console.error("OCR failed:", err);
+              console.error("OCR failed:", err);
             }
           }
 
-          items.forEach((item) => {
+          const currentScale = baseViewport.scale;
+          const itemsWithCoords = items.map((item) => {
+            let x = item.transform[4] * currentScale;
+            let y = baseViewport.height - (item.transform[5] * currentScale);
+            let fontSize = Math.sqrt(
+              item.transform[0] * item.transform[0] +
+              item.transform[1] * item.transform[1]
+            ) * currentScale;
+
+            if (item.isOCR) {
+              x = item.transform[4];
+              y = item.transform[5];
+              fontSize = item.height;
+            }
+
+            return {
+              ...item,
+              tx: [item.transform[0], item.transform[1], item.transform[2], item.transform[3], x, y],
+              fontSize,
+              textWidth: item.isOCR ? item.width : item.width * currentScale,
+              str: item.str,
+              originalStr: item.str,
+            };
+          });
+
+          // Sort primarily by Y, then by X
+          itemsWithCoords.sort((a, b) => {
+            const yDiff = a.tx[5] - b.tx[5];
+            if (Math.abs(yDiff) > a.fontSize * 0.5) {
+              return yDiff;
+            }
+            return a.tx[4] - b.tx[4];
+          });
+
+          const groupedItems: any[] = [];
+          let currentGroup: any = null;
+
+          itemsWithCoords.forEach((item) => {
+            if (!item.str || (!item.str.trim() && item.textWidth === 0)) return; // Skip truly empty items
+
+            if (!currentGroup) {
+              currentGroup = { ...item };
+            } else {
+              const yDiff = Math.abs(currentGroup.tx[5] - item.tx[5]);
+              const isSameFont =
+                currentGroup.fontName === item.fontName &&
+                Math.abs(currentGroup.fontSize - item.fontSize) < 2;
+
+              // Calculate horizontal space between objects
+              const space =
+                item.tx[4] - (currentGroup.tx[4] + currentGroup.textWidth);
+
+              // If they are on the same line, have the same font, and aren't too far apart horizontally
+              if (
+                yDiff < currentGroup.fontSize * 0.5 &&
+                isSameFont &&
+                space < currentGroup.fontSize * 2
+              ) {
+                const needsSpace =
+                  space > currentGroup.fontSize * 0.2 &&
+                  !currentGroup.str.endsWith(" ") &&
+                  !item.str.startsWith(" ");
+                const addSpace = needsSpace ? " " : "";
+                currentGroup.str += addSpace + item.str;
+                currentGroup.textWidth = item.tx[4] - currentGroup.tx[4] + item.textWidth;
+              } else {
+                groupedItems.push(currentGroup);
+                currentGroup = { ...item };
+              }
+            }
+          });
+          if (currentGroup) {
+            groupedItems.push(currentGroup);
+          }
+
+          const extractedBlocks: any[] = [];
+          
+          groupedItems.forEach((item) => {
             if (!item.str.trim()) return;
 
-            const tx = pdfjs.Util.transform(
-              baseViewport.transform,
-              item.transform,
-            );
-            const fontSize =
-              Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3]) ||
-              item.height * baseViewport.scale;
+            const x = item.tx[4];
+            const y = item.tx[5];
+            const fontSize = item.fontSize;
 
             const fontName = item.fontName || "";
             const fontNameLower = fontName.toLowerCase();
-            const isBold = fontNameLower.includes("bold") || item.fontWeight > 500;
+            const isBold =
+              fontNameLower.includes("bold") || item.fontWeight > 500;
             const isItalic =
-              fontNameLower.includes("italic") || fontNameLower.includes("oblique");
+              fontNameLower.includes("italic") ||
+              fontNameLower.includes("oblique");
 
             let resolvedFont = "sans-serif";
-            if (fontNameLower.includes("arial") || fontNameLower.includes("helvet") || fontNameLower.includes("verdana")) {
+            if (
+              fontNameLower.includes("arial") ||
+              fontNameLower.includes("helvet") ||
+              fontNameLower.includes("verdana")
+            ) {
               resolvedFont = "Arial, Helvetica, sans-serif";
-            } else if (fontNameLower.includes("times") || fontNameLower.includes("georgia") || fontNameLower.includes("serif")) {
+            } else if (
+              fontNameLower.includes("times") ||
+              fontNameLower.includes("georgia") ||
+              fontNameLower.includes("serif")
+            ) {
               resolvedFont = '"Times New Roman", Times, serif';
-            } else if (fontNameLower.includes("courier") || fontNameLower.includes("mono")) {
+            } else if (
+              fontNameLower.includes("courier") ||
+              fontNameLower.includes("mono")
+            ) {
               resolvedFont = '"Courier New", Courier, monospace';
             }
 
@@ -694,54 +818,53 @@ const PdfEditorWorkspace = React.forwardRef(
               color = `rgb(${item.g}, ${item.g}, ${item.g})`;
             }
 
-            const textWidth = item.width * baseViewport.scale;
-            const whiteoutRect = new Rect({
-              left: tx[4],
-              top: tx[5] - fontSize,
-              width: Math.max(textWidth * 1.1, 10),
-              height: fontSize * 1.2,
-              fill: "#ffffff",
-              visible: false,
-              selectable: false,
-              evented: false,
-              data: { isWhiteout: true },
-            });
-            canvas.add(whiteoutRect);
-
-            const text = new IText(item.str, {
-              left: tx[4],
-              top: tx[5] - fontSize * 0.8,
+            const textWidth = item.textWidth;
+            const blockId = Math.random().toString(36).substring(7);
+            
+            extractedBlocks.push({
+              id: blockId,
+              text: item.str,
+              left: x,
+              top: y - fontSize, // baseline aligns to bottom of div if height = fontSize and line-height = 1
+              width: textWidth,
+              height: fontSize,
               fontSize: fontSize,
               fontFamily: resolvedFont,
               fontWeight: isBold ? "bold" : "normal",
               fontStyle: isItalic ? "italic" : "normal",
-              lineHeight: 1,
-              fill: "transparent",
-              data: {
-                isOriginal: true,
-                originalText: item.str,
-                originalColor: color,
-                originalTx4: tx[4],
-                originalTx5: tx[5],
-                originalWidth: textWidth,
-                originalHeight: fontSize,
-              },
-              hoverCursor: "text",
-              selectable: true,
-              hasControls: false,
-              hasBorders: true,
-              lockRotation: true,
-              lockScalingY: true,
-              backgroundColor: "transparent",
+              color: color,
+              isOriginal: true,
+              originalText: item.str,
+              originalColor: color,
+              originalFontSize: fontSize,
+              originalFontWeight: isBold ? "bold" : "normal",
+              originalFontStyle: isItalic ? "italic" : "normal",
+              originalTx4: x,
+              originalTx5: y,
+              isDeleted: false,
             });
 
-            if (text.width && textWidth && item.str.trim().length > 0) {
-              // Instead of using scaleX which breaks text editing layout, 
-              // we rely on the exact font size parsed from the transform matrix.
-            }
-
-            canvas.add(text);
+            const whiteoutRect = new Rect({
+              left: x,
+              top: y - fontSize,
+              width: Math.max(textWidth * 1.05, 10),
+              height: fontSize * 1.2,
+              fill: "#ffffff",
+              visible: false, // will turn true when text layer is edited
+              selectable: false,
+              evented: false,
+              data: { isWhiteout: true, blockId: blockId },
+            });
+            canvas.add(whiteoutRect);
           });
+          
+          setState(prev => ({
+            ...prev,
+            textData: {
+              ...prev.textData,
+              [pageNum]: extractedBlocks
+            }
+          }));
 
           attachTextHandlers(canvas);
         }
@@ -753,14 +876,18 @@ const PdfEditorWorkspace = React.forwardRef(
           const obj = e.selected?.[0];
           const currentZoom = stateRef.current.zoom;
           const cssScaleX = canvas.getElement().clientWidth / canvas.getWidth();
-          const cssScaleY = canvas.getElement().clientHeight / canvas.getHeight();
+          const cssScaleY =
+            canvas.getElement().clientHeight / canvas.getHeight();
           setState((prev) => ({
             ...prev,
             selectedObject: obj,
             showFloatingMenu:
               obj && (obj.type === "i-text" || obj.type === "text"),
             floatingMenuPos: obj
-              ? { x: obj.left * currentZoom * cssScaleX, y: (obj.top - 50) * currentZoom * cssScaleY }
+              ? {
+                  x: obj.left * currentZoom * cssScaleX,
+                  y: (obj.top - 50) * currentZoom * cssScaleY,
+                }
               : prev.floatingMenuPos,
           }));
         });
@@ -774,80 +901,33 @@ const PdfEditorWorkspace = React.forwardRef(
         });
 
         canvas.on("mouse:down", (e) => {
-           const currentState = stateRef.current;
-           if (currentState.tool === "text" && !e.target) {
-              const pointer = e.scenePoint;
-              const text = new IText("", {
+          const currentState = stateRef.current;
+          if (currentState.tool === "text" && !e.target) {
+            const pointer = e.scenePoint;
+            
+            setState((prev) => {
+              const newTextData = { ...prev.textData };
+              const pageBlocks = [...(newTextData[prev.currentPage] || [])];
+              const newBlock = {
+                id: Math.random().toString(36).substring(7),
+                text: "Double click to edit",
                 left: pointer.x,
                 top: pointer.y - 12,
-                fontFamily: "Arial",
+                width: 150,
+                height: 24,
                 fontSize: 24,
-                fill: currentState.isDarkMode ? "#ffffff" : "#000000",
-                hasControls: false,
-                hasBorders: true,
-              });
-
-              text.on("mousedblclick", () => {
-                const stateAtClick = stateRef.current;
-                if (stateAtClick.tool === "select" || stateAtClick.tool === "text") {
-                    text.set({ visible: false });
-                    canvas.renderAll();
-                    const cssScaleX = canvas.getElement().clientWidth / canvas.getWidth();
-                    const cssScaleY = canvas.getElement().clientHeight / canvas.getHeight();
-                    const finalScaleX = stateAtClick.zoom * cssScaleX;
-                    const finalScaleY = stateAtClick.zoom * cssScaleY;
-
-                    setState((prev) => ({
-                      ...prev,
-                      editingText: {
-                        visible: true,
-                        text: text.text || "",
-                        left: (text.left || 0) * finalScaleX,
-                        top: (text.top || 0) * finalScaleY,
-                        width: (text.width || 0) * (text.scaleX || 1) * finalScaleX,
-                        height: (text.height || 0) * (text.scaleY || 1) * finalScaleY,
-                        fontSize: (text.fontSize || 12) * finalScaleY,
-                        fontFamily: text.fontFamily || "sans-serif",
-                        fontWeight: text.fontWeight || "normal",
-                        fontStyle: text.fontStyle || "normal",
-                        color: text.fill as string || "#000",
-                        targetObj: text,
-                        cssScaleY: cssScaleY,
-                      },
-                      showFloatingMenu: false,
-                    }));
-                }
-              });
-
-              canvas.add(text);
-              canvas.setActiveObject(text);
-              text.set({ visible: false });
-              canvas.renderAll();
-
-              const cssScaleX = canvas.getElement().clientWidth / canvas.getWidth();
-              const cssScaleY = canvas.getElement().clientHeight / canvas.getHeight();
-              const finalScaleX = currentState.zoom * cssScaleX;
-              const finalScaleY = currentState.zoom * cssScaleY;
-
-              setState(prev => ({
-                ...prev,
-                editingText: {
-                  visible: true,
-                  text: "",
-                  left: pointer.x * finalScaleX,
-                  top: (pointer.y - 12) * finalScaleY,
-                  width: 100, // default width
-                  height: 30 * finalScaleY,
-                  fontSize: 24 * finalScaleY,
-                  fontFamily: "Arial",
-                  fontWeight: "normal",
-                  fontStyle: "normal",
-                  color: text.fill as string,
-                  targetObj: text,
-                  cssScaleY: cssScaleY,
-                }
-              }));
-           }
+                fontFamily: "Arial",
+                fontWeight: "normal",
+                fontStyle: "normal",
+                color: currentState.isDarkMode ? "#ffffff" : "#000000",
+                isOriginal: false,
+                isDeleted: false,
+              };
+              pageBlocks.push(newBlock as any);
+              newTextData[prev.currentPage] = pageBlocks;
+              return { ...prev, textData: newTextData, tool: "select" };
+            });
+          }
         });
 
         canvas.renderAll();
@@ -875,9 +955,7 @@ const PdfEditorWorkspace = React.forwardRef(
           });
 
           // Exceptions: drawing tools should keep objects non-evented
-          if (
-            ["draw", "highlight", "redact", "erase"].includes(state.tool)
-          ) {
+          if (["draw", "highlight", "redact", "erase"].includes(state.tool)) {
             obj.set({ evented: false });
           } else {
             obj.set({ evented: true });
@@ -922,6 +1000,7 @@ const PdfEditorWorkspace = React.forwardRef(
           isPasswordProtected: false,
           password: "",
           eraserWidth: 20,
+          textData: {},
         });
       }
     }, [initialFile]);
@@ -1075,44 +1154,48 @@ const PdfEditorWorkspace = React.forwardRef(
         fontSize: 24,
         fill: state.isDarkMode ? "#ffffff" : "#000000",
         hasControls: false,
-        hasBorders: true,
+        hasBorders: false,
       });
 
       text.on("mousedblclick", () => {
         const currentState = stateRef.current;
         if (currentState.tool === "select" || currentState.tool === "text") {
-            text.set({ visible: false });
-            fabricCanvas.current?.renderAll();
-            const cssScaleX = fabricCanvas.current!.getElement().clientWidth / fabricCanvas.current!.getWidth();
-            const cssScaleY = fabricCanvas.current!.getElement().clientHeight / fabricCanvas.current!.getHeight();
-            const finalScaleX = currentState.zoom * cssScaleX;
-            const finalScaleY = currentState.zoom * cssScaleY;
+          text.set({ visible: false });
+          fabricCanvas.current?.renderAll();
+          const cssScaleX =
+            fabricCanvas.current!.getElement().clientWidth /
+            fabricCanvas.current!.getWidth();
+          const cssScaleY =
+            fabricCanvas.current!.getElement().clientHeight /
+            fabricCanvas.current!.getHeight();
+          const finalScaleX = currentState.zoom * cssScaleX;
+          const finalScaleY = currentState.zoom * cssScaleY;
 
-            setState((prev) => ({
-              ...prev,
-              editingText: {
-                visible: true,
-                text: text.text || "",
-                left: (text.left || 0) * finalScaleX,
-                top: (text.top || 0) * finalScaleY,
-                width: (text.width || 0) * (text.scaleX || 1) * finalScaleX,
-                height: (text.height || 0) * (text.scaleY || 1) * finalScaleY,
-                fontSize: (text.fontSize || 12) * finalScaleY,
-                fontFamily: text.fontFamily || "sans-serif",
-                fontWeight: text.fontWeight || "normal",
-                fontStyle: text.fontStyle || "normal",
-                color: text.fill as string || "#000",
-                targetObj: text,
-                cssScaleY: cssScaleY,
-              },
-              showFloatingMenu: false,
-            }));
+          setState((prev) => ({
+            ...prev,
+            editingText: {
+              visible: true,
+              text: text.text || "",
+              left: (text.left || 0) * finalScaleX,
+              top: (text.top || 0) * finalScaleY,
+              width: (text.width || 0) * (text.scaleX || 1) * finalScaleX,
+              height: (text.height || 0) * (text.scaleY || 1) * finalScaleY,
+              fontSize: (text.fontSize || 12) * finalScaleY,
+              fontFamily: text.fontFamily || "sans-serif",
+              fontWeight: text.fontWeight || "normal",
+              fontStyle: text.fontStyle || "normal",
+              color: (text.fill as string) || "#000",
+              targetObj: text,
+              cssScaleY: cssScaleY,
+            },
+            showFloatingMenu: false,
+          }));
         }
       });
 
       fabricCanvas.current.add(text);
       fabricCanvas.current.setActiveObject(text);
-      
+
       text.set({ visible: false });
       fabricCanvas.current.renderAll();
       const canvas = fabricCanvas.current;
@@ -1121,8 +1204,8 @@ const PdfEditorWorkspace = React.forwardRef(
       const finalScaleX = state.zoom * cssScaleX;
       const finalScaleY = state.zoom * cssScaleY;
 
-      setState((prev) => ({ 
-        ...prev, 
+      setState((prev) => ({
+        ...prev,
         tool: "select",
         editingText: {
           visible: true,
@@ -1135,10 +1218,10 @@ const PdfEditorWorkspace = React.forwardRef(
           fontFamily: text.fontFamily || "sans-serif",
           fontWeight: text.fontWeight || "normal",
           fontStyle: text.fontStyle || "normal",
-          color: text.fill as string || "#000",
+          color: (text.fill as string) || "#000",
           targetObj: text,
           cssScaleY: cssScaleY,
-        }
+        },
       }));
     };
 
@@ -1254,7 +1337,7 @@ const PdfEditorWorkspace = React.forwardRef(
         canvas.freeDrawingBrush = new PencilBrush(canvas);
       }
       canvas.freeDrawingBrush.width = state.eraserWidth;
-      // In Fabric.js we often use a specific eraser brush if available, 
+      // In Fabric.js we often use a specific eraser brush if available,
       // otherwise we just draw white, which effectively "erases" on white backgrounds.
       // But for PDF background, we might need a real eraser.
       // For now, let's keep it simple.
@@ -1325,19 +1408,34 @@ const PdfEditorWorkspace = React.forwardRef(
         const helveticaObliqueFont = await finalPdfDoc.embedFont(StandardFonts.HelveticaOblique);
         const helveticaBoldObliqueFont = await finalPdfDoc.embedFont(StandardFonts.HelveticaBoldOblique);
 
+        const activeDomTexts: Record<string, string> = {};
+        document.querySelectorAll('.editable-text').forEach((el) => {
+          const ta = el as HTMLTextAreaElement | HTMLSpanElement;
+          const blockId = ta.getAttribute('data-block-id');
+          if (blockId) {
+            if ("value" in ta) {
+                activeDomTexts[blockId] = ta.value;
+            } else {
+                activeDomTexts[blockId] = ta.textContent || "";
+            }
+          }
+        });
+
         for (const pageNum of state.pageOrder) {
           if (state.deletedPages.includes(pageNum)) continue;
 
           const [copiedPage] = await finalPdfDoc.copyPages(pdfDoc, [
             pageNum - 1,
           ]);
+          
+          const pdfjsPage = await pdfDocRef.current.getPage(pageNum);
+          const viewport = pdfjsPage.getViewport({ scale: 1.0 });
           const data = state.pageData[pageNum];
 
           if (data && data.objects) {
-            const pdfjsPage = await pdfDocRef.current.getPage(pageNum);
-            const viewport = pdfjsPage.getViewport({ scale: 1.0 });
 
             for (const obj of data.objects) {
+              if (obj.visible === false) continue;
               if (obj.type === "image" && !obj.selectable) continue;
 
               const fabricX = obj.left;
@@ -1345,121 +1443,7 @@ const PdfEditorWorkspace = React.forwardRef(
               const [pdfX, pdfY] = viewport.convertToPdfPoint(fabricX, fabricY);
 
               if (obj.type === "i-text" || obj.type === "text") {
-                const isModified = obj.text !== obj.data?.originalText || obj.fontWeight !== "normal" || obj.fontStyle !== "normal" || obj.fill !== obj.data?.originalColor;
-                const origLeft = obj.data?.originalTx4;
-                const origTop = obj.data?.originalTx5 ? obj.data.originalTx5 - obj.fontSize * 0.8 : null;
-                const hasMoved = origLeft !== null && (Math.abs(obj.left - origLeft) > 1 || Math.abs(obj.top - origTop) > 1);
-                
-                if (obj.fill === "transparent" && !isModified && !hasMoved) continue;
-
-                let finalDrawX = pdfX;
-                // Base Y on the baseline if it's original and hasn't moved much
-                let finalDrawY = pdfY; 
-                let finalColor = { r: 0, g: 0, b: 0 };
-                let fontToUse = helveticaFont;
-
-                const isBold = obj.fontWeight === "bold" || obj.fontWeight > 500;
-                const isItalic = obj.fontStyle === "italic" || obj.fontStyle === "oblique";
-
-                if (isBold && isItalic) fontToUse = helveticaBoldObliqueFont;
-                else if (isBold) fontToUse = helveticaBoldFont;
-                else if (isItalic) fontToUse = helveticaObliqueFont;
-
-                if (obj.data?.isOriginal) {
-                  const [txX, txY] = viewport.convertToPdfPoint(
-                    obj.data.originalTx4,
-                    obj.data.originalTx5,
-                  );
-                  finalDrawX = txX;
-                  finalDrawY = txY;
-
-                  // If it moved or modified, we use the new calculated PDF baseline from its current fabric position
-                  if (hasMoved || isModified) {
-                     // pdfY is the top of the text in PDF points because it came from convertToPdfPoint(fabricX, fabricY)
-                     // fabricY was the top of the text.
-                     // The baseline is roughly fontSize * 0.8 down from the top in Fabric, 
-                     // which means it's roughly fontSize * 0.8 down in PDF points too (Y decreases down).
-                     finalDrawX = pdfX;
-                     finalDrawY = pdfY - (obj.fontSize * 0.8);
-                  }
-
-                  // Parse color
-                  if (obj.fill && typeof obj.fill === "string") {
-                    if (obj.fill.startsWith("rgb")) {
-                      const m = obj.fill.match(/\d+/g);
-                      if (m && m.length >= 3) {
-                        finalColor = {
-                          r: Number(m[0]) / 255,
-                          g: Number(m[1]) / 255,
-                          b: Number(m[2]) / 255,
-                        };
-                      }
-                    } else if (obj.fill.startsWith("#")) {
-                      finalColor = {
-                        r: (parseInt(obj.fill.slice(1, 3), 16) || 0) / 255,
-                        g: (parseInt(obj.fill.slice(3, 5), 16) || 0) / 255,
-                        b: (parseInt(obj.fill.slice(5, 7), 16) || 0) / 255,
-                      };
-                    } else if (obj.fill === "transparent" && isModified) {
-                       // Use original saved color if it was transparent but now modified
-                       const origColor = obj.data.originalColor || "#000000";
-                       if (origColor.startsWith("rgb")) {
-                          const m = origColor.match(/\d+/g);
-                          if (m && m.length >= 3) {
-                            finalColor = {
-                              r: Number(m[0]) / 255,
-                              g: Number(m[1]) / 255,
-                              b: Number(m[2]) / 255,
-                            };
-                          }
-                       } else if (origColor.startsWith("#")) {
-                          finalColor = {
-                            r: (parseInt(origColor.slice(1, 3), 16) || 0) / 255,
-                            g: (parseInt(origColor.slice(3, 5), 16) || 0) / 255,
-                            b: (parseInt(origColor.slice(5, 7), 16) || 0) / 255,
-                          };
-                       }
-                    }
-                  }
-
-                  // Always whiteout if it's original and we are drawing something new or moved
-                  copiedPage.drawRectangle({
-                    x: pdfX,
-                    y: pdfY - obj.fontSize,
-                    width: (obj.width * (obj.scaleX || 1)) * 1.02,
-                    height: obj.fontSize * 1.1,
-                    color: rgb(1, 1, 1),
-                  });
-                } else {
-                  // For newly added text, the baseline is roughly fontSize * 0.8 below the top
-                  finalDrawY = pdfY - (obj.fontSize * 0.8);
-                  if (obj.fill && typeof obj.fill === "string") {
-                    if (obj.fill.startsWith("#")) {
-                      finalColor = {
-                        r: (parseInt(obj.fill.slice(1, 3), 16) || 0) / 255,
-                        g: (parseInt(obj.fill.slice(3, 5), 16) || 0) / 255,
-                        b: (parseInt(obj.fill.slice(5, 7), 16) || 0) / 255,
-                      };
-                    } else if (obj.fill.startsWith("rgb")) {
-                      const m = obj.fill.match(/\d+/g);
-                      if (m && m.length >= 3) {
-                        finalColor = {
-                          r: Number(m[0]) / 255,
-                          g: Number(m[1]) / 255,
-                          b: Number(m[2]) / 255,
-                        };
-                      }
-                    }
-                  }
-                }
-
-                copiedPage.drawText(obj.text, {
-                  x: finalDrawX,
-                  y: finalDrawY,
-                  size: obj.fontSize,
-                  font: fontToUse,
-                  color: rgb(finalColor.r, finalColor.g, finalColor.b),
-                });
+                // Handled via state.textData now
               } else if (obj.type === "image") {
                 const imgBytes = await fetch(obj.src).then((res) =>
                   res.arrayBuffer(),
@@ -1481,11 +1465,7 @@ const PdfEditorWorkspace = React.forwardRef(
                   if (obj.fill.startsWith("rgba")) {
                     const m = obj.fill.match(/[\d.]+/g);
                     if (m && m.length >= 4) {
-                      rectColor = {
-                        r: Number(m[0]) / 255,
-                        g: Number(m[1]) / 255,
-                        b: Number(m[2]) / 255,
-                      };
+                      rectColor = { r: Number(m[0]) / 255, g: Number(m[1]) / 255, b: Number(m[2]) / 255 };
                       opacity = Number(m[3]);
                     }
                   } else if (obj.fill.startsWith("#")) {
@@ -1494,8 +1474,6 @@ const PdfEditorWorkspace = React.forwardRef(
                       g: (parseInt(obj.fill.slice(3, 5), 16) || 0) / 255,
                       b: (parseInt(obj.fill.slice(5, 7), 16) || 0) / 255,
                     };
-                  } else if (obj.fill === "transparent") {
-                    // dont draw fill
                   }
                 }
 
@@ -1503,11 +1481,7 @@ const PdfEditorWorkspace = React.forwardRef(
                   if (obj.stroke.startsWith("rgba")) {
                     const m = obj.stroke.match(/[\d.]+/g);
                     if (m && m.length >= 4) {
-                      strokeColor = {
-                        r: Number(m[0]) / 255,
-                        g: Number(m[1]) / 255,
-                        b: Number(m[2]) / 255,
-                      };
+                      strokeColor = { r: Number(m[0]) / 255, g: Number(m[1]) / 255, b: Number(m[2]) / 255 };
                       opacity = opacity === 1 ? Number(m[3]) : opacity;
                     }
                   } else if (obj.stroke.startsWith("#")) {
@@ -1525,13 +1499,9 @@ const PdfEditorWorkspace = React.forwardRef(
                     y: pdfY - obj.height * obj.scaleY,
                     width: obj.width * obj.scaleX,
                     height: obj.height * obj.scaleY,
-                    color:
-                      obj.fill === "transparent"
-                        ? undefined
-                        : rgb(rectColor.r, rectColor.g, rectColor.b),
-                    borderColor: obj.stroke
-                      ? rgb(strokeColor.r, strokeColor.g, strokeColor.b)
-                      : undefined,
+                    color: (obj.fill === "transparent" || obj.fill === "rgba(255, 255, 255, 0.01)") 
+                      ? undefined : rgb(rectColor.r, rectColor.g, rectColor.b),
+                    borderColor: obj.stroke ? rgb(strokeColor.r, strokeColor.g, strokeColor.b) : undefined,
                     borderWidth: strokeWidth,
                     opacity: opacity,
                   });
@@ -1546,12 +1516,8 @@ const PdfEditorWorkspace = React.forwardRef(
                         x: pdfX,
                         y: pdfY,
                         scale: obj.scaleX || 1,
-                        color: obj.fill
-                          ? rgb(rectColor.r, rectColor.g, rectColor.b)
-                          : undefined,
-                        borderColor: obj.stroke
-                          ? rgb(strokeColor.r, strokeColor.g, strokeColor.b)
-                          : undefined,
+                        color: obj.fill ? rgb(rectColor.r, rectColor.g, rectColor.b) : undefined,
+                        borderColor: obj.stroke ? rgb(strokeColor.r, strokeColor.g, strokeColor.b) : undefined,
                         borderWidth: strokeWidth,
                         opacity: opacity,
                       });
@@ -1563,6 +1529,81 @@ const PdfEditorWorkspace = React.forwardRef(
               }
             }
           }
+
+          // Loop over HTML text overlays to add them to PDF
+          const texts = state.textData[pageNum] || [];
+          texts.forEach(textBlock => {
+             const finalTextBlockText = activeDomTexts[textBlock.id] ?? textBlock.text;
+             const isModified = textBlock.isDeleted || 
+                                finalTextBlockText !== textBlock.originalText || 
+                                textBlock.color !== textBlock.originalColor || 
+                                textBlock.fontSize !== (textBlock.originalHeight || textBlock.fontSize) ||
+                                textBlock.fontWeight !== (textBlock.originalWeight || textBlock.fontWeight) ||
+                                textBlock.fontStyle !== (textBlock.originalStyle || textBlock.fontStyle);
+
+             // If it's original text but has been modified, we must white out the original PDF text
+             if (textBlock.isOriginal && isModified) {
+                const [whiteoutX, whiteoutY] = viewport.convertToPdfPoint(
+                   textBlock.left - 1, 
+                   textBlock.top + textBlock.fontSize
+                );
+                copiedPage.drawRectangle({
+                   x: whiteoutX,
+                   y: whiteoutY,
+                   width: textBlock.width + 2,
+                   height: textBlock.fontSize * 1.25,
+                   color: rgb(1, 1, 1),
+                });
+             }
+
+             if (textBlock.isDeleted) return;
+
+             // Only draw if it's new text OR original text that was modified
+             if (!textBlock.isOriginal || isModified) {
+               let fontToUse = helveticaFont;
+               const isBold = textBlock.fontWeight === "bold" || textBlock.fontWeight > 500;
+               const isItalic = textBlock.fontStyle === "italic" || textBlock.fontStyle === "oblique";
+               if (isBold && isItalic) fontToUse = helveticaBoldObliqueFont;
+               else if (isBold) fontToUse = helveticaBoldFont;
+               else if (isItalic) fontToUse = helveticaObliqueFont;
+
+               let r = 0, g = 0, b = 0;
+               if (textBlock.color && textBlock.color.startsWith("rgb")) {
+                  const m = textBlock.color.match(/\d+/g);
+                  if (m && m.length >= 3) {
+                     r = Number(m[0]) / 255;
+                     g = Number(m[1]) / 255;
+                     b = Number(m[2]) / 255;
+                  }
+               } else if (textBlock.color && textBlock.color.startsWith("#")) {
+                  r = (parseInt(textBlock.color.slice(1, 3), 16) || 0) / 255;
+                  g = (parseInt(textBlock.color.slice(3, 5), 16) || 0) / 255;
+                  b = (parseInt(textBlock.color.slice(5, 7), 16) || 0) / 255;
+               }
+               
+               // Restore baseline to originalTx5 if available (because top was shifted)
+               const [convertedX, convertedY] = viewport.convertToPdfPoint(
+                  textBlock.left,
+                  textBlock.top + textBlock.fontSize * 0.8
+               );
+               let drawX = convertedX;
+               const pageHeight = copiedPage.getHeight();
+
+
+               // textBlock.top is physical Y coordinate (from top). PDF origin is bottom-left.
+               // Baseline is approximately top + fontSize * 0.8. Since pdf Y is from bottom, we subtract this from pageHeight.
+               let drawY = convertedY;
+
+               copiedPage.drawText(finalTextBlockText, {
+                  x: drawX,
+                  y: drawY,
+                  size: textBlock.fontSize,
+                  font: fontToUse,
+                  color: rgb(r, g, b),
+               });
+             }
+          });
+
           finalPdfDoc.addPage(copiedPage);
         }
 
@@ -1594,12 +1635,16 @@ const PdfEditorWorkspace = React.forwardRef(
         {/* Top Navbar */}
         <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 z-50 shrink-0 shadow-sm">
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 cursor-pointer" onClick={onReset}>
+            <div
+              className="flex items-center gap-2 cursor-pointer"
+              onClick={onReset}
+            >
               <div className="w-8 h-8 bg-[#ff4b4b] rounded-lg flex items-center justify-center shadow-lg">
                 <FileText className="w-5 h-5 text-white" />
               </div>
               <span className="font-bold text-gray-800 tracking-tight hidden sm:inline text-lg">
-                LoveYouTools <span className="font-light text-gray-400">Editor</span>
+                LoveYouTools{" "}
+                <span className="font-light text-gray-400">Editor</span>
               </span>
             </div>
             <div className="h-6 w-px bg-gray-200 mx-2" />
@@ -1611,7 +1656,7 @@ const PdfEditorWorkspace = React.forwardRef(
 
           <div className="flex items-center gap-2">
             <div className="hidden lg:flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200">
-               <button
+              <button
                 onClick={undo}
                 disabled={state.historyIndex <= 0}
                 className="p-1.5 text-gray-500 hover:bg-white hover:shadow-sm rounded-lg disabled:opacity-30 transition-all"
@@ -1633,7 +1678,12 @@ const PdfEditorWorkspace = React.forwardRef(
 
             <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200">
               <button
-                onClick={() => setState((prev) => ({ ...prev, zoom: Math.max(0.3, prev.zoom - 0.1) }))}
+                onClick={() =>
+                  setState((prev) => ({
+                    ...prev,
+                    zoom: Math.max(0.3, prev.zoom - 0.1),
+                  }))
+                }
                 className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all"
               >
                 <ZoomOut className="w-4 h-4" />
@@ -1642,7 +1692,12 @@ const PdfEditorWorkspace = React.forwardRef(
                 {Math.round(state.zoom * 100)}%
               </span>
               <button
-                onClick={() => setState((prev) => ({ ...prev, zoom: Math.min(3.0, prev.zoom + 0.1) }))}
+                onClick={() =>
+                  setState((prev) => ({
+                    ...prev,
+                    zoom: Math.min(3.0, prev.zoom + 0.1),
+                  }))
+                }
                 className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all"
               >
                 <ZoomIn className="w-4 h-4" />
@@ -1678,7 +1733,8 @@ const PdfEditorWorkspace = React.forwardRef(
             <ToolButton
               active={state.tool === "text"}
               onClick={() => {
-                if (fabricCanvas.current) fabricCanvas.current.isDrawingMode = false;
+                if (fabricCanvas.current)
+                  fabricCanvas.current.isDrawingMode = false;
                 setState((prev) => ({ ...prev, tool: "text" }));
               }}
               icon={<Type className="w-4 h-4" />}
@@ -1687,14 +1743,19 @@ const PdfEditorWorkspace = React.forwardRef(
             <ToolButton
               active={state.tool === "signature"}
               onClick={() => {
-                if (fabricCanvas.current) fabricCanvas.current.isDrawingMode = false;
+                if (fabricCanvas.current)
+                  fabricCanvas.current.isDrawingMode = false;
                 setState((prev) => ({ ...prev, tool: "signature" }));
               }}
               icon={<Pencil className="w-4 h-4" />}
               label="Sign"
             />
             <div className="h-6 w-px bg-gray-200 mx-2" />
-            <ToolButton onClick={addText} icon={<Plus className="w-4 h-4" />} label="Add Text" />
+            <ToolButton
+              onClick={addText}
+              icon={<Plus className="w-4 h-4" />}
+              label="Add Text"
+            />
             <ToolButton
               active={state.tool === "erase"}
               onClick={toggleEraser}
@@ -1719,7 +1780,11 @@ const PdfEditorWorkspace = React.forwardRef(
               icon={<ImageIcon className="w-4 h-4" />}
               label="Image"
             />
-            <ToolButton onClick={addArrow} icon={<PenTool className="w-4 h-4" />} label="Arrow" />
+            <ToolButton
+              onClick={addArrow}
+              icon={<PenTool className="w-4 h-4" />}
+              label="Arrow"
+            />
             <ToolButton
               active={state.tool === "draw"}
               onClick={() => togglePen(false, false)}
@@ -1727,7 +1792,11 @@ const PdfEditorWorkspace = React.forwardRef(
               label="Draw"
             />
             <div className="h-6 w-px bg-gray-200 mx-2" />
-            <ToolButton onClick={() => addShape("cross")} icon={<X className="w-4 h-4" />} label="Cross" />
+            <ToolButton
+              onClick={() => addShape("cross")}
+              icon={<X className="w-4 h-4" />}
+              label="Cross"
+            />
             <ToolButton
               onClick={() => addShape("check")}
               icon={<CheckCircle2 className="w-4 h-4" />}
@@ -1740,7 +1809,9 @@ const PdfEditorWorkspace = React.forwardRef(
             />
             <div className="h-6 w-px bg-gray-200 mx-2" />
             <ToolButton
-              onClick={() => setState((prev) => ({ ...prev, showSearch: !prev.showSearch }))}
+              onClick={() =>
+                setState((prev) => ({ ...prev, showSearch: !prev.showSearch }))
+              }
               icon={<Search className="w-4 h-4" />}
               label="Search"
             />
@@ -1762,13 +1833,20 @@ const PdfEditorWorkspace = React.forwardRef(
               </span>
               <div className="flex gap-1">
                 <button className="p-1 px-2 rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 text-[9px] font-black transition-colors uppercase">
-                   Manage
+                  Manage
                 </button>
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-6 pt-6 custom-scrollbar bg-white">
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={state.pageOrder} strategy={verticalListSortingStrategy}>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={state.pageOrder}
+                  strategy={verticalListSortingStrategy}
+                >
                   {state.pageOrder.map((id, index) => (
                     <SortableThumbnail
                       key={id}
@@ -1800,7 +1878,7 @@ const PdfEditorWorkspace = React.forwardRef(
           {/* Canvas Workspace */}
           <div
             ref={containerRef}
-            className="flex-1 overflow-auto bg-[#e9ecef] flex flex-col items-center p-12 custom-scrollbar relative"
+            className="flex-1 overflow-auto bg-[#e9ecef] p-12 custom-scrollbar relative text-center whitespace-nowrap"
           >
             {/* Context Floating Menu */}
             <AnimatePresence>
@@ -1817,7 +1895,7 @@ const PdfEditorWorkspace = React.forwardRef(
                   }}
                   className="flex items-center gap-1 bg-white border border-gray-200 shadow-[0_20px_50px_rgba(0,0,0,0.2)] rounded-2xl p-2 ring-1 ring-black/5 backdrop-blur-md"
                 >
-                  <button 
+                  <button
                     onClick={() => {
                       if (state.selectedObject && fabricCanvas.current) {
                         const text = state.selectedObject as any;
@@ -1825,29 +1903,39 @@ const PdfEditorWorkspace = React.forwardRef(
                         if (text.type === "text" || text.type === "i-text") {
                           text.set({ visible: false });
                           canvas.renderAll();
-                          const cssScaleX = canvas.getElement().clientWidth / canvas.getWidth();
-                          const cssScaleY = canvas.getElement().clientHeight / canvas.getHeight();
+                          const cssScaleX =
+                            canvas.getElement().clientWidth / canvas.getWidth();
+                          const cssScaleY =
+                            canvas.getElement().clientHeight /
+                            canvas.getHeight();
                           const finalScaleX = state.zoom * cssScaleX;
                           const finalScaleY = state.zoom * cssScaleY;
 
-                          setState(prev => ({
+                          setState((prev) => ({
                             ...prev,
                             editingText: {
                               visible: true,
                               text: text.text || "",
                               left: (text.left || 0) * finalScaleX,
                               top: (text.top || 0) * finalScaleY,
-                              width: (text.width || 0) * (text.scaleX || 1) * finalScaleX,
-                              height: (text.height || 0) * (text.scaleY || 1) * finalScaleY,
+                              width:
+                                (text.width || 0) *
+                                (text.scaleX || 1) *
+                                finalScaleX,
+                              height:
+                                (text.height || 0) *
+                                (text.scaleY || 1) *
+                                finalScaleY,
                               fontSize: (text.fontSize || 12) * finalScaleY,
                               fontFamily: text.fontFamily || "sans-serif",
                               fontWeight: text.fontWeight || "normal",
                               fontStyle: text.fontStyle || "normal",
-                              color: text.data?.originalColor || text.fill || "#000",
+                              color:
+                                text.data?.originalColor || text.fill || "#000",
                               targetObj: text,
                               cssScaleY: cssScaleY,
                             },
-                            showFloatingMenu: false
+                            showFloatingMenu: false,
                           }));
                         }
                       }
@@ -1869,15 +1957,17 @@ const PdfEditorWorkspace = React.forwardRef(
                     className="p-2 rounded-xl hover:bg-red-50 text-red-500 transition-all flex items-center gap-2 px-3"
                   >
                     <Trash2 className="w-4 h-4" />
-                    <span className="text-[10px] font-black uppercase">Delete</span>
+                    <span className="text-[10px] font-black uppercase">
+                      Delete
+                    </span>
                   </button>
                   <button
-                     onClick={() => {
+                    onClick={() => {
                       if (state.selectedObject) {
                         state.selectedObject.clone((cloned: any) => {
                           cloned.set({
                             left: cloned.left + 10,
-                            top: cloned.top + 10
+                            top: cloned.top + 10,
                           });
                           fabricCanvas.current?.add(cloned);
                           fabricCanvas.current?.renderAll();
@@ -1899,129 +1989,242 @@ const PdfEditorWorkspace = React.forwardRef(
 
             {/* Page Title Wrapper */}
             <div className="mb-10 text-center animate-in fade-in duration-700">
-               <h2 className="text-2xl font-black text-gray-800 tracking-tight">
-                  {pdfFile?.name || "Untitled Document"}
-               </h2>
-               <div className="flex items-center justify-center gap-3 mt-3">
-                  <div className="h-px w-8 bg-gray-300" />
-                  <p className="text-[10px] font-black text-gray-400 space-x-2 uppercase tracking-[0.2em]">
-                     <span>Page {state.currentPage}</span>
-                     <span className="text-gray-300">•</span>
-                     <span>{state.pageOrder.length} Total</span>
-                  </p>
-                  <div className="h-px w-8 bg-gray-300" />
-               </div>
+              <h2 className="text-2xl font-black text-gray-800 tracking-tight">
+                {pdfFile?.name || "Untitled Document"}
+              </h2>
+              <div className="flex items-center justify-center gap-3 mt-3">
+                <div className="h-px w-8 bg-gray-300" />
+                <p className="text-[10px] font-black text-gray-400 space-x-2 uppercase tracking-[0.2em]">
+                  <span>Page {state.currentPage}</span>
+                  <span className="text-gray-300">•</span>
+                  <span>{state.pageOrder.length} Total</span>
+                </p>
+                <div className="h-px w-8 bg-gray-300" />
+              </div>
             </div>
 
-            <div className="relative group perspective-1000">
+            <div className="inline-block min-w-fit relative group perspective-1000 whitespace-normal text-left">
               {/* Complex Layered Shadow */}
               <div className="absolute -inset-1 bg-gradient-to-tr from-gray-400/20 to-gray-200/20 rounded-lg blur-2xl opacity-50 group-hover:opacity-80 transition duration-1000"></div>
 
               <div className="relative bg-white shadow-[0_50px_100px_rgba(0,0,0,0.15)] rounded-sm transition-all duration-500 ring-1 ring-black/5 overflow-visible">
-                <canvas ref={canvasRef} className="max-w-full h-auto" />
+                <canvas ref={canvasRef} className="block" />
+                
+                {/* HTML Text Layer */}
+                {state.textData[state.currentPage] && (
+                  <div 
+                    className="absolute z-10"
+                    style={{
+                      top: 0,
+                      left: 0,
+                      width: originalDimensions.current.width * state.zoom,
+                      height: originalDimensions.current.height * state.zoom,
+                      pointerEvents: state.tool === 'select' || state.tool === 'text' ? 'auto' : 'none'
+                    }}
+                  >
+                    {state.textData[state.currentPage].map(block => {
+                      const isModified = block.text !== block.originalText;
+                      const showWhiteout = block.isOriginal && (isModified || block.isDeleted);
 
-                {state.editingText && state.editingText.visible && (
-                  <div style={{
-                       position: 'absolute',
-                       left: Math.max(state.editingText.left, 0),
-                       top: Math.max(state.editingText.top - 50, 0),
-                       zIndex: 1001,
-                  }} className="flex items-center gap-1 bg-white border border-gray-200 shadow-xl rounded-lg p-1" onPointerDown={(e) => e.preventDefault()}>
-                      <button onClick={(e) => { e.preventDefault(); setState(prev => prev.editingText ? { ...prev, editingText: { ...prev.editingText, fontWeight: prev.editingText.fontWeight === "bold" || prev.editingText.fontWeight > 500 ? "normal" : "bold" } } : prev) }} className={`p-1.5 rounded hover:bg-gray-100 ${state.editingText.fontWeight === "bold" || state.editingText.fontWeight > 500 ? "bg-gray-200" : ""}`} title="Bold"><Bold className="w-4 h-4 text-gray-700" /></button>
-                      <button onClick={(e) => { e.preventDefault(); setState(prev => prev.editingText ? { ...prev, editingText: { ...prev.editingText, fontStyle: prev.editingText.fontStyle === "italic" ? "normal" : "italic" } } : prev) }} className={`p-1.5 rounded hover:bg-gray-100 ${state.editingText.fontStyle === "italic" ? "bg-gray-200" : ""}`} title="Italic"><Italic className="w-4 h-4 text-gray-700" /></button>
-                      <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                      <input type="color" value={state.editingText.color || "#000000"} onChange={(e) => setState(prev => prev.editingText ? { ...prev, editingText: { ...prev.editingText, color: e.target.value } } : prev)} className="w-6 h-6 p-0 border-0 rounded cursor-pointer" title="Text Color" />
-                      <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                      <input type="number" value={Math.round(state.editingText.fontSize / (state.zoom * state.editingText.cssScaleY))} onChange={(e) => setState(prev => prev.editingText ? { ...prev, editingText: { ...prev.editingText, fontSize: Number(e.target.value) * state.zoom * prev.editingText.cssScaleY } } : prev)} className="w-12 text-xs border rounded p-1" title="Font Size" />
-                      <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                      <button onClick={(e) => { 
-                         e.preventDefault(); 
-                         if (state.editingText?.targetObj) {
-                            fabricCanvas.current?.remove(state.editingText.targetObj);
-                            fabricCanvas.current?.renderAll();
-                            savePageState();
-                         }
-                         setState(prev => ({ ...prev, editingText: null }));
-                      }} className="p-1.5 rounded hover:bg-red-50 text-red-500" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                      if (block.isDeleted && !block.isOriginal) return null;
+
+                      return (
+                        <div key={block.id}>
+                          {showWhiteout && (
+                            <div
+                              style={{
+                                position: "absolute",
+                                left: block.left * state.zoom - 2,
+                                top: block.top * state.zoom - 2,
+                                width: (block.width + 4) * state.zoom,
+                                height: block.fontSize * state.zoom * 1.3,
+                                backgroundColor: "#ffffff",
+                                pointerEvents: "none",
+                                zIndex: 5,
+                              }}
+                            />
+                          )}
+
+                          {!block.isDeleted && (
+                            state.editingText?.blockId === block.id ? (
+                              <textarea
+                                autoFocus
+                                data-page-number={state.currentPage}
+                                data-block-id={block.id}
+                                className="editable-text absolute ring-2 ring-blue-400 bg-white z-50 rounded shadow-sm"
+                                style={{
+                                  left: block.left * state.zoom,
+                                  top: block.top * state.zoom,
+                                  width: Math.max(block.width * state.zoom + 20, 100),
+                                  height: Math.max(block.fontSize * state.zoom * 1.5, block.fontSize * state.zoom + 10),
+                                  fontSize: block.fontSize * state.zoom,
+                                  fontFamily: block.fontFamily,
+                                  fontWeight: block.fontWeight,
+                                  fontStyle: block.fontStyle,
+                                  color: block.color,
+                                  padding: "2px 4px",
+                                  margin: 0,
+                                  lineHeight: 1,
+                                  whiteSpace: "pre",
+                                  transformOrigin: "top left",
+                                  cursor: "text",
+                                  outline: "none",
+                                  pointerEvents: "auto",
+                                  resize: "none",
+                                  overflow: "hidden",
+                                  zIndex: 10,
+                                }}
+                                defaultValue={block.text}
+                                onBlur={(e) => {
+                                  const newText = e.target.value;
+                                  setState(prev => {
+                                    const newTextData = { ...prev.textData };
+                                    const pageBlocks = [...(newTextData[state.currentPage] || [])];
+                                    const idx = pageBlocks.findIndex(b => b.id === block.id);
+                                    if (idx > -1) {
+                                      pageBlocks[idx] = { ...pageBlocks[idx], text: newText };
+                                    }
+                                    newTextData[state.currentPage] = pageBlocks;
+                                    return { ...prev, textData: newTextData, editingText: null };
+                                  });
+                                  if (fabricCanvas.current) {
+                                    const rect = fabricCanvas.current.getObjects().find((o: any) => o.type === "rect" && o.data?.blockId === block.id);
+                                    if (rect) {
+                                      rect.set({ visible: newText !== block.originalText });
+                                      fabricCanvas.current.renderAll();
+                                    }
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <span
+                                data-page-number={state.currentPage}
+                                data-block-id={block.id}
+                                className={`editable-text absolute transition-all ${(state.tool === 'text' || !block.isOriginal) ? "hover:border-blue-400" : ""}`}
+                                onClick={() => {
+                                  if (state.tool === 'text' || !block.isOriginal) {
+                                    setState(prev => ({
+                                      ...prev,
+                                      editingText: {
+                                        visible: true,
+                                        text: block.text,
+                                        left: block.left * prev.zoom,
+                                        top: block.top * prev.zoom,
+                                        width: block.width * prev.zoom,
+                                        height: block.height * prev.zoom,
+                                        fontSize: block.fontSize * prev.zoom,
+                                        fontFamily: block.fontFamily,
+                                        fontWeight: block.fontWeight,
+                                        fontStyle: block.fontStyle,
+                                        color: block.color,
+                                        cssScaleY: 1,
+                                        targetObj: null,
+                                        blockId: block.id,
+                                      }
+                                    }));
+                                  }
+                                }}
+                                style={{
+                                  left: block.left * state.zoom,
+                                  top: block.top * state.zoom,
+                                  width: block.width * state.zoom + 20, 
+                                  height: block.fontSize * state.zoom * 1.5,
+                                  fontSize: block.fontSize * state.zoom,
+                                  fontFamily: block.fontFamily,
+                                  fontWeight: block.fontWeight,
+                                  fontStyle: block.fontStyle,
+                                  color: block.text === block.originalText ? "transparent" : block.color,
+                                  padding: 0,
+                                  margin: 0,
+                                  lineHeight: 1,
+                                  whiteSpace: "pre",
+                                  transformOrigin: "top left",
+                                  cursor: (state.tool === 'text' || !block.isOriginal) ? "text" : "default",
+                                  pointerEvents: (state.tool === 'text' || !block.isOriginal) ? "auto" : "none",
+                                  background: "transparent",
+                                  border: (state.tool === 'text' || (!block.isOriginal && !block.text.trim())) ? "1px dashed transparent" : "none",
+                                  display: "inline-block",
+                                  zIndex: 10,
+                                }}
+                              >
+                                {block.text}
+                              </span>
+                            )
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
-                
+
                 {state.editingText && state.editingText.visible && (
-                  <textarea
-                    autoFocus
-                    value={state.editingText.text}
-                    onFocus={(e) => {
-                       // Move cursor to end
-                       const val = e.target.value;
-                       e.target.value = '';
-                       e.target.value = val;
-                    }}
-                    onChange={(e) => setState(prev => prev.editingText ? {
-                      ...prev,
-                      editingText: { ...prev.editingText, text: e.target.value }
-                    } : prev)}
-                    onBlur={() => {
-                        if (state.editingText?.targetObj && fabricCanvas.current) {
-                           const target = state.editingText.targetObj;
-                           const canvas = fabricCanvas.current;
-                           const cssScaleY = canvas.getElement().clientHeight / canvas.getHeight();
-                           const finalScaleY = state.zoom * cssScaleY;
-
-                           target.set({
-                               text: state.editingText.text,
-                               fontWeight: state.editingText.fontWeight,
-                               fontStyle: state.editingText.fontStyle,
-                               fontSize: state.editingText.fontSize / finalScaleY,
-                               fill: state.editingText.color,
-                               visible: true,
-                           });
-
-                           if (target.text !== target.data?.originalText || target.fontWeight !== "normal" || target.fontStyle !== "normal" || target.fill !== target.data?.originalColor) {
-                               // Emulate deselected event to show whiteout if it exists
-                               fabricCanvas.current?.fire('object:modified', { target });
-                           } else {
-                               if (target.data?.isOriginal) {
-                                  target.set({ fill: "transparent" });
-                               }
-                           }
-                           
-                           fabricCanvas.current?.renderAll();
-                           savePageState();
-                        }
-                        setState(prev => ({ ...prev, editingText: null }));
-                    }}
+                  <div
                     style={{
-                       position: 'absolute',
-                       left: state.editingText.left,
-                       top: state.editingText.top,
-                       width: Math.max(state.editingText.width * 1.2, 100),
-                       minHeight: state.editingText.fontSize * 1.5,
-                       fontSize: state.editingText.fontSize,
-                       fontFamily: state.editingText.fontFamily,
-                       fontWeight: state.editingText.fontWeight,
-                       fontStyle: state.editingText.fontStyle,
-                       color: state.editingText.color,
-                       background: 'transparent',
-                       border: 'none',
-                       boxShadow: 'none',
-                       borderRadius: '4px',
-                       outline: 'none',
-                       resize: 'none',
-                       overflow: 'visible',
-                       padding: '2px',
-                       marginLeft: '-2px',
-                       marginTop: '-2px',
-                       lineHeight: 1,
-                       zIndex: 1000,
-                       whiteSpace: 'pre-wrap',
-                       touchAction: 'manipulation',
+                      position: "absolute",
+                      left: Math.max(state.editingText.left, 0),
+                      top: Math.max(state.editingText.top - 50, 0),
+                      zIndex: 1001,
                     }}
-                  />
+                    className="flex items-center gap-1 bg-white border border-gray-200 shadow-xl rounded-lg p-1"
+                    onPointerDown={(e) => e.preventDefault()}
+                  >
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        const isBold = state.editingText?.fontWeight === "bold" || (state.editingText?.fontWeight as number) > 500;
+                        const newWeight = isBold ? "normal" : "bold";
+                        updateActiveTextData({ fontWeight: newWeight });
+                      }}
+                      className={`p-1.5 rounded hover:bg-gray-100 ${(state.editingText.fontWeight === "bold" || state.editingText.fontWeight > 500) ? "bg-gray-200" : ""}`}
+                      title="Bold"
+                    >
+                      <Bold className="w-4 h-4 text-gray-700" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        const newStyle = state.editingText?.fontStyle === "italic" ? "normal" : "italic";
+                        updateActiveTextData({ fontStyle: newStyle });
+                      }}
+                      className={`p-1.5 rounded hover:bg-gray-100 ${state.editingText.fontStyle === "italic" ? "bg-gray-200" : ""}`}
+                      title="Italic"
+                    >
+                      <Italic className="w-4 h-4 text-gray-700" />
+                    </button>
+                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                    <input
+                      type="color"
+                      value={state.editingText.color || "#000000"}
+                      onChange={(e) => updateActiveTextData({ color: e.target.value })}
+                      className="w-6 h-6 p-0 border-0 rounded cursor-pointer"
+                      title="Text Color"
+                    />
+                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                    <input
+                      type="number"
+                      value={Math.round(state.editingText.fontSize / state.zoom)}
+                      onChange={(e) => updateActiveTextData({ fontSize: Number(e.target.value) })}
+                      className="w-12 text-xs border rounded p-1"
+                      title="Font Size"
+                    />
+                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        updateActiveTextData({ isDeleted: true });
+                        setState(prev => ({ ...prev, editingText: null }));
+                      }}
+                      className="p-1.5 rounded hover:bg-red-50 text-red-500"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 )}
 
                 <AnimatePresence>
                   {state.isProcessing && (
-                    <motion.div 
+                    <motion.div
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
@@ -2031,7 +2234,7 @@ const PdfEditorWorkspace = React.forwardRef(
                         <div className="relative">
                           <div className="w-16 h-16 border-4 border-gray-100 border-t-[#ff4b4b] rounded-full animate-spin" />
                           <div className="absolute inset-0 flex items-center justify-center">
-                             <Sparkles className="w-6 h-6 text-[#ff4b4b] animate-pulse" />
+                            <Sparkles className="w-6 h-6 text-[#ff4b4b] animate-pulse" />
                           </div>
                         </div>
                         <p className="text-[10px] font-black text-[#ff4b4b] uppercase tracking-[0.3em] animate-pulse">
@@ -2071,12 +2274,18 @@ const PdfEditorWorkspace = React.forwardRef(
                     <Search className="w-5 h-5 text-[#ff4b4b]" />
                   </div>
                   <div>
-                    <h3 className="font-black text-gray-800 text-sm uppercase tracking-wider">Search & Replace</h3>
-                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">Smart Text Layer Editing</p>
+                    <h3 className="font-black text-gray-800 text-sm uppercase tracking-wider">
+                      Search & Replace
+                    </h3>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">
+                      Smart Text Layer Editing
+                    </p>
                   </div>
                 </div>
                 <button
-                  onClick={() => setState((prev) => ({ ...prev, showSearch: false }))}
+                  onClick={() =>
+                    setState((prev) => ({ ...prev, showSearch: false }))
+                  }
                   className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 transition-colors"
                 >
                   <X className="w-5 h-5" />
@@ -2090,7 +2299,12 @@ const PdfEditorWorkspace = React.forwardRef(
                   <input
                     type="text"
                     value={state.searchQuery}
-                    onChange={(e) => setState((prev) => ({ ...prev, searchQuery: e.target.value }))}
+                    onChange={(e) =>
+                      setState((prev) => ({
+                        ...prev,
+                        searchQuery: e.target.value,
+                      }))
+                    }
                     className="w-full px-5 py-4 bg-gray-50 border border-gray-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-[#ff4b4b]/10 focus:border-[#ff4b4b] transition-all"
                     placeholder="Type words to search..."
                   />
@@ -2102,7 +2316,12 @@ const PdfEditorWorkspace = React.forwardRef(
                   <input
                     type="text"
                     value={state.replaceQuery}
-                    onChange={(e) => setState((prev) => ({ ...prev, replaceQuery: e.target.value }))}
+                    onChange={(e) =>
+                      setState((prev) => ({
+                        ...prev,
+                        replaceQuery: e.target.value,
+                      }))
+                    }
                     className="w-full px-5 py-4 bg-gray-50 border border-gray-200 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-[#ff4b4b]/10 focus:border-[#ff4b4b] transition-all"
                     placeholder="Enter new text..."
                   />
@@ -2120,7 +2339,7 @@ const PdfEditorWorkspace = React.forwardRef(
 
         {state.isPasswordProtected && (
           <div className="fixed inset-0 bg-white/90 backdrop-blur-xl flex items-center justify-center z-[100]">
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               className="w-full max-w-md bg-white p-10 rounded-[2.5rem] shadow-[0_50px_100px_rgba(0,0,0,0.2)] border border-gray-100 flex flex-col items-center ring-1 ring-black/5"
@@ -2128,15 +2347,23 @@ const PdfEditorWorkspace = React.forwardRef(
               <div className="w-20 h-20 bg-red-50 text-[#ff4b4b] rounded-3xl flex items-center justify-center mb-8 shadow-inner animate-bounce">
                 <Lock className="w-10 h-10" />
               </div>
-              <h2 className="text-2xl font-black text-gray-800 mb-2 uppercase tracking-tight">Encrypted PDF</h2>
+              <h2 className="text-2xl font-black text-gray-800 mb-2 uppercase tracking-tight">
+                Encrypted PDF
+              </h2>
               <p className="text-sm font-medium text-gray-400 text-center mb-10 px-6 leading-relaxed">
-                This document is protected by industrial-grade encryption. Enter the administrative password.
+                This document is protected by industrial-grade encryption. Enter
+                the administrative password.
               </p>
-              <form onSubmit={handlePasswordSubmit} className="w-full space-y-5">
+              <form
+                onSubmit={handlePasswordSubmit}
+                className="w-full space-y-5"
+              >
                 <input
                   type="password"
                   value={state.password}
-                  onChange={(e) => setState((prev) => ({ ...prev, password: e.target.value }))}
+                  onChange={(e) =>
+                    setState((prev) => ({ ...prev, password: e.target.value }))
+                  }
                   className="w-full px-6 py-5 bg-gray-50 border border-gray-200 rounded-3xl outline-none focus:ring-8 focus:ring-[#ff4b4b]/5 focus:border-[#ff4b4b] transition-all text-center text-xl font-black tracking-widest placeholder:tracking-normal placeholder:font-bold"
                   placeholder="••••••••"
                   autoFocus
@@ -2192,7 +2419,9 @@ const ToolButton = ({ active, onClick, icon, label }: any) => (
     className={`p-2 px-3 rounded-2xl flex flex-col items-center gap-1.5 transition-all group shrink-0 active:scale-95 ${active ? "bg-white shadow-[0_8px_20px_rgba(0,0,0,0.08)] ring-1 ring-black/5" : "hover:bg-white/60"}`}
     title={label}
   >
-    <div className={`transition-colors duration-300 ${active ? "text-[#ff4b4b] scale-110" : "text-gray-400 group-hover:text-gray-700"}`}>
+    <div
+      className={`transition-colors duration-300 ${active ? "text-[#ff4b4b] scale-110" : "text-gray-400 group-hover:text-gray-700"}`}
+    >
       {icon}
     </div>
     <span
