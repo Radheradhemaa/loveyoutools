@@ -285,10 +285,14 @@ export default function AdvancedPdfEditor() {
           if (state === "BEFORE") {
             setLastExportedUrl(null);
           }
+        }, [state]);
+
+        useEffect(() => {
+          setLastExportedUrl(null);
           if (file && file[0]) {
             setOriginalFilename(file[0].name);
           }
-        }, [state, file]);
+        }, [file]);
 
         return (
           <PdfEditorWorkspace
@@ -786,36 +790,61 @@ const PdfEditorWorkspace = React.forwardRef(
             const fontName = item.fontName || "";
             const fontNameLower = fontName.toLowerCase();
             const isBold =
-              fontNameLower.includes("bold") || item.fontWeight > 500;
+              fontNameLower.includes("bold") || 
+              fontNameLower.includes("black") || 
+              fontNameLower.includes("heavy") || 
+              fontNameLower.includes("medium") || 
+              fontNameLower.includes("semibold") || 
+              fontNameLower.includes("w700") || 
+              fontNameLower.includes("w600") || 
+              fontNameLower.includes("w500") || 
+              (item.fontWeight && item.fontWeight > 400);
             const isItalic =
               fontNameLower.includes("italic") ||
               fontNameLower.includes("oblique");
 
-            let resolvedFont = "sans-serif";
+            let cleanedFontName = fontName;
+            if (fontName.includes("+")) {
+              cleanedFontName = fontName.split("+")[1];
+            }
+            // Strip modifiers
+            cleanedFontName = cleanedFontName
+              .replace(/-bold.*/i, "")
+              .replace(/-italic.*/i, "")
+              .replace(/-oblique.*/i, "")
+              .replace(/mt.*/i, "")
+              .replace(/ps.*/i, "");
+
+            let resolvedFont = `"${cleanedFontName}", sans-serif`;
             if (
               fontNameLower.includes("arial") ||
               fontNameLower.includes("helvet") ||
               fontNameLower.includes("verdana")
             ) {
-              resolvedFont = "Arial, Helvetica, sans-serif";
+              resolvedFont = `"${cleanedFontName}", Arial, Helvetica, sans-serif`;
             } else if (
               fontNameLower.includes("times") ||
               fontNameLower.includes("georgia") ||
               fontNameLower.includes("serif")
             ) {
-              resolvedFont = '"Times New Roman", Times, serif';
+              resolvedFont = `"${cleanedFontName}", "Times New Roman", Times, Georgia, serif`;
             } else if (
               fontNameLower.includes("courier") ||
               fontNameLower.includes("mono")
             ) {
-              resolvedFont = '"Courier New", Courier, monospace';
+              resolvedFont = `"${cleanedFontName}", "Courier New", Courier, monospace`;
             }
 
             let color = "#000000";
-            if (item.color && Array.isArray(item.color)) {
-              color = `rgb(${item.color[0]}, ${item.color[1]}, ${item.color[2]})`;
-            } else if (item.g) {
-              color = `rgb(${item.g}, ${item.g}, ${item.g})`;
+            if (item.color && Array.isArray(item.color) && item.color.length >= 3) {
+              const isNormalized = item.color.some((val: number) => val > 0 && val <= 1) && !item.color.some((val: number) => val > 1);
+              const r = Math.min(255, Math.max(0, isNormalized ? Math.round(item.color[0] * 255) : Math.round(item.color[0])));
+              const g = Math.min(255, Math.max(0, isNormalized ? Math.round(item.color[1] * 255) : Math.round(item.color[1])));
+              const b = Math.min(255, Math.max(0, isNormalized ? Math.round(item.color[2] * 255) : Math.round(item.color[2])));
+              color = `rgb(${r}, ${g}, ${b})`;
+            } else if (item.g !== undefined) {
+              const gVal = item.g <= 1 && item.g > 0 ? Math.round(item.g * 255) : Math.round(item.g);
+              color = `rgb(${gVal}, ${gVal}, ${gVal})`;
             }
 
             const textWidth = item.textWidth;
@@ -845,10 +874,10 @@ const PdfEditorWorkspace = React.forwardRef(
             });
 
             const whiteoutRect = new Rect({
-              left: x,
-              top: y - fontSize,
-              width: Math.max(textWidth * 1.05, 10),
-              height: fontSize * 1.2,
+              left: x - 3,
+              top: y - fontSize - 2,
+              width: textWidth + 6,
+              height: fontSize + 6,
               fill: "#ffffff",
               visible: false, // will turn true when text layer is edited
               selectable: false,
@@ -969,7 +998,34 @@ const PdfEditorWorkspace = React.forwardRef(
       if (initialFile) {
         const file = Array.isArray(initialFile) ? initialFile[0] : initialFile;
         setPdfFile(file);
-        setState((prev) => ({ ...prev, password: "" }));
+        if (fabricCanvas.current) {
+          fabricCanvas.current.dispose();
+          fabricCanvas.current = null;
+        }
+        setState({
+          currentPage: 1,
+          zoom: 1,
+          tool: "select",
+          isProcessing: true,
+          history: [],
+          historyIndex: -1,
+          pageData: {},
+          deletedPages: [],
+          pageOrder: [],
+          selectedObject: null,
+          showSearch: false,
+          searchQuery: "",
+          replaceQuery: "",
+          thumbnails: [],
+          isDarkMode: false,
+          exportFormat: "pdf",
+          compressionLevel: 0.7,
+          isPasswordProtected: false,
+          password: "",
+          eraserWidth: 20,
+          textData: {},
+          editingText: null,
+        });
         loadPdf(file, "");
       } else {
         // Reset state when initialFile is null
@@ -1001,6 +1057,7 @@ const PdfEditorWorkspace = React.forwardRef(
           password: "",
           eraserWidth: 20,
           textData: {},
+          editingText: null,
         });
       }
     }, [initialFile]);
@@ -1063,6 +1120,13 @@ const PdfEditorWorkspace = React.forwardRef(
             currentPage: 1,
             zoom: initialZoom,
             isPasswordProtected: false,
+            textData: {},
+            pageData: {},
+            deletedPages: [],
+            pageOrder: order,
+            history: [],
+            historyIndex: -1,
+            editingText: null,
           }));
 
           renderPage(1);
@@ -1408,6 +1472,60 @@ const PdfEditorWorkspace = React.forwardRef(
         const helveticaObliqueFont = await finalPdfDoc.embedFont(StandardFonts.HelveticaOblique);
         const helveticaBoldObliqueFont = await finalPdfDoc.embedFont(StandardFonts.HelveticaBoldOblique);
 
+        const fontCache: Record<string, any> = {};
+
+        const detectFontUrl = (text: string, isRegularOrBold?: boolean): string | null => {
+          // Hindi / Devanagari range is \u0900-\u097F
+          if (/[\u0900-\u097F]/.test(text)) {
+            return isRegularOrBold 
+              ? "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Bold.ttf"
+              : "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Regular.ttf";
+          }
+          // Arabic (\u0600-\u06FF)
+          if (/[\u0600-\u06FF]/.test(text)) {
+            return isRegularOrBold
+              ? "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoKufiArabic/NotoKufiArabic-Bold.ttf"
+              : "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoKufiArabic/NotoKufiArabic-Regular.ttf";
+          }
+          // Tamil (\u0B80-\u0BFF)
+          if (/[\u0B80-\u0BFF]/.test(text)) {
+            return isRegularOrBold
+              ? "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansTamil/NotoSansTamil-Bold.ttf"
+              : "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansTamil/NotoSansTamil-Regular.ttf";
+          }
+          // Telugu (\u0C00-\u0C7F)
+          if (/[\u0C00-\u0C7F]/.test(text)) {
+            return isRegularOrBold
+              ? "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Bold.ttf"
+              : "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Regular.ttf";
+          }
+          // Bengali (\u0980-\u09FF)
+          if (/[\u0980-\u09FF]/.test(text)) {
+            return isRegularOrBold
+              ? "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansBengali/NotoSansBengali-Bold.ttf"
+              : "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansBengali/NotoSansBengali-Regular.ttf";
+          }
+          // Thai (\u0E00-\u0E7F)
+          if (/[\u0E00-\u0E7F]/.test(text)) {
+            return isRegularOrBold
+              ? "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansThai/NotoSansThai-Bold.ttf"
+              : "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansThai/NotoSansThai-Regular.ttf";
+          }
+          // CJK (Chinese, Japanese, Korean)
+          if (/[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\uFF00-\uFFEF\u4E00-\u9FAF]/.test(text)) {
+            return isRegularOrBold
+              ? "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosansjp/NotoSansJP-Bold.ttf"
+              : "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/notosansjp/NotoSansJP-Regular.ttf";
+          }
+          // General non-ASCII/non-Latin characters (Cyrillic, Greek, Hebrew, etc.)
+          if (/[^\u0000-\u00FF]/.test(text)) {
+            return isRegularOrBold
+              ? "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Bold.ttf"
+              : "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf";
+          }
+          return null;
+        };
+
         const activeDomTexts: Record<string, string> = {};
         document.querySelectorAll('.editable-text').forEach((el) => {
           const ta = el as HTMLTextAreaElement | HTMLSpanElement;
@@ -1532,40 +1650,68 @@ const PdfEditorWorkspace = React.forwardRef(
 
           // Loop over HTML text overlays to add them to PDF
           const texts = state.textData[pageNum] || [];
-          texts.forEach(textBlock => {
+          const runPageTexts = async () => {
+             for (const textBlock of texts) {
              const finalTextBlockText = activeDomTexts[textBlock.id] ?? textBlock.text;
              const isModified = textBlock.isDeleted || 
                                 finalTextBlockText !== textBlock.originalText || 
                                 textBlock.color !== textBlock.originalColor || 
-                                textBlock.fontSize !== (textBlock.originalHeight || textBlock.fontSize) ||
-                                textBlock.fontWeight !== (textBlock.originalWeight || textBlock.fontWeight) ||
-                                textBlock.fontStyle !== (textBlock.originalStyle || textBlock.fontStyle);
+                                textBlock.fontSize !== (textBlock.originalFontSize || textBlock.fontSize) ||
+                                textBlock.fontWeight !== (textBlock.originalFontWeight || textBlock.fontWeight) ||
+                                textBlock.fontStyle !== (textBlock.originalFontStyle || textBlock.fontStyle);
 
              // If it's original text but has been modified, we must white out the original PDF text
              if (textBlock.isOriginal && isModified) {
+                const padLeft = 3;
+                const padRight = 3;
+                const padBottom = 4;
+                const padTop = 2;
+                const boxBottom = textBlock.top + textBlock.fontSize + padBottom;
+                const boxTop = textBlock.top - padTop;
+                
                 const [whiteoutX, whiteoutY] = viewport.convertToPdfPoint(
-                   textBlock.left - 1, 
-                   textBlock.top + textBlock.fontSize
+                   textBlock.left - padLeft, 
+                   boxBottom
                 );
                 copiedPage.drawRectangle({
                    x: whiteoutX,
                    y: whiteoutY,
-                   width: textBlock.width + 2,
-                   height: textBlock.fontSize * 1.25,
+                   width: textBlock.width + padLeft + padRight,
+                   height: boxBottom - boxTop,
                    color: rgb(1, 1, 1),
                 });
              }
 
-             if (textBlock.isDeleted) return;
+             if (textBlock.isDeleted) continue;
 
              // Only draw if it's new text OR original text that was modified
              if (!textBlock.isOriginal || isModified) {
                let fontToUse = helveticaFont;
                const isBold = textBlock.fontWeight === "bold" || textBlock.fontWeight > 500;
-               const isItalic = textBlock.fontStyle === "italic" || textBlock.fontStyle === "oblique";
-               if (isBold && isItalic) fontToUse = helveticaBoldObliqueFont;
-               else if (isBold) fontToUse = helveticaBoldFont;
-               else if (isItalic) fontToUse = helveticaObliqueFont;
+
+               // Load custom Unicode/language font dynamically if needed
+               const customFontUrl = detectFontUrl(finalTextBlockText, isBold);
+               if (customFontUrl) {
+                 try {
+                   if (!fontCache[customFontUrl]) {
+                     const fontResp = await fetch(customFontUrl);
+                     if (fontResp.ok) {
+                       const fontBytes = await fontResp.arrayBuffer();
+                       fontCache[customFontUrl] = await finalPdfDoc.embedFont(fontBytes);
+                     }
+                   }
+                   if (fontCache[customFontUrl]) {
+                     fontToUse = fontCache[customFontUrl];
+                   }
+                 } catch (fontErr) {
+                   console.warn(`Could not load custom font ${customFontUrl}:`, fontErr);
+                 }
+               } else {
+                 const isItalic = textBlock.fontStyle === "italic" || textBlock.fontStyle === "oblique";
+                 if (isBold && isItalic) fontToUse = helveticaBoldObliqueFont;
+                 else if (isBold) fontToUse = helveticaBoldFont;
+                 else if (isItalic) fontToUse = helveticaObliqueFont;
+               }
 
                let r = 0, g = 0, b = 0;
                if (textBlock.color && textBlock.color.startsWith("rgb")) {
@@ -1582,9 +1728,10 @@ const PdfEditorWorkspace = React.forwardRef(
                }
                
                // Restore baseline to originalTx5 if available (because top was shifted)
+               const pdfBaselineY = textBlock.originalTx5 ?? (textBlock.top + textBlock.fontSize * 0.8);
                const [convertedX, convertedY] = viewport.convertToPdfPoint(
                   textBlock.left,
-                  textBlock.top + textBlock.fontSize * 0.8
+                  pdfBaselineY
                );
                let drawX = convertedX;
                const pageHeight = copiedPage.getHeight();
@@ -1594,15 +1741,34 @@ const PdfEditorWorkspace = React.forwardRef(
                // Baseline is approximately top + fontSize * 0.8. Since pdf Y is from bottom, we subtract this from pageHeight.
                let drawY = convertedY;
 
-               copiedPage.drawText(finalTextBlockText, {
-                  x: drawX,
-                  y: drawY,
-                  size: textBlock.fontSize,
-                  font: fontToUse,
-                  color: rgb(r, g, b),
-               });
+                try {
+                  copiedPage.drawText(finalTextBlockText, {
+                     x: drawX,
+                     y: drawY,
+                     size: textBlock.fontSize,
+                     font: fontToUse,
+                     color: rgb(r, g, b),
+                  });
+                } catch (drawError) {
+                  console.warn("Failed drawing text with custom/selected font, trying fallback...", drawError);
+                  // Clean up string to pure basic ASCII if it cannot be encoded at all
+                  try {
+                    const cleanedText = finalTextBlockText.replace(/[^\x00-\x7F]/g, "?");
+                    copiedPage.drawText(cleanedText, {
+                       x: drawX,
+                       y: drawY,
+                       size: textBlock.fontSize,
+                       font: helveticaFont,
+                       color: rgb(r, g, b),
+                    });
+                  } catch (fallbackError) {
+                    console.error("Even drawing fallback text failed:", fallbackError);
+                  }
+                }
              }
-          });
+          }
+          };
+          await runPageTexts();
 
           finalPdfDoc.addPage(copiedPage);
         }
@@ -2023,8 +2189,14 @@ const PdfEditorWorkspace = React.forwardRef(
                     }}
                   >
                     {state.textData[state.currentPage].map(block => {
-                      const isModified = block.text !== block.originalText;
-                      const showWhiteout = block.isOriginal && (isModified || block.isDeleted);
+                      const isModified = block.isDeleted || 
+                                         block.text !== block.originalText || 
+                                         block.color !== block.originalColor || 
+                                         block.fontSize !== (block.originalFontSize || block.fontSize) ||
+                                         block.fontWeight !== (block.originalFontWeight || block.fontWeight) ||
+                                         block.fontStyle !== (block.originalFontStyle || block.fontStyle);
+                      // Whiteout is active if modified OR if currently actively editing the block to avoid double/cluttered text
+                      const showWhiteout = block.isOriginal && (isModified || state.editingText?.blockId === block.id);
 
                       if (block.isDeleted && !block.isOriginal) return null;
 
@@ -2034,10 +2206,10 @@ const PdfEditorWorkspace = React.forwardRef(
                             <div
                               style={{
                                 position: "absolute",
-                                left: block.left * state.zoom - 2,
-                                top: block.top * state.zoom - 2,
-                                width: (block.width + 4) * state.zoom,
-                                height: block.fontSize * state.zoom * 1.3,
+                                left: (block.left - 3) * state.zoom,
+                                top: (block.top - 2) * state.zoom,
+                                width: (block.width + 6) * state.zoom,
+                                height: (block.fontSize + 6) * state.zoom,
                                 backgroundColor: "#ffffff",
                                 pointerEvents: "none",
                                 zIndex: 5,
@@ -2049,9 +2221,19 @@ const PdfEditorWorkspace = React.forwardRef(
                             state.editingText?.blockId === block.id ? (
                               <textarea
                                 autoFocus
+                                spellCheck={false}
+                                spellcheck="false"
+                                autoComplete="off"
+                                autoCorrect="off"
+                                autoCapitalize="none"
+                                data-gramm="false"
+                                data-gramm_editor="false"
+                                data-enable-grammarly="false"
+                                data-ms-editor="false"
+                                data-spellcheck="false"
                                 data-page-number={state.currentPage}
                                 data-block-id={block.id}
-                                className="editable-text absolute ring-2 ring-blue-400 bg-white z-50 rounded shadow-sm"
+                                className="editable-text absolute ring-1 ring-blue-400 bg-white z-50 rounded shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
                                 style={{
                                   left: block.left * state.zoom,
                                   top: block.top * state.zoom,
@@ -2062,6 +2244,11 @@ const PdfEditorWorkspace = React.forwardRef(
                                   fontWeight: block.fontWeight,
                                   fontStyle: block.fontStyle,
                                   color: block.color,
+                                  textDecoration: "none",
+                                  textDecorationLine: "none",
+                                  textDecorationColor: "transparent",
+                                  border: "none",
+                                  borderBottom: "none",
                                   padding: "2px 4px",
                                   margin: 0,
                                   lineHeight: 1,
@@ -2069,6 +2256,7 @@ const PdfEditorWorkspace = React.forwardRef(
                                   transformOrigin: "top left",
                                   cursor: "text",
                                   outline: "none",
+                                  boxShadow: "none",
                                   pointerEvents: "auto",
                                   resize: "none",
                                   overflow: "hidden",
@@ -2090,7 +2278,13 @@ const PdfEditorWorkspace = React.forwardRef(
                                   if (fabricCanvas.current) {
                                     const rect = fabricCanvas.current.getObjects().find((o: any) => o.type === "rect" && o.data?.blockId === block.id);
                                     if (rect) {
-                                      rect.set({ visible: newText !== block.originalText });
+                                      const isModifiedNow = block.isDeleted || 
+                                                            newText !== block.originalText || 
+                                                            block.color !== block.originalColor || 
+                                                            block.fontSize !== (block.originalFontSize || block.fontSize) ||
+                                                            block.fontWeight !== (block.originalFontWeight || block.fontWeight) ||
+                                                            block.fontStyle !== (block.originalFontStyle || block.fontStyle);
+                                      rect.set({ visible: isModifiedNow });
                                       fabricCanvas.current.renderAll();
                                     }
                                   }
@@ -2100,7 +2294,14 @@ const PdfEditorWorkspace = React.forwardRef(
                               <span
                                 data-page-number={state.currentPage}
                                 data-block-id={block.id}
-                                className={`editable-text absolute transition-all ${(state.tool === 'text' || !block.isOriginal) ? "hover:border-blue-400" : ""}`}
+                                spellCheck={false}
+                                spellcheck="false"
+                                data-gramm="false"
+                                data-gramm_editor="false"
+                                data-enable-grammarly="false"
+                                data-ms-editor="false"
+                                data-spellcheck="false"
+                                className={`editable-text absolute transition-all duration-150 rounded-sm ${(state.tool === 'text' || !block.isOriginal) ? "hover:bg-blue-500/10 hover:ring-1 hover:ring-blue-400" : ""}`}
                                 onClick={() => {
                                   if (state.tool === 'text' || !block.isOriginal) {
                                     setState(prev => ({
@@ -2133,7 +2334,12 @@ const PdfEditorWorkspace = React.forwardRef(
                                   fontFamily: block.fontFamily,
                                   fontWeight: block.fontWeight,
                                   fontStyle: block.fontStyle,
-                                  color: block.text === block.originalText ? "transparent" : block.color,
+                                  color: isModified ? block.color : "transparent",
+                                  textDecoration: "none",
+                                  textDecorationLine: "none",
+                                  textDecorationColor: "transparent",
+                                  border: "none",
+                                  borderBottom: "none",
                                   padding: 0,
                                   margin: 0,
                                   lineHeight: 1,
@@ -2142,7 +2348,7 @@ const PdfEditorWorkspace = React.forwardRef(
                                   cursor: (state.tool === 'text' || !block.isOriginal) ? "text" : "default",
                                   pointerEvents: (state.tool === 'text' || !block.isOriginal) ? "auto" : "none",
                                   background: "transparent",
-                                  border: (state.tool === 'text' || (!block.isOriginal && !block.text.trim())) ? "1px dashed transparent" : "none",
+                                  border: "none",
                                   display: "inline-block",
                                   zIndex: 10,
                                 }}
@@ -2171,11 +2377,18 @@ const PdfEditorWorkspace = React.forwardRef(
                     <button
                       onClick={(e) => {
                         e.preventDefault();
-                        const isBold = state.editingText?.fontWeight === "bold" || (state.editingText?.fontWeight as number) > 500;
-                        const newWeight = isBold ? "normal" : "bold";
+                        const weight = state.editingText?.fontWeight;
+                        const isOriginalBold = weight === "bold" || 
+                                               weight === "semibold" || 
+                                               weight === "medium" || 
+                                               weight === "700" || 
+                                               weight === "600" || 
+                                               weight === "500" || 
+                                               (typeof weight === "number" && weight > 400);
+                        const newWeight = isOriginalBold ? "normal" : "bold";
                         updateActiveTextData({ fontWeight: newWeight });
                       }}
-                      className={`p-1.5 rounded hover:bg-gray-100 ${(state.editingText.fontWeight === "bold" || state.editingText.fontWeight > 500) ? "bg-gray-200" : ""}`}
+                      className={`p-1.5 rounded hover:bg-gray-100 ${(state.editingText.fontWeight === "bold" || state.editingText.fontWeight === "semibold" || state.editingText.fontWeight === "medium" || (typeof state.editingText.fontWeight === "number" && state.editingText.fontWeight > 400)) ? "bg-gray-200" : ""}`}
                       title="Bold"
                     >
                       <Bold className="w-4 h-4 text-gray-700" />

@@ -276,6 +276,28 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /* Force hide wavy spellcheck lines, outlines, and border decorations to keep editable components clean */
+  .editable-text,
+  .editable-text *,
+  textarea.editable-text,
+  span.editable-text {
+    text-decoration: none !important;
+    text-decoration-line: none !important;
+    border-bottom: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
+  ::spelling-error {
+    text-decoration: none !important;
+    text-decoration-line: none !important;
+  }
+
+  ::grammar-error {
+    text-decoration: none !important;
+    text-decoration-line: none !important;
+  }
 }
 
 
