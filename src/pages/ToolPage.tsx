@@ -7,6 +7,8 @@ import SEO from '../components/SEO';
 import { useFocusMode } from '../contexts/FocusModeContext';
 
 import ToolSeoContent from '../components/ToolSeoContent';
+import PdfEditorSeo from '../components/seo/PdfEditorSeo';
+import PassportPhotoMakerSeo from '../components/seo/PassportPhotoMakerSeo';
 import AdSlot from '../components/AdSlot';
 
 // Lazy load tool components
@@ -249,18 +251,102 @@ export default function ToolPage() {
     instagram: `https://www.instagram.com/`, // Instagram doesn't support direct URL sharing via web links
   };
 
+  let pageTitle = `${tool.n} - Free Online Tool`;
+  let pageDesc = `${tool.d} Fast, secure, and 100% free online ${tool.n.toLowerCase()}. No signup required.`;
+  let pageKeywords = keywords;
+  
+  let pageFaqSchema = faqSchema;
+
+  if (tool.id === 'pdf-editor') {
+    pageTitle = "Free Online PDF Editor Without Watermark | Edit PDF Text Fast";
+    pageDesc = "Edit PDF text online free with no signup required. Modify PDF text directly, change fonts easily. Free online PDF editor without watermark.";
+    pageKeywords = "free online pdf editor without watermark, edit pdf text online free no signup, modify pdf text, browser based pdf editor, edit pdf document, online pdf editor";
+    pageFaqSchema = {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "How can I edit PDF text online for free without a watermark?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Simply upload your document to our editor, click the text you wish to modify, delete or type your new content, and click export. We guarantee that zero watermarks will be added to your final downloaded file."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Will anyone else be able to see my uploaded PDF?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Your PDF file is processed entirely inside your web browser. No data is sent to our servers, ensuring your sensitive information remains 100% private and secure."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does this tool preserve the original formatting?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Our engine attempts to match the original font family, size, exact color, and weight. We seamlessly 'white out' the old text and place the new text in the exact same baseline coordinate."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need to sign up or create an account?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Not at all. You can edit your PDF text online for free with absolutely no signup, no credit card, and no email registration required."
+          }
+        }
+      ]
+    };
+  } else if (tool.id === 'passport-photo-maker') {
+    pageTitle = "Instant Passport Size Photo Maker | Auto Crop & HD Background Edit";
+    pageDesc = "Create instant passport size photos online for free. HD background remover, auto crop passport photo 35x45mm, India specs, US Visa specs.";
+    pageKeywords = "instant passport size photo maker india, create passport photo online free, background remover online HD free, auto crop passport photo, passport photo 35x45mm";
+    pageFaqSchema = {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is this passport photo maker truly free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Our tool is 100% free with no hidden charges. We do not require payment to remove watermarks or to download high-resolution HD printable files."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does the HD background remover cost money?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. Our embedded AI background remover is completely free. We process the image using modern web APIs to isolate your person and replace the original background with a clean white or blue background natively."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I print the photos at a local pharmacy?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Once you finish cropping, select the option to export as a 4x6 inch printable sheet (or A4). Download the JPG, send it to your local CVS, Walgreens, or Walmart photo center, and pay pennies for a standard 4x6 print instead of $15+ for their passport service."
+          }
+        }
+      ]
+    };
+  }
+
   return (
     <div className={`${isFocusMode ? 'w-full h-[100dvh] p-0 m-0' : 'max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6'}`} ref={toolRef}>
       <SEO 
-        title={`${tool.n} - Free Online Tool`}
-        description={`${tool.d} Fast, secure, and 100% free online ${tool.n.toLowerCase()}. No signup required.`}
-        keywords={keywords}
+        title={pageTitle}
+        description={pageDesc}
+        keywords={pageKeywords}
         url={toolUrl}
         type="SoftwareApplication"
       />
       <script type="application/ld+json">{JSON.stringify(softwareSchema)}</script>
       <script type="application/ld+json">{JSON.stringify(breadcrumbSchema)}</script>
-      <script type="application/ld+json">{JSON.stringify(faqSchema)}</script>
+      <script type="application/ld+json">{JSON.stringify(pageFaqSchema)}</script>
 
       {/* Breadcrumb */}
       {!isFocusMode && (
@@ -354,11 +440,13 @@ export default function ToolPage() {
           {/* SEO Content Block */}
           {!isFocusMode && (
             <>
-              <ToolSeoContent 
-                tool={tool} 
-                categoryName={category?.name} 
-                relatedTools={relatedTools} 
-              />
+              {tool.id === 'pdf-editor' ? (
+                <PdfEditorSeo tool={tool} categoryName={category?.name} relatedTools={relatedTools} />
+              ) : tool.id === 'passport-photo-maker' ? (
+                <PassportPhotoMakerSeo tool={tool} categoryName={category?.name} relatedTools={relatedTools} />
+              ) : (
+                <ToolSeoContent tool={tool} categoryName={category?.name} relatedTools={relatedTools} />
+              )}
 
               {/* SEO Blog Content */}
               {blogPost && (
