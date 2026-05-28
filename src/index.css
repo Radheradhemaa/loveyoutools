@@ -1,6 +1,22 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Noto+Serif+Devanagari:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+
+@font-face {
+  font-family: 'Mangal';
+  font-weight: 400;
+  src: local('Mangal'), local('Noto Sans Devanagari'), url('https://fonts.gstatic.com/s/notosansdevanagari/v21/rax7HiKe0v8C6Kn0g1zM_v4zNstU_C099689e_C5gmdFjg.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Mangal';
+  font-weight: 700;
+  src: local('Mangal Bold'), local('Noto Sans Devanagari Bold'), url('https://fonts.gstatic.com/s/notosansdevanagari/v21/rax7HiKe0v8C6Kn0g1zM_v4zNstU_C09968a-vC5gmdFjg.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Aparajita';
+  font-weight: 404; /* Noto Serif Regular approx */
+  src: local('Aparajita'), local('Noto Serif Devanagari'), url('https://fonts.gstatic.com/s/notoserifdevanagari/v27/4UaCrE9b8h8_Y6hEw_4-uCofwz44g6S-L1aGZ2Z0ZzH7.woff2') format('woff2');
+}
 
 @theme {
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;

@@ -248,7 +248,7 @@ export default function KdpFixer() {
 
   return (
     <ToolLayout
-      title="KDP Interior Fixer"
+      title="KDP Margin Fixer"
       description="Format your PDF interior to meet Amazon KDP specifications."
       toolId="kdp-fixer"
       acceptedFileTypes={['.pdf', 'image/jpeg', 'image/png']}
