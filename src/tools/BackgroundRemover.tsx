@@ -1600,25 +1600,6 @@ export default function BackgroundRemover() {
                                    <div className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-2 border-accent shadow-sm" />
                                 </motion.div>
                               </motion.div>
-
-                              {/* Progress Pulse */}
-                              <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 flex gap-3">
-                                <motion.div 
-                                  animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} 
-                                  transition={{ duration: 0.6, repeat: Infinity }}
-                                  className="w-2.5 h-2.5 bg-accent rounded-full" 
-                                />
-                                <motion.div 
-                                  animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} 
-                                  transition={{ duration: 0.6, repeat: Infinity, delay: 0.15 }}
-                                  className="w-2.5 h-2.5 bg-accent rounded-full shadow-[0_0_8px_rgba(var(--accent-rgb,255,100,100),0.8)]" 
-                                />
-                                <motion.div 
-                                  animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} 
-                                  transition={{ duration: 0.6, repeat: Infinity, delay: 0.3 }}
-                                  className="w-2.5 h-2.5 bg-accent rounded-full" 
-                                />
-                              </div>
                             </motion.div>
                           </div>
                         )}

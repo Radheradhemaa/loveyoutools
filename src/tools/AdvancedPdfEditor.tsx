@@ -57,6 +57,7 @@ import {
   Copy,
   PlusCircle,
   Pencil,
+  RefreshCw,
 } from "lucide-react";
 import * as pdfjs from "pdfjs-dist";
 import {
@@ -407,7 +408,12 @@ const PixelPerfectBlock = ({
 
   let letterSpacing = 0;
   if (naturalWidth > 0 && textLength > 1) {
-    letterSpacing = (targetWidth - naturalWidth) / (textLength - 1);
+    const rawSpacing = (targetWidth - naturalWidth) / (textLength - 1);
+    // Avoid extreme stretches that make letters "bahut door door" (too far apart)
+    // Clamp to a reasonable range, e.g. -1.5px to 1.5px (or a small percentage of font size)
+    const maxSpacing = Math.min(1.5, Math.max(0, block.fontSize * state.zoom * 0.04));
+    const minSpacing = -1.5;
+    letterSpacing = Math.max(minSpacing, Math.min(maxSpacing, rawSpacing));
   }
 
   const getWeightNumber = (w: any) => {
@@ -681,6 +687,7 @@ const PdfEditorWorkspace = React.forwardRef(
     const containerRef = useRef<HTMLDivElement>(null);
     const pdfDocRef = useRef<any>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
+    const replaceImageInputRef = useRef<HTMLInputElement>(null);
     const originalDimensions = useRef({ width: 0, height: 0 });
 
     const stateRef = useRef(state);
@@ -1293,6 +1300,174 @@ const PdfEditorWorkspace = React.forwardRef(
             }
           }));
 
+          // --- AUTOMATIC IMAGE/LOGO/PHOTO EXTRACTION FROM PDF OPERATOR LIST ---
+          try {
+            const ops = await page.getOperatorList();
+            const fnArray = ops.fnArray;
+            const argsArray = ops.argsArray;
+
+            const SAVE_OP = (pdfjs as any).OPS?.save ?? 2;
+            const RESTORE_OP = (pdfjs as any).OPS?.restore ?? 3;
+            const TRANSFORM_OP = (pdfjs as any).OPS?.transform ?? 11;
+            const PAINT_IMAGE_OP = (pdfjs as any).OPS?.paintImageXObject ?? 82;
+            const PAINT_INLINE_IMAGE_OP = (pdfjs as any).OPS?.paintInlineImageXObject ?? 83;
+
+            const ctmStack: any[] = [];
+            let currentTransform = [1, 0, 0, 1, 0, 0];
+
+            for (let i = 0; i < fnArray.length; i++) {
+              const fn = fnArray[i];
+              if (fn === SAVE_OP) {
+                ctmStack.push([...currentTransform]);
+              } else if (fn === RESTORE_OP) {
+                if (ctmStack.length > 0) {
+                  currentTransform = ctmStack.pop();
+                }
+              } else if (fn === TRANSFORM_OP) {
+                const matrix = argsArray[i];
+                if (matrix && matrix.length >= 6) {
+                  const [a1, b1, c1, d1, e1, f1] = currentTransform;
+                  const [a2, b2, c2, d2, e2, f2] = matrix;
+                  currentTransform = [
+                    a1 * a2 + c1 * b2,
+                    b1 * a2 + d1 * b2,
+                    a1 * c2 + c1 * d2,
+                    b1 * c2 + d1 * d2,
+                    a1 * e2 + c1 * f2 + e1,
+                    b1 * e2 + d1 * f2 + f1,
+                  ];
+                }
+              } else if (fn === PAINT_IMAGE_OP || fn === PAINT_INLINE_IMAGE_OP) {
+                const imgId = argsArray[i]?.[0];
+                if (!imgId) continue;
+                let imgData: any = null;
+                try {
+                  if (page.objs && page.objs.has(imgId)) {
+                    imgData = page.objs.get(imgId);
+                  } else if (page.commonObjs && page.commonObjs.has(imgId)) {
+                    imgData = page.commonObjs.get(imgId);
+                  }
+                } catch (e) {
+                  console.warn("Failed retrieving image from PDF resources:", e);
+                }
+
+                if (imgData) {
+                  const width = imgData.width || 100;
+                  const height = imgData.height || 100;
+                  let srcUrl = "";
+
+                  if (imgData.bitmap instanceof ImageBitmap) {
+                    const tempImgCanvas = document.createElement("canvas");
+                    tempImgCanvas.width = width;
+                    tempImgCanvas.height = height;
+                    const tempImgCtx = tempImgCanvas.getContext("2d");
+                    if (tempImgCtx) {
+                      tempImgCtx.drawImage(imgData.bitmap, 0, 0);
+                      srcUrl = tempImgCanvas.toDataURL("image/png");
+                    }
+                  } else if (imgData.data) {
+                    const tempImgCanvas = document.createElement("canvas");
+                    tempImgCanvas.width = width;
+                    tempImgCanvas.height = height;
+                    const tempImgCtx = tempImgCanvas.getContext("2d");
+                    if (tempImgCtx) {
+                      const imgDataObj = tempImgCtx.createImageData(width, height);
+                      const dataLength = imgData.data.length;
+                      if (dataLength === width * height * 3) {
+                        let dstIndex = 0;
+                        for (let srcIndex = 0; srcIndex < dataLength; srcIndex += 3) {
+                          imgDataObj.data[dstIndex] = imgData.data[srcIndex];
+                          imgDataObj.data[dstIndex + 1] = imgData.data[srcIndex + 1];
+                          imgDataObj.data[dstIndex + 2] = imgData.data[srcIndex + 2];
+                          imgDataObj.data[dstIndex + 3] = 255;
+                          dstIndex += 4;
+                        }
+                      } else if (dataLength === width * height * 4) {
+                        imgDataObj.data.set(imgData.data);
+                      } else {
+                        let dstIndex = 0;
+                        for (let srcIndex = 0; srcIndex < dataLength; srcIndex++) {
+                          const v = imgData.data[srcIndex];
+                          imgDataObj.data[dstIndex] = v;
+                          imgDataObj.data[dstIndex + 1] = v;
+                          imgDataObj.data[dstIndex + 2] = v;
+                          imgDataObj.data[dstIndex + 3] = 255;
+                          dstIndex += 4;
+                        }
+                      }
+                      tempImgCtx.putImageData(imgDataObj, 0, 0);
+                      srcUrl = tempImgCanvas.toDataURL("image/png");
+                    }
+                  }
+
+                  if (srcUrl) {
+                    const [a, b, c, d, tx, ty] = currentTransform;
+                    const pdfWidth = Math.sqrt(a * a + b * b);
+                    const pdfHeight = Math.sqrt(c * c + d * d);
+
+                    const left = tx;
+                    const top = (baseViewport.height - ty - pdfHeight);
+
+                    // Skip extremely tiny bullet points or full-page background decorations
+                    if (pdfWidth < 5 || pdfHeight < 5 || (pdfWidth > baseViewport.width * 0.98 && pdfHeight > baseViewport.height * 0.98)) {
+                      continue;
+                    }
+
+                    // Create floating image on canvas
+                    const fabImg = await FabricImage.fromURL(srcUrl);
+                    fabImg.set({
+                      left: left,
+                      top: top,
+                      scaleX: pdfWidth / width,
+                      scaleY: pdfHeight / height,
+                      selectable: true,
+                      evented: true,
+                      hasBorders: true,
+                      hasControls: true,
+                      data: { isExtractedLogoImage: true }
+                    });
+
+                    // Match page background color for a clean whiteout
+                    let sampledLogoBg = "#ffffff";
+                    if (context) {
+                      const sampleX = Math.round((left - 1.5) * renderScale);
+                      const sampleY = Math.round((top - 1.5) * renderScale);
+                      if (sampleX >= 0 && sampleX < tempCanvas.width && sampleY >= 0 && sampleY < tempCanvas.height) {
+                        try {
+                          const pixel = context.getImageData(sampleX, sampleY, 1, 1).data;
+                          if (pixel[3] > 0) {
+                            sampledLogoBg = `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
+                          }
+                        } catch (e) {
+                          sampledLogoBg = "#ffffff";
+                        }
+                      }
+                    }
+
+                    // Add dynamic whiteout block underneath to shadow the background layer perfectly
+                    const whiteoutRect = new Rect({
+                      left: left - 0.5,
+                      top: top - 0.5,
+                      width: pdfWidth + 1,
+                      height: pdfHeight + 1,
+                      fill: sampledLogoBg,
+                      stroke: "transparent",
+                      strokeWidth: 0,
+                      selectable: false,
+                      evented: false,
+                      data: { isLogoWhiteoutMask: true, isWhiteoutMask: true }
+                    });
+
+                    canvas.add(whiteoutRect);
+                    canvas.add(fabImg);
+                  }
+                }
+              }
+            }
+          } catch (imgErr) {
+            console.error("Failed automatic image extraction:", imgErr);
+          }
+
           attachTextHandlers(canvas);
         }
 
@@ -1365,33 +1540,6 @@ const PdfEditorWorkspace = React.forwardRef(
           if (obj && !obj.data?.isBackground && !obj.data?.isWhiteout) {
             hideControls(obj);
             canvas.renderAll();
-          }
-          const currentState = stateRef.current;
-          if (currentState.tool === "text" && !e.target && !currentState.editingText) {
-            const pointer = e.scenePoint;
-            
-            setState((prev) => {
-              const newTextData = { ...prev.textData };
-              const pageBlocks = [...(newTextData[prev.currentPage] || [])];
-              const newBlock = {
-                id: Math.random().toString(36).substring(7),
-                text: "Type text...",
-                left: pointer.x,
-                top: pointer.y - 12,
-                width: 150,
-                height: 24,
-                fontSize: 24,
-                fontFamily: "Arial",
-                fontWeight: "normal",
-                fontStyle: "normal",
-                color: currentState.isDarkMode ? "#ffffff" : "#000000",
-                isOriginal: false,
-                isDeleted: false,
-              };
-              pageBlocks.push(newBlock as any);
-              newTextData[prev.currentPage] = pageBlocks;
-              return { ...prev, textData: newTextData, tool: "select" };
-            });
           }
         });
 
@@ -1824,7 +1972,141 @@ const PdfEditorWorkspace = React.forwardRef(
       reader.readAsDataURL(file);
     };
 
-    const addShape = (type: "check" | "cross" | "sticky") => {
+    const replaceSelectedImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || !fabricCanvas.current || !state.selectedObject) return;
+
+      const reader = new FileReader();
+      reader.onload = async (f) => {
+        const canvas = fabricCanvas.current!;
+        const currentObj = state.selectedObject;
+        
+        try {
+          const newImg = await FabricImage.fromURL(f.target?.result as string);
+          
+          // Match position, scale, rotation and other properties of old selected object
+          newImg.set({
+            left: currentObj.left,
+            top: currentObj.top,
+            angle: currentObj.angle,
+            scaleX: currentObj.scaleX,
+            scaleY: currentObj.scaleY,
+            width: currentObj.width,
+            height: currentObj.height,
+            originX: currentObj.originX,
+            originY: currentObj.originY,
+            flipX: currentObj.flipX,
+            flipY: currentObj.flipY,
+            skewX: currentObj.skewX,
+            skewY: currentObj.skewY,
+          });
+
+          // Replace in canvas
+          canvas.remove(currentObj);
+          canvas.add(newImg);
+          canvas.setActiveObject(newImg);
+          canvas.renderAll();
+          
+          // Save state and update selectedObj in react state
+          savePageState();
+          setState((prev) => ({ ...prev, selectedObject: newImg }));
+        } catch (err) {
+          console.error("Failed to replace image", err);
+        }
+      };
+      reader.readAsDataURL(file);
+      
+      // Reset input value to allow triggering same file selection again
+      e.target.value = "";
+    };
+
+    const extractAreaAsImage = async (rect: any) => {
+      if (!fabricCanvas.current || !rect) return;
+      const canvas = fabricCanvas.current;
+
+      // Find background image
+      const bgImgObj = canvas.getObjects().find((o: any) => o.data?.isBackground) as any;
+      if (!bgImgObj) return;
+
+      const imgElement = bgImgObj.getElement();
+      if (!imgElement) return;
+
+      try {
+        const left = rect.left;
+        const top = rect.top;
+        const width = rect.width * rect.scaleX;
+        const height = rect.height * rect.scaleY;
+
+        // Scale factors from canvas dimensions (originalDimensions) to high-res background image dimensions
+        const scaleFactorX = imgElement.width / originalDimensions.current.width;
+        const scaleFactorY = imgElement.height / originalDimensions.current.height;
+
+        const cropX = left * scaleFactorX;
+        const cropY = top * scaleFactorY;
+        const cropW = width * scaleFactorX;
+        const cropH = height * scaleFactorY;
+
+        const cropCanvas = document.createElement("canvas");
+        cropCanvas.width = cropW;
+        cropCanvas.height = cropH;
+        const cropCtx = cropCanvas.getContext("2d");
+        if (!cropCtx) return;
+
+        cropCtx.drawImage(
+          imgElement,
+          cropX, cropY, cropW, cropH,
+          0, 0, cropW, cropH
+        );
+
+        const dataUrl = cropCanvas.toDataURL("image/png");
+
+        const croppedFabImg = await FabricImage.fromURL(dataUrl);
+        croppedFabImg.set({
+          left: left,
+          top: top,
+          scaleX: width / croppedFabImg.width,
+          scaleY: height / croppedFabImg.height,
+          selectable: true,
+          evented: true,
+          hasBorders: true,
+          hasControls: true,
+          data: { isExtractedSubArea: true }
+        });
+
+        // Mutate rect into a permanent solid whiteout block under the cropped image
+        rect.set({
+          fill: rect.fill || "#ffffff",
+          stroke: "transparent",
+          strokeWidth: 0,
+          strokeDashArray: null,
+          selectable: false,
+          evented: false,
+        });
+        rect.data = rect.data || {};
+        rect.data.isWhiteoutElement = true;
+
+        // Keep bgImgObj first, and rect second in layers stack
+        canvas.sendObjectToBack(bgImgObj);
+        rect.sendToBack();
+        canvas.sendObjectToBack(bgImgObj);
+
+        canvas.add(croppedFabImg);
+        canvas.setActiveObject(croppedFabImg);
+        canvas.renderAll();
+
+        savePageState();
+
+        setState((prev) => ({
+          ...prev,
+          selectedObject: croppedFabImg,
+          showFloatingMenu: true,
+        }));
+      } catch (err) {
+        console.error("Failed to extract area as image:", err);
+      }
+    };
+
+    const addShape = (type: "check" | "cross" | "sticky" | "whiteout") => {
       if (!fabricCanvas.current) return;
       const canvas = fabricCanvas.current;
       canvas.isDrawingMode = false;
@@ -1860,6 +2142,21 @@ const PdfEditorWorkspace = React.forwardRef(
           width: 130,
         });
         obj = new Group([rect, text], { ...pos });
+      } else if (type === "whiteout") {
+        obj = new Rect({
+          ...pos,
+          width: 140,
+          height: 70,
+          fill: "#ffffff",
+          stroke: "#3b82f6",
+          strokeWidth: 1.5,
+          strokeDashArray: [4, 4],
+          rx: 1,
+          ry: 1,
+        });
+        obj.set({
+          data: { isWhiteoutMask: true }
+        });
       }
 
       if (obj) {
@@ -1976,6 +2273,21 @@ const PdfEditorWorkspace = React.forwardRef(
     };
 
     const exportPdf = async () => {
+      const getImgBytes = async (src: string): Promise<ArrayBuffer> => {
+        if (src.startsWith("data:")) {
+          const parts = src.split(",");
+          const byteString = atob(parts[1]);
+          const ab = new ArrayBuffer(byteString.length);
+          const ia = new Uint8Array(ab);
+          for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+          }
+          return ab;
+        } else {
+          return await fetch(src).then((res) => res.arrayBuffer());
+        }
+      };
+
       if (!pdfFile) return;
       setState((prev) => ({ ...prev, isProcessing: true }));
 
@@ -2272,16 +2584,28 @@ const PdfEditorWorkspace = React.forwardRef(
               if (obj.type === "i-text" || obj.type === "text") {
                 // Handled via state.textData now
               } else if (obj.type === "image") {
-                const imgBytes = await fetch(obj.src).then((res) =>
-                  res.arrayBuffer(),
-                );
-                const embeddedImg = await finalPdfDoc.embedPng(imgBytes);
-                copiedPage.drawImage(embeddedImg, {
-                  x: pdfX,
-                  y: pdfY - obj.height * obj.scaleY,
-                  width: obj.width * obj.scaleX,
-                  height: obj.height * obj.scaleY,
-                });
+                try {
+                  const imgBytes = await getImgBytes(obj.src);
+                  let embeddedImg: any;
+                  try {
+                    embeddedImg = await finalPdfDoc.embedPng(imgBytes);
+                  } catch (ePng) {
+                    try {
+                      embeddedImg = await finalPdfDoc.embedJpg(imgBytes);
+                    } catch (eJpg) {
+                      console.error("Failed to embed PNG or JPG, skipping image: ", eJpg);
+                      continue;
+                    }
+                  }
+                  copiedPage.drawImage(embeddedImg, {
+                    x: pdfX,
+                    y: pdfY - obj.height * obj.scaleY,
+                    width: obj.width * obj.scaleX,
+                    height: obj.height * obj.scaleY,
+                  });
+                } catch (imgErr) {
+                  console.error("Failed to process image object for export:", imgErr);
+                }
               } else if (obj.type === "rect" || obj.type === "path") {
                 let rectColor = { r: 1, g: 1, b: 1 };
                 let strokeColor = { r: 0, g: 0, b: 0 };
@@ -2321,6 +2645,11 @@ const PdfEditorWorkspace = React.forwardRef(
                 }
 
                 if (obj.type === "rect" && obj.visible) {
+                  // If it's a whiteout mask (has isWhiteoutMask in data or strokeDashArray), hide the editing borders in final exported PDF!
+                  const isMask = obj.data?.isWhiteoutMask || obj.data?.isLogoWhiteoutMask || obj.data?.isWhiteoutElement || obj.strokeDashArray;
+                  const finalBorderColor = isMask ? undefined : (obj.stroke ? rgb(strokeColor.r, strokeColor.g, strokeColor.b) : undefined);
+                  const finalBorderWidth = isMask ? 0 : strokeWidth;
+
                   copiedPage.drawRectangle({
                     x: pdfX,
                     y: pdfY - obj.height * obj.scaleY,
@@ -2328,8 +2657,8 @@ const PdfEditorWorkspace = React.forwardRef(
                     height: obj.height * obj.scaleY,
                     color: (obj.fill === "transparent" || obj.fill === "rgba(255, 255, 255, 0.01)") 
                       ? undefined : rgb(rectColor.r, rectColor.g, rectColor.b),
-                    borderColor: obj.stroke ? rgb(strokeColor.r, strokeColor.g, strokeColor.b) : undefined,
-                    borderWidth: strokeWidth,
+                    borderColor: finalBorderColor,
+                    borderWidth: finalBorderWidth,
                     opacity: opacity,
                   });
                 } else if (obj.type === "path") {
@@ -2562,6 +2891,11 @@ const PdfEditorWorkspace = React.forwardRef(
               icon={<Square className="w-4 h-4" />}
               label="Sticky Note"
             />
+            <ToolButton
+              onClick={() => addShape("whiteout")}
+              icon={<Eraser className="w-4 h-4 text-emerald-500" />}
+              label="Whiteout"
+            />
             <div className="h-6 w-px bg-gray-200 mx-2" />
             <ToolButton
               onClick={() =>
@@ -2742,23 +3076,57 @@ const PdfEditorWorkspace = React.forwardRef(
                       Delete
                     </span>
                   </button>
+                  {state.selectedObject?.type === 'image' && (
+                    <>
+                      <button
+                        onClick={() => replaceImageInputRef.current?.click()}
+                        className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-emerald-55 text-emerald-600 text-[10px] font-black uppercase transition-all"
+                        title="Replace Image"
+                      >
+                        <RefreshCw className="w-4 h-4 text-emerald-55 border-none" />
+                        Replace Image
+                      </button>
+                      <div className="h-6 w-px bg-gray-200 mx-1" />
+                    </>
+                  )}
+                  {state.selectedObject?.type === 'rect' && (state.selectedObject as any).data?.isWhiteoutMask && (
+                    <>
+                      <button
+                        onClick={() => extractAreaAsImage(state.selectedObject)}
+                        className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-sky-50 text-sky-600 text-[10px] font-black uppercase transition-all"
+                        title="Extract Area as Image"
+                      >
+                        <Scissors className="w-4 h-4 text-sky-500" />
+                        Extract Area
+                      </button>
+                      <div className="h-6 w-px bg-gray-200 mx-1" />
+                    </>
+                  )}
                   <button
-                    onClick={() => {
-                      if (state.selectedObject) {
-                        state.selectedObject.clone((cloned: any) => {
+                    onClick={async () => {
+                      if (state.selectedObject && fabricCanvas.current) {
+                        try {
+                          const cloned = await state.selectedObject.clone();
                           cloned.set({
-                            left: cloned.left + 10,
-                            top: cloned.top + 10,
+                            left: (cloned.left || 0) + 15,
+                            top: (cloned.top || 0) + 15,
                           });
-                          fabricCanvas.current?.add(cloned);
-                          fabricCanvas.current?.renderAll();
+                          fabricCanvas.current.add(cloned);
+                          fabricCanvas.current.setActiveObject(cloned);
+                          fabricCanvas.current.renderAll();
                           savePageState();
-                        });
+                        } catch (err) {
+                          console.error("Cloning failed: ", err);
+                        }
                       }
                     }}
-                    className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-all"
+                    className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-all flex items-center gap-2 px-3"
+                    title="Duplicate Element"
                   >
                     <Copy className="w-4 h-4" />
+                    <span className="text-[10px] font-black uppercase">
+                      Duplicate
+                    </span>
                   </button>
                   {(state.selectedObject?.type === 'i-text' || state.selectedObject?.type === 'text') && (
                     <>
@@ -2883,7 +3251,7 @@ const PdfEditorWorkspace = React.forwardRef(
                         type="range"
                         min="100"
                         max="900"
-                        step="1"
+                        step="10"
                         value={
                           state.editingText.fontWeight === "bold"
                             ? 700
@@ -2988,6 +3356,13 @@ const PdfEditorWorkspace = React.forwardRef(
           className="hidden"
           accept="image/*"
           onChange={addImage}
+        />
+        <input
+          type="file"
+          ref={replaceImageInputRef}
+          className="hidden"
+          accept="image/*"
+          onChange={replaceSelectedImage}
         />
 
         <AnimatePresence>

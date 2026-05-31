@@ -85,7 +85,7 @@ export const ensureU2netLoaded = async () => {
       });
     } catch (e) {
       console.warn(
-        "[AI] U2Net secondary load failed, trying WASM fallback",
+        "[AI] MODNet secondary load failed, trying WASM fallback",
         e,
       );
       u2netPipeline = await pipeline("image-segmentation", "Xenova/modnet", {
@@ -301,10 +301,11 @@ export async function removeBackground(
           
           let threshold;
           if (y < mh * 0.25) {
-            threshold = 20; // lower threshold for hair/head details
+            threshold = 50; // lower threshold for hair/head details
+          } else if (y < mh * 0.5) {
+            threshold = 120; // shoulders
           } else {
-            // High threshold for body/shoulders to sever chairs, relaxed slightly because we intersect two AI models now
-            threshold = 130; 
+            threshold = 200; // lower body/chairs: extremely high threshold to eliminate chairs and background objects perfectly
           }
           binMask[idx] = val >= threshold ? 1 : 0;
         }
@@ -316,9 +317,11 @@ export async function removeBackground(
         for (let x = 0; x < mw; x++) {
           let erRad;
           if (y < mh * 0.25) {
-            erRad = 1; // gentle erosion for hair
+            erRad = 2; // gentle erosion for hair
+          } else if (y < mh * 0.5) {
+            erRad = 4; // medium erosion for shoulders
           } else {
-            erRad = 3; // moderate erosion (models already mask out most chairs)
+            erRad = 7; // brutal erosion to destroy near-body objects, chairs, clothing wrinkles that bleed into background
           }
 
           const idx = y * mw + x;
@@ -410,9 +413,9 @@ export async function removeBackground(
         }
       }
 
-      // 1d. Morphological Dilation Pass (Radius = 4, completely restores natural contours)
+      // 1d. Morphological Dilation Pass (Radius = 2, leaves a strong 2-5 pixel inward crop to remove all edge halos)
       let dilatedBin = cleanBin;
-      for (let iter = 0; iter < 4; iter++) {
+      for (let iter = 0; iter < 2; iter++) {
         const next = new Uint8Array(mw * mh);
         for (let y = 0; y < mh; y++) {
           for (let x = 0; x < mw; x++) {
@@ -593,12 +596,13 @@ export async function removeBackground(
               // on a colored passport background). Keep them solid and natural.
               const isShoulderRegion = y > h * 0.4;
               if (isShoulderRegion) {
-                a = Math.min(255, a * 1.05); // boost slightly to solidify shirt edges
+                // Do not boost! Just let it be naturally sharp to avoid background halo bleeding
+                a = Math.min(255, a); 
               } else {
-                a *= 0.85; // gently suppress very white edge bleed on hair/head region
+                a *= 0.75; // strictly suppress very white edge bleed on hair/head region
               }
             } else if (lum < 0.2) {
-              a = Math.min(255, a * 1.15); // preserve dark edge details (like hair)
+              a = Math.min(255, a * 1.05); // preserve dark edge details (like hair) slightly
             }
           }
 
@@ -849,7 +853,7 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
             const isWhiteShirt = sat < 0.15 && lum > 160;
             if (!isWhiteShirt && lum > 110) {
               const transFactor = (255 - finalA) / 255;
-              const darkening = 1.0 - transFactor * 0.45;
+              const darkening = 1.0 - transFactor * 0.70;
               data[idx] = Math.max(0, Math.min(255, Math.round(r * darkening)));
               data[idx + 1] = Math.max(0, Math.min(255, Math.round(g * darkening)));
               data[idx + 2] = Math.max(0, Math.min(255, Math.round(b * darkening)));

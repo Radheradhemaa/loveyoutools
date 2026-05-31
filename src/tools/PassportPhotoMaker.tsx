@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { motion } from 'motion/react';
 import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw } from 'lucide-react';
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
@@ -1479,12 +1480,45 @@ export default function PassportPhotoMaker() {
                           />
                           {(isProcessingFilters || !finalImageSrc) && (
                             <div className="absolute inset-0 flex items-center justify-center">
-                              <div className="text-center bg-white/80 backdrop-blur-sm p-4 rounded-2xl shadow-xl border border-gray-100">
-                                <Loader2 className="w-8 h-8 animate-spin text-[#e8501a] mx-auto mb-2" />
-                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                                  {isProcessingFilters ? 'Applying Filters...' : 'Processing...'}
-                                </p>
-                              </div>
+                              <motion.div
+                                animate={{
+                                  rotate: [0, -45, 45, -45, 45, -45, 45, 0],
+                                  scale: [1, 1.2, 0.8, 1.2, 0.9, 1.1, 1]
+                                }}
+                                transition={{
+                                  duration: 0.15,
+                                  repeat: Infinity,
+                                  ease: "linear"
+                                }}
+                                className="relative w-16 h-20 flex flex-col items-center justify-center filter drop-shadow-[0_0_10px_rgba(232,80,26,0.6)]"
+                              >
+                                {/* Upper Head */}
+                                <div className="w-10 h-8 bg-[#e8501a] rounded-t-[100%] rounded-b-[20%] relative overflow-hidden shadow-inner">
+                                  <div className="absolute inset-x-0 top-0 h-1 bg-white/40" />
+                                </div>
+                                {/* Waist */}
+                                <div className="w-3 h-3 bg-white/90 z-10 border border-[#e8501a] rounded-sm shadow-sm" />
+                                {/* Lower Head */}
+                                <div className="w-10 h-8 bg-[#e8501a] rounded-b-[100%] rounded-t-[20%] relative overflow-hidden shadow-inner">
+                                  <div className="absolute inset-x-0 bottom-0 h-1 bg-white/40" />
+                                </div>
+                                
+                                {/* Side Beads/Strings for Damru */}
+                                <motion.div 
+                                  animate={{ rotate: [-60, 60] }} 
+                                  transition={{ duration: 0.08, repeat: Infinity, repeatType: "mirror" }}
+                                  className="absolute left-[0px] top-1/2 w-6 h-[2px] bg-gray-300 origin-right rounded-full"
+                                >
+                                   <div className="absolute left-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-gray-100 rounded-full border border-[#e8501a] shadow-sm" />
+                                </motion.div>
+                                <motion.div 
+                                  animate={{ rotate: [60, -60] }} 
+                                  transition={{ duration: 0.08, repeat: Infinity, repeatType: "mirror" }}
+                                  className="absolute right-[0px] top-1/2 w-6 h-[2px] bg-gray-300 origin-left rounded-full"
+                                >
+                                   <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-gray-100 rounded-full border border-[#e8501a] shadow-sm" />
+                                </motion.div>
+                              </motion.div>
                             </div>
                           )}
                         </>
@@ -1509,34 +1543,53 @@ export default function PassportPhotoMaker() {
                       )}
 
                       {isProcessing && !processingError && (
-                        <div className="absolute inset-0 bg-black/20 flex flex-col items-center justify-center z-50 text-white p-6 transition-all duration-300">
-                          <div className="bg-gray-900/90 backdrop-blur-md px-8 py-6 rounded-2xl shadow-2xl flex flex-col items-center text-center border border-white/10">
-                            <div className="relative mb-4">
-                              <div className="w-12 h-12 rounded-full border-2 border-white/10 border-t-[#e8501a] animate-spin" />
-                              <div className="absolute inset-0 flex items-center justify-center font-bold text-white text-xs">
-                                {timer}s
+                        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center z-50 text-white p-6 transition-all duration-300">
+                          <motion.div 
+                            initial={{ scale: 0.8, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            className="flex flex-col items-center justify-center p-10 bg-gray-900/40 rounded-3xl shadow-2xl relative border border-white/10"
+                          >
+                            {/* Damru AI Animation - Ultra Fast Mode */}
+                            <motion.div
+                              animate={{
+                                rotate: [0, -45, 45, -45, 45, -45, 45, 0],
+                                scale: [1, 1.2, 0.8, 1.2, 0.9, 1.1, 1]
+                              }}
+                              transition={{
+                                duration: 0.15,
+                                repeat: Infinity,
+                                ease: "linear"
+                              }}
+                              className="relative w-24 h-28 flex flex-col items-center justify-center filter drop-shadow-[0_0_20px_rgba(232,80,26,0.6)]"
+                            >
+                              {/* Upper Head */}
+                              <div className="w-16 h-12 bg-[#e8501a] rounded-t-[100%] rounded-b-[20%] relative overflow-hidden shadow-inner">
+                                <div className="absolute inset-x-0 top-0 h-1 bg-white/40" />
                               </div>
-                            </div>
-                            <div className="w-full max-w-[160px] h-1.5 bg-white/10 rounded-full mb-3 overflow-hidden">
-                              <div 
-                                className="h-full bg-[#e8501a] transition-all duration-300 ease-out"
-                                style={{ 
-                                  width: statusText.match(/(\d+)%/) ? statusText.match(/(\d+)%/)![0] :
-                                         statusText.includes('Downloading') ? '20%' : 
-                                         statusText.includes('Processing') ? '50%' : 
-                                         statusText.includes('Refining Edges') ? '80%' : 
-                                         statusText.includes('Finalizing') ? '95%' : '5%'
-                                }}
-                              />
-                            </div>
-                            <div className="text-sm font-bold text-center">{statusText || 'Removing Background...'}</div>
-                            <div className="text-[10px] text-[#e8501a] mt-2 text-center max-w-[200px] font-bold">
-                              IS-Net Engine Active
-                            </div>
-                            <div className="text-[10px] text-gray-400 mt-1 text-center max-w-[200px]">
-                              Analyzing 10k+ facial points for perfect edge precision...
-                            </div>
-                          </div>
+                              {/* Waist */}
+                              <div className="w-5 h-5 bg-white/90 z-10 border-2 border-[#e8501a] rounded-sm shadow-sm" />
+                              {/* Lower Head */}
+                              <div className="w-16 h-12 bg-[#e8501a] rounded-b-[100%] rounded-t-[20%] relative overflow-hidden shadow-inner">
+                                <div className="absolute inset-x-0 bottom-0 h-1 bg-white/40" />
+                              </div>
+                              
+                              {/* Side Beads/Strings for Damru */}
+                              <motion.div 
+                                animate={{ rotate: [-60, 60] }} 
+                                transition={{ duration: 0.08, repeat: Infinity, repeatType: "mirror" }}
+                                className="absolute left-[-25px] top-1/2 w-12 h-[3px] bg-white origin-right rounded-full"
+                              >
+                                 <div className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-2 border-[#e8501a] shadow-sm" />
+                              </motion.div>
+                              <motion.div 
+                                animate={{ rotate: [60, -60] }} 
+                                transition={{ duration: 0.08, repeat: Infinity, repeatType: "mirror" }}
+                                className="absolute right-[-25px] top-1/2 w-12 h-[3px] bg-white origin-left rounded-full"
+                              >
+                                 <div className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-2 border-[#e8501a] shadow-sm" />
+                              </motion.div>
+                            </motion.div>
+                          </motion.div>
                         </div>
                       )}
                     </div>
