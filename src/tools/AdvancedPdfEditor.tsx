@@ -58,6 +58,8 @@ import {
   PlusCircle,
   Pencil,
   RefreshCw,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import * as pdfjs from "pdfjs-dist";
 import {
@@ -685,7 +687,13 @@ const PdfEditorWorkspace = React.forwardRef(
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const fabricCanvas = useRef<Canvas | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const wrapperRef = useRef<HTMLDivElement>(null);
     const pdfDocRef = useRef<any>(null);
+
+    const renderPageRef = useRef<number>(0);
+    const activeRenderTaskRef = useRef<any>(null);
+    const isRenderingRef = useRef<boolean>(false);
+
     const imageInputRef = useRef<HTMLInputElement>(null);
     const replaceImageInputRef = useRef<HTMLInputElement>(null);
     const originalDimensions = useRef({ width: 0, height: 0 });
@@ -751,6 +759,12 @@ const PdfEditorWorkspace = React.forwardRef(
         if (!fabricCanvas.current) return;
         // CRITICAL: Include 'data' and 'visible' properties in toJSON to preserve original text info and whiteout rect visibility
         const json = fabricCanvas.current.toJSON(["data", "visible"]);
+        
+        // Remove background from serialized JSON to prevent doubling up on load
+        if (json.objects) {
+          json.objects = json.objects.filter((obj: any) => !obj.data?.isBackground);
+        }
+
         setState((prev) => {
           const newPageData = { ...prev.pageData, [prev.currentPage]: json };
           const newHistory = prev.history.slice(0, prev.historyIndex + 1);
@@ -955,10 +969,31 @@ const PdfEditorWorkspace = React.forwardRef(
 
     const renderPage = async (pageNum: number) => {
       if (!pdfDocRef.current || !canvasRef.current) return;
+
+      // Prevent duplicate concurrent render tasks by cancelling the previous one
+      if (activeRenderTaskRef.current) {
+        try {
+          activeRenderTaskRef.current.cancel();
+        } catch (e) {
+          console.warn("Cancelling previous render task failed:", e);
+        }
+        activeRenderTaskRef.current = null;
+      }
+
+      // Render lock to avoid simultaneous page.render calls
+      if (isRenderingRef.current) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      isRenderingRef.current = true;
       setState((prev) => ({ ...prev, isProcessing: true, editingText: null }));
+
+      const currentCallId = ++renderPageRef.current;
 
       try {
         const page = await pdfDocRef.current.getPage(pageNum);
+        if (currentCallId !== renderPageRef.current) return;
+
         const baseViewport = page.getViewport({ scale: 1.0 });
         originalDimensions.current = {
           width: baseViewport.width,
@@ -966,21 +1001,34 @@ const PdfEditorWorkspace = React.forwardRef(
         };
 
         if (fabricCanvas.current) {
-          fabricCanvas.current.dispose();
+          try {
+            fabricCanvas.current.dispose();
+          } catch (e) {
+            console.warn("Disposing fabric canvas failed:", e);
+          }
+          fabricCanvas.current = null;
+        }
+
+        // 1. Clear the main workspace canvas to avoid ghost overlays and duplicated dimensions
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext("2d");
+          if (ctx) {
+            ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+          }
         }
 
         const canvas = new Canvas(canvasRef.current, {
-          width: baseViewport.width * state.zoom,
-          height: baseViewport.height * state.zoom,
-          backgroundColor: "transparent",
+          width: baseViewport.width * stateRef.current.zoom,
+          height: baseViewport.height * stateRef.current.zoom,
+          backgroundColor: "white",
           imageSmoothingEnabled: true,
           allowTouchScrolling: true,
         });
 
-        // Optimize for mobile and high DPI - rendered in true crisp HD (at least 4.0 scale)
+        // Use appropriate devicePixelRatio with a high definition cap
         const dpr = window.devicePixelRatio || 1;
-        const renderScale = Math.max(dpr * 2, 4.0);
-        canvas.setZoom(state.zoom);
+        const renderScale = Math.max(dpr, 2.0);
+        canvas.setZoom(stateRef.current.zoom);
 
         fabricCanvas.current = canvas;
 
@@ -993,13 +1041,31 @@ const PdfEditorWorkspace = React.forwardRef(
           tempCanvas.height = renderViewport.height;
           context.imageSmoothingEnabled = true;
           context.imageSmoothingQuality = "high";
+          context.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
 
-          await (page as any).render({
+          const renderContext = {
             canvasContext: context,
             viewport: renderViewport,
-            annotationMode: 0, // Disable annotations overlay
+            annotationMode: 0, // Disable duplicate annotation overlays
             textLayerMode: 0,
-          }).promise;
+          };
+
+          const renderTask = (page as any).render(renderContext);
+          activeRenderTaskRef.current = renderTask;
+
+          try {
+            await renderTask.promise;
+          } catch (err: any) {
+            if (err.name === "RenderingCancelledException" || err.message?.includes("cancelled")) {
+              console.log("PDFJS page rendering cancelled.");
+              return;
+            }
+            throw err;
+          } finally {
+            if (activeRenderTaskRef.current === renderTask) {
+              activeRenderTaskRef.current = null;
+            }
+          }
 
           const bgImage = await FabricImage.fromURL(
             tempCanvas.toDataURL("image/png"),
@@ -1016,14 +1082,33 @@ const PdfEditorWorkspace = React.forwardRef(
             objectCaching: false,
             data: { isBackground: true },
           });
-          canvas.add(bgImage);
-          canvas.sendObjectToBack(bgImage);
+          
+          if (stateRef.current.pageData[pageNum]) {
+            await canvas.loadFromJSON(stateRef.current.pageData[pageNum]);
+            
+            // Remove any old backgrounds to avoid layering duplicates
+            const objects = canvas.getObjects();
+            objects.forEach((obj: any) => {
+              if (obj.data?.isBackground) {
+                canvas.remove(obj);
+              }
+            });
+            
+            canvas.add(bgImage);
+            canvas.sendObjectToBack(bgImage);
+            attachTextHandlers(canvas);
+          } else {
+            canvas.add(bgImage);
+            canvas.sendObjectToBack(bgImage);
+          }
+        } else {
+          if (stateRef.current.pageData[pageNum]) {
+            await canvas.loadFromJSON(stateRef.current.pageData[pageNum]);
+            attachTextHandlers(canvas);
+          }
         }
 
-        if (state.pageData[pageNum]) {
-          await canvas.loadFromJSON(state.pageData[pageNum]);
-          attachTextHandlers(canvas);
-        } else {
+        if (!stateRef.current.pageData[pageNum]) {
           const textContent = await page.getTextContent();
           let items = textContent.items as any[];
 
@@ -1038,17 +1123,13 @@ const PdfEditorWorkspace = React.forwardRef(
               await worker.terminate();
 
               if (ret.data && ret.data.words) {
-                // Reconstruct Fabric objects from OCR
                 ret.data.words.forEach((word) => {
-                  // Tesseract provides bounding box in the rendered tempCanvas scale (which is renderScale)
-                  // So we must scale it down by renderScale
                   const left = word.bbox.x0 / renderScale;
                   const top = word.bbox.y0 / renderScale;
                   const width = (word.bbox.x1 - word.bbox.x0) / renderScale;
                   const height = (word.bbox.y1 - word.bbox.y0) / renderScale;
-                  const fontSize = height; // approximate
+                  const fontSize = height;
 
-                  // Push as simulated text item
                   items.push({
                     str: word.text + " ",
                     transform: [
@@ -1111,7 +1192,7 @@ const PdfEditorWorkspace = React.forwardRef(
           let currentGroup: any = null;
 
           itemsWithCoords.forEach((item) => {
-            if (!item.str || (!item.str.trim() && item.textWidth === 0)) return; // Skip truly empty items
+            if (!item.str || (!item.str.trim() && item.textWidth === 0)) return;
 
             if (!currentGroup) {
               currentGroup = { ...item };
@@ -1121,11 +1202,9 @@ const PdfEditorWorkspace = React.forwardRef(
                 currentGroup.fontName === item.fontName &&
                 Math.abs(currentGroup.fontSize - item.fontSize) < 2;
 
-              // Calculate horizontal space between objects
               const space =
                 item.tx[4] - (currentGroup.tx[4] + currentGroup.textWidth);
 
-              // If they are on the same line, have the same font, and aren't too far apart horizontally
               if (
                 yDiff < currentGroup.fontSize * 0.5 &&
                 isSameFont &&
@@ -1190,7 +1269,6 @@ const PdfEditorWorkspace = React.forwardRef(
             if (fontName.includes("+")) {
               cleanedFontName = fontName.split("+")[1];
             }
-            // Strip modifiers
             cleanedFontName = cleanedFontName
               .replace(/-bold.*/i, "")
               .replace(/-italic.*/i, "")
@@ -1233,7 +1311,6 @@ const PdfEditorWorkspace = React.forwardRef(
             const textWidth = item.textWidth;
             const blockId = Math.random().toString(36).substring(7);
 
-            // Sample background color from tempCanvas to support dark and custom-colored PDF documents elegantly
             let sampledBgColor = "#ffffff";
             if (context) {
               const sampleX = Math.round((x - 1.5) * renderScale);
@@ -1245,7 +1322,6 @@ const PdfEditorWorkspace = React.forwardRef(
                     sampledBgColor = `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
                   }
                 } catch (e) {
-                  // Standard cross-origin fallback
                   sampledBgColor = "#ffffff";
                 }
               }
@@ -1255,7 +1331,7 @@ const PdfEditorWorkspace = React.forwardRef(
               id: blockId,
               text: item.str,
               left: x,
-              top: y - fontSize, // baseline aligns to bottom of div if height = fontSize and line-height = 1
+              top: y - fontSize,
               width: textWidth,
               height: fontSize,
               fontSize: fontSize,
@@ -1283,15 +1359,16 @@ const PdfEditorWorkspace = React.forwardRef(
               width: textWidth + 2,
               height: fontSize + 3,
               fill: sampledBgColor,
-              visible: false, // will turn true when text layer is edited
+              visible: false,
               selectable: false,
               evented: false,
               data: { isWhiteout: true, blockId: blockId },
             });
             canvas.add(whiteoutRect);
-
           });
           
+          // --- AUTOMATIC IMAGE/LOGO/PHOTO EXTRACTION PRE-LOAD COMPLETED ---
+
           setState(prev => ({
             ...prev,
             textData: {
@@ -1300,175 +1377,14 @@ const PdfEditorWorkspace = React.forwardRef(
             }
           }));
 
-          // --- AUTOMATIC IMAGE/LOGO/PHOTO EXTRACTION FROM PDF OPERATOR LIST ---
-          try {
-            const ops = await page.getOperatorList();
-            const fnArray = ops.fnArray;
-            const argsArray = ops.argsArray;
-
-            const SAVE_OP = (pdfjs as any).OPS?.save ?? 2;
-            const RESTORE_OP = (pdfjs as any).OPS?.restore ?? 3;
-            const TRANSFORM_OP = (pdfjs as any).OPS?.transform ?? 11;
-            const PAINT_IMAGE_OP = (pdfjs as any).OPS?.paintImageXObject ?? 82;
-            const PAINT_INLINE_IMAGE_OP = (pdfjs as any).OPS?.paintInlineImageXObject ?? 83;
-
-            const ctmStack: any[] = [];
-            let currentTransform = [1, 0, 0, 1, 0, 0];
-
-            for (let i = 0; i < fnArray.length; i++) {
-              const fn = fnArray[i];
-              if (fn === SAVE_OP) {
-                ctmStack.push([...currentTransform]);
-              } else if (fn === RESTORE_OP) {
-                if (ctmStack.length > 0) {
-                  currentTransform = ctmStack.pop();
-                }
-              } else if (fn === TRANSFORM_OP) {
-                const matrix = argsArray[i];
-                if (matrix && matrix.length >= 6) {
-                  const [a1, b1, c1, d1, e1, f1] = currentTransform;
-                  const [a2, b2, c2, d2, e2, f2] = matrix;
-                  currentTransform = [
-                    a1 * a2 + c1 * b2,
-                    b1 * a2 + d1 * b2,
-                    a1 * c2 + c1 * d2,
-                    b1 * c2 + d1 * d2,
-                    a1 * e2 + c1 * f2 + e1,
-                    b1 * e2 + d1 * f2 + f1,
-                  ];
-                }
-              } else if (fn === PAINT_IMAGE_OP || fn === PAINT_INLINE_IMAGE_OP) {
-                const imgId = argsArray[i]?.[0];
-                if (!imgId) continue;
-                let imgData: any = null;
-                try {
-                  if (page.objs && page.objs.has(imgId)) {
-                    imgData = page.objs.get(imgId);
-                  } else if (page.commonObjs && page.commonObjs.has(imgId)) {
-                    imgData = page.commonObjs.get(imgId);
-                  }
-                } catch (e) {
-                  console.warn("Failed retrieving image from PDF resources:", e);
-                }
-
-                if (imgData) {
-                  const width = imgData.width || 100;
-                  const height = imgData.height || 100;
-                  let srcUrl = "";
-
-                  if (imgData.bitmap instanceof ImageBitmap) {
-                    const tempImgCanvas = document.createElement("canvas");
-                    tempImgCanvas.width = width;
-                    tempImgCanvas.height = height;
-                    const tempImgCtx = tempImgCanvas.getContext("2d");
-                    if (tempImgCtx) {
-                      tempImgCtx.drawImage(imgData.bitmap, 0, 0);
-                      srcUrl = tempImgCanvas.toDataURL("image/png");
-                    }
-                  } else if (imgData.data) {
-                    const tempImgCanvas = document.createElement("canvas");
-                    tempImgCanvas.width = width;
-                    tempImgCanvas.height = height;
-                    const tempImgCtx = tempImgCanvas.getContext("2d");
-                    if (tempImgCtx) {
-                      const imgDataObj = tempImgCtx.createImageData(width, height);
-                      const dataLength = imgData.data.length;
-                      if (dataLength === width * height * 3) {
-                        let dstIndex = 0;
-                        for (let srcIndex = 0; srcIndex < dataLength; srcIndex += 3) {
-                          imgDataObj.data[dstIndex] = imgData.data[srcIndex];
-                          imgDataObj.data[dstIndex + 1] = imgData.data[srcIndex + 1];
-                          imgDataObj.data[dstIndex + 2] = imgData.data[srcIndex + 2];
-                          imgDataObj.data[dstIndex + 3] = 255;
-                          dstIndex += 4;
-                        }
-                      } else if (dataLength === width * height * 4) {
-                        imgDataObj.data.set(imgData.data);
-                      } else {
-                        let dstIndex = 0;
-                        for (let srcIndex = 0; srcIndex < dataLength; srcIndex++) {
-                          const v = imgData.data[srcIndex];
-                          imgDataObj.data[dstIndex] = v;
-                          imgDataObj.data[dstIndex + 1] = v;
-                          imgDataObj.data[dstIndex + 2] = v;
-                          imgDataObj.data[dstIndex + 3] = 255;
-                          dstIndex += 4;
-                        }
-                      }
-                      tempImgCtx.putImageData(imgDataObj, 0, 0);
-                      srcUrl = tempImgCanvas.toDataURL("image/png");
-                    }
-                  }
-
-                  if (srcUrl) {
-                    const [a, b, c, d, tx, ty] = currentTransform;
-                    const pdfWidth = Math.sqrt(a * a + b * b);
-                    const pdfHeight = Math.sqrt(c * c + d * d);
-
-                    const left = tx;
-                    const top = (baseViewport.height - ty - pdfHeight);
-
-                    // Skip extremely tiny bullet points or full-page background decorations
-                    if (pdfWidth < 5 || pdfHeight < 5 || (pdfWidth > baseViewport.width * 0.98 && pdfHeight > baseViewport.height * 0.98)) {
-                      continue;
-                    }
-
-                    // Create floating image on canvas
-                    const fabImg = await FabricImage.fromURL(srcUrl);
-                    fabImg.set({
-                      left: left,
-                      top: top,
-                      scaleX: pdfWidth / width,
-                      scaleY: pdfHeight / height,
-                      selectable: true,
-                      evented: true,
-                      hasBorders: true,
-                      hasControls: true,
-                      data: { isExtractedLogoImage: true }
-                    });
-
-                    // Match page background color for a clean whiteout
-                    let sampledLogoBg = "#ffffff";
-                    if (context) {
-                      const sampleX = Math.round((left - 1.5) * renderScale);
-                      const sampleY = Math.round((top - 1.5) * renderScale);
-                      if (sampleX >= 0 && sampleX < tempCanvas.width && sampleY >= 0 && sampleY < tempCanvas.height) {
-                        try {
-                          const pixel = context.getImageData(sampleX, sampleY, 1, 1).data;
-                          if (pixel[3] > 0) {
-                            sampledLogoBg = `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
-                          }
-                        } catch (e) {
-                          sampledLogoBg = "#ffffff";
-                        }
-                      }
-                    }
-
-                    // Add dynamic whiteout block underneath to shadow the background layer perfectly
-                    const whiteoutRect = new Rect({
-                      left: left - 0.5,
-                      top: top - 0.5,
-                      width: pdfWidth + 1,
-                      height: pdfHeight + 1,
-                      fill: sampledLogoBg,
-                      stroke: "transparent",
-                      strokeWidth: 0,
-                      selectable: false,
-                      evented: false,
-                      data: { isLogoWhiteoutMask: true, isWhiteoutMask: true }
-                    });
-
-                    canvas.add(whiteoutRect);
-                    canvas.add(fabImg);
-                  }
-                }
-              }
-            }
-          } catch (imgErr) {
-            console.error("Failed automatic image extraction:", imgErr);
-          }
-
           attachTextHandlers(canvas);
+        } else {
+          attachTextHandlers(canvas);
+        }
+
+        // Cleanup page of PDFJS
+        if (page.cleanup) {
+          page.cleanup();
         }
 
         const hideControls = (obj: any) => {
@@ -1495,12 +1411,12 @@ const PdfEditorWorkspace = React.forwardRef(
 
         canvas.on("object:modified", (e: any) => {
           savePageState();
-          if (e.target) hideControls(e.target);
+          if (e.target) showControls(e.target);
           canvas.renderAll();
         });
         canvas.on("object:added", (e: any) => {
           savePageState();
-          if (e.target) hideControls(e.target);
+          if (e.target) showControls(e.target);
           canvas.renderAll();
         });
         canvas.on("object:removed", savePageState);
@@ -1508,7 +1424,7 @@ const PdfEditorWorkspace = React.forwardRef(
         const handleSelection = (e: any) => {
           const obj = e.selected?.[0] || e.target;
           if (!obj) return;
-          hideControls(obj);
+          showControls(obj);
           const currentZoom = stateRef.current.zoom;
           const cssScaleX = canvas.getElement().clientWidth / canvas.getWidth();
           const cssScaleY =
@@ -1538,7 +1454,7 @@ const PdfEditorWorkspace = React.forwardRef(
         canvas.on("mouse:down", (e) => {
           const obj = e.target;
           if (obj && !obj.data?.isBackground && !obj.data?.isWhiteout) {
-            hideControls(obj);
+            showControls(obj);
             canvas.renderAll();
           }
         });
@@ -1546,7 +1462,7 @@ const PdfEditorWorkspace = React.forwardRef(
         canvas.on("mouse:up", () => {
           const obj = canvas.getActiveObject();
           if (obj) {
-            hideControls(obj);
+            showControls(obj);
             canvas.requestRenderAll();
           }
         });
@@ -1570,6 +1486,7 @@ const PdfEditorWorkspace = React.forwardRef(
       } catch (err) {
         console.error("Error rendering page:", err);
       } finally {
+        isRenderingRef.current = false;
         setState((prev) => ({ ...prev, isProcessing: false }));
       }
     };
@@ -1709,17 +1626,17 @@ const PdfEditorWorkspace = React.forwardRef(
           }
 
           let initialZoom = 1;
-          if (containerRef.current) {
-            const containerWidth = containerRef.current.clientWidth - 64; // accounting for p-8 (32px * 2)
+          if (wrapperRef.current) {
+            const containerWidth = Math.min(900, wrapperRef.current.clientWidth) - 48;
+            const containerHeight = wrapperRef.current.clientHeight - 48;
             const firstPage = await pdf.getPage(1);
             const firstPageViewport = firstPage.getViewport({ scale: 1.0 });
-            if (firstPageViewport.width > 0) {
-              initialZoom = Math.min(
-                2.0,
-                Math.max(0.3, containerWidth / firstPageViewport.width),
-              );
-              // Round to nearest 0.1
-              initialZoom = Math.floor(initialZoom * 10) / 10;
+            if (firstPageViewport.width > 0 && firstPageViewport.height > 0) {
+              const scaleWidth = containerWidth / firstPageViewport.width;
+              const scaleHeight = containerHeight / firstPageViewport.height;
+              initialZoom = Math.max(0.1, Math.min(scaleWidth, scaleHeight));
+              // Round to 2 decimals
+              initialZoom = Math.floor(initialZoom * 100) / 100;
             }
           }
 
@@ -1738,8 +1655,6 @@ const PdfEditorWorkspace = React.forwardRef(
             historyIndex: -1,
             editingText: null,
           }));
-
-          renderPage(1);
         } catch (error: any) {
           if (error.name === "PasswordException") {
             setState((prev) => ({
@@ -1773,6 +1688,46 @@ const PdfEditorWorkspace = React.forwardRef(
         canvas.setZoom(state.zoom);
       }
     }, [state.zoom]);
+
+    useEffect(() => {
+      const container = wrapperRef.current;
+      if (!container) return;
+      let resizeTimeout: NodeJS.Timeout;
+      const observer = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (entry && entry.contentRect.width > 0) {
+          clearTimeout(resizeTimeout);
+          resizeTimeout = setTimeout(() => {
+            if (originalDimensions.current.width > 0 && originalDimensions.current.height > 0) {
+              const wrapperWidth = entry.contentRect.width; 
+              const wrapperHeight = entry.contentRect.height;
+              const containerWidth = Math.min(900, wrapperWidth) - 48; // max-w-[900px] and padding
+              const containerHeight = wrapperHeight - 48;
+              
+              if (containerWidth > 0 && containerHeight > 0) {
+                const scaleWidth = containerWidth / originalDimensions.current.width;
+                const scaleHeight = containerHeight / originalDimensions.current.height;
+                const scale = Math.min(scaleWidth, scaleHeight);
+                setState(prev => {
+                  // Round to 3 decimal places to avoid infinite loops and micro-adjustments
+                  const roundedNewScale = Math.round(scale * 1000) / 1000;
+                  const roundedPrevScale = Math.round(prev.zoom * 1000) / 1000;
+                  if (Math.abs(roundedNewScale - roundedPrevScale) > 0.005) {
+                    return { ...prev, zoom: roundedNewScale };
+                  }
+                  return prev;
+                });
+              }
+            }
+          }, 150);
+        }
+      });
+      observer.observe(container);
+      return () => {
+        clearTimeout(resizeTimeout);
+        observer.disconnect();
+      };
+    }, []);
 
     // Pinch-to-zoom support for mobile touch devices
     useEffect(() => {
@@ -1833,6 +1788,12 @@ const PdfEditorWorkspace = React.forwardRef(
         container.removeEventListener("touchend", handleTouchEnd);
       };
     }, []);
+
+    useEffect(() => {
+      if (pdfDocRef.current) {
+        renderPage(state.currentPage);
+      }
+    }, [state.currentPage, state.zoom]);
 
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
@@ -2769,12 +2730,47 @@ const PdfEditorWorkspace = React.forwardRef(
                   }))
                 }
                 className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all"
+                title="Zoom Out"
               >
                 <ZoomOut className="w-4 h-4" />
               </button>
-              <span className="text-[10px] font-black w-12 text-center text-gray-600">
+              
+              <button
+                onClick={() => {
+                  if (wrapperRef.current && originalDimensions.current.width > 0) {
+                    const widthScale = (wrapperRef.current.clientWidth - 48) / originalDimensions.current.width;
+                    setState(prev => ({ ...prev, zoom: Math.round(widthScale * 100) / 100 }));
+                  }
+                }}
+                className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all"
+                title="Fit Width"
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+              
+              <button
+                onClick={() => {
+                  if (wrapperRef.current && originalDimensions.current.width > 0 && originalDimensions.current.height > 0) {
+                    const widthScale = (wrapperRef.current.clientWidth - 48) / originalDimensions.current.width;
+                    const heightScale = (wrapperRef.current.clientHeight - 48) / originalDimensions.current.height;
+                    const scale = Math.min(widthScale, heightScale);
+                    setState(prev => ({ ...prev, zoom: Math.round(scale * 100) / 100 }));
+                  }
+                }}
+                className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all"
+                title="Fit Page"
+              >
+                <Minimize2 className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={() => setState(prev => ({ ...prev, zoom: 1 }))}
+                className="px-2 font-black text-[10px] w-12 text-center text-gray-600 hover:text-black transition-all"
+                title="100% Zoom"
+              >
                 {Math.round(state.zoom * 100)}%
-              </span>
+              </button>
+
               <button
                 onClick={() =>
                   setState((prev) => ({
@@ -2783,6 +2779,7 @@ const PdfEditorWorkspace = React.forwardRef(
                   }))
                 }
                 className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all"
+                title="Zoom In"
               >
                 <ZoomIn className="w-4 h-4" />
               </button>
@@ -2967,7 +2964,6 @@ const PdfEditorWorkspace = React.forwardRef(
                       isDeleted={state.deletedPages.includes(id)}
                       onClick={() => {
                         setState((prev) => ({ ...prev, currentPage: id }));
-                        renderPage(id);
                       }}
                       onDelete={(id: number) =>
                         setState((prev) => ({
@@ -2986,11 +2982,13 @@ const PdfEditorWorkspace = React.forwardRef(
           </aside>
 
           {/* Canvas Workspace */}
-          <div
-            ref={containerRef}
-            className="flex-1 overflow-auto bg-[#e9ecef] p-4 sm:p-12 custom-scrollbar relative text-center whitespace-nowrap"
-          >
-            {/* Context Floating Menu */}
+          <div ref={wrapperRef} className="preview-wrapper flex-1 w-full h-full overflow-auto bg-[#e9ecef] relative p-4 sm:p-8 custom-scrollbar text-center whitespace-nowrap">
+            <span className="inline-block h-full align-middle" aria-hidden="true"></span>
+            <div
+              ref={containerRef}
+              className="preview-container inline-block align-middle whitespace-normal text-left relative"
+            >
+              {/* Context Floating Menu */}
             <AnimatePresence>
               {state.showFloatingMenu && (
                 <motion.div
@@ -3156,7 +3154,7 @@ const PdfEditorWorkspace = React.forwardRef(
               </div>
             </div>
 
-            <div className="inline-block min-w-fit relative group perspective-1000 whitespace-normal text-left">
+            <div className="inline-block relative group perspective-1000 whitespace-normal text-left">
               {/* Complex Layered Shadow */}
               <div className="absolute -inset-1 bg-gradient-to-tr from-gray-400/20 to-gray-200/20 rounded-lg blur-2xl opacity-50 group-hover:opacity-80 transition duration-1000"></div>
 
@@ -3345,6 +3343,7 @@ const PdfEditorWorkspace = React.forwardRef(
               </div>
             </div>
 
+            </div>
             <div className="h-32 shrink-0" />
           </div>
         </div>
