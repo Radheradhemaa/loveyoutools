@@ -10,7 +10,6 @@ if (env.backends?.onnx?.wasm) {
 }
 
 let isnetPipeline: any = null;
-let u2netPipeline: any = null;
 
 // Check for WebGPU adapter to avoid lazy initialization failures
 let hasWebGPU = false;
@@ -73,35 +72,13 @@ export const ensureIsnetLoaded = async () => {
 };
 
 /**
- * Ensures the secondary refinement model is loaded.
- */
-export const ensureU2netLoaded = async () => {
-  if (!u2netPipeline) {
-    await ensureWebGPUChecked();
-    const device = hasWebGPU ? "webgpu" : "wasm";
-    try {
-      u2netPipeline = await pipeline("image-segmentation", "Xenova/modnet", {
-        device,
-      });
-    } catch (e) {
-      console.warn(
-        "[AI] MODNet secondary load failed, trying WASM fallback",
-        e,
-      );
-      u2netPipeline = await pipeline("image-segmentation", "Xenova/modnet", {
-        device: "wasm",
-      });
-    }
-  }
-};
-
-/**
  * Compatibility stubs.
  */
 export const ensurePreloaded = async () => {
-  await Promise.all([ensureIsnetLoaded(), ensureU2netLoaded()]);
+  await ensureIsnetLoaded();
 };
 export const ensureModnetLoaded = async () => ensureIsnetLoaded();
+export const ensureU2netLoaded = async () => ensureIsnetLoaded(); // stub
 
 /**
  * Robust downscaling and preprocessing.
@@ -170,11 +147,8 @@ export async function removeBackground(
   const startTime = Date.now();
   onProgress("Initializing Hybrid AI Core...");
 
-  // Load both models (if one is already loaded it's instanced)
-  await Promise.all([
-    ensureIsnetLoaded().catch(console.error),
-    ensureU2netLoaded().catch(console.error),
-  ]);
+  // Load model
+  await ensureIsnetLoaded().catch(console.error);
 
   // Ensure input is a string (DataURL or URL)
   let imageSrcForDownscale: string;
@@ -220,15 +194,6 @@ export async function removeBackground(
       throw new Error("AI model failed to process the image.");
     }
 
-    onProgress("Analyzing Details (U2Net Pass)...");
-    let resModelU2 = null;
-    if (u2netPipeline) {
-      resModelU2 = await u2netPipeline(imageSrc).catch((e: any) => {
-        console.error("U2Net pass failed", e);
-        return null; // non-fatal
-      });
-    }
-
     onProgress("Merging AI Visions...");
 
     // Helper to extract mask data and normalize
@@ -245,15 +210,6 @@ export async function removeBackground(
     };
 
     const maskData = getMask(resModel);
-    const maskDataU2 = getMask(resModelU2);
-
-    // Merge the masks by multiplying or taking the minimum alpha to be extremely aggressive against background artifacts
-    if (maskData && maskDataU2 && maskData.width === maskDataU2.width && maskData.height === maskDataU2.height) {
-      for (let i = 0; i < maskData.data.length; i++) {
-         // Taking the minimum ensures that if either model thinks it is background (close to 0), it becomes background.
-         maskData.data[i] = Math.min(maskData.data[i], maskDataU2.data[i]);
-      }
-    }
 
     // Load Full Original Image to get maximum quality output
     const origImg = new Image();
@@ -299,14 +255,8 @@ export async function removeBackground(
           const idx = rowOffset + x;
           const val = mData[idx] * maskScale;
           
-          let threshold;
-          if (y < mh * 0.25) {
-            threshold = 50; // lower threshold for hair/head details
-          } else if (y < mh * 0.5) {
-            threshold = 120; // shoulders
-          } else {
-            threshold = 200; // lower body/chairs: extremely high threshold to eliminate chairs and background objects perfectly
-          }
+          // very safe threshold to fully purely preserve face/head/subject naturally
+          const threshold = 15; 
           binMask[idx] = val >= threshold ? 1 : 0;
         }
       }
@@ -315,14 +265,7 @@ export async function removeBackground(
       const erodedBin = new Uint8Array(mw * mh);
       for (let y = 0; y < mh; y++) {
         for (let x = 0; x < mw; x++) {
-          let erRad;
-          if (y < mh * 0.25) {
-            erRad = 2; // gentle erosion for hair
-          } else if (y < mh * 0.5) {
-            erRad = 4; // medium erosion for shoulders
-          } else {
-            erRad = 7; // brutal erosion to destroy near-body objects, chairs, clothing wrinkles that bleed into background
-          }
+          let erRad = 1; // Extremely gentle erosion to purely preserve the subject
 
           const idx = y * mw + x;
           if (binMask[idx] === 0) {
@@ -471,31 +414,7 @@ export async function removeBackground(
       }
 
       // 1e. Simple Erosion to eliminate wild flyaway fringes near head & template boundary
-      const erodedMask = new Float32Array(mw * mh);
-      const erR = 1;
-      for (let y = 0; y < mh; y++) {
-        // Soft erosion transition: Head has full erosion, collar & shoulders have zero erosion.
-        const erosionWeight = y < mh * 0.28 ? 1.0 : Math.max(0, 1.0 - (y - mh * 0.28) / (mh * 0.10));
-
-        for (let x = 0; x < mw; x++) {
-          const originalVal = correctedMask[y * mw + x];
-          if (erosionWeight <= 0) {
-            erodedMask[y * mw + x] = originalVal;
-            continue;
-          }
-
-          let minVal = 255;
-          for (let dy = -erR; dy <= erR; dy++) {
-            for (let dx = -erR; dx <= erR; dx++) {
-              const nx = Math.max(0, Math.min(mw - 1, x + dx));
-              const ny = Math.max(0, Math.min(mh - 1, y + dy));
-              minVal = Math.min(minVal, correctedMask[ny * mw + nx]);
-            }
-          }
-
-          erodedMask[y * mw + x] = originalVal * (1 - erosionWeight) + minVal * erosionWeight;
-        }
-      }
+      const erodedMask = correctedMask;
 
       // 2. Separable Spatial Tensor Blur to soften the mask's micro-boundaries naturally
       const blurRad = 2;
@@ -532,7 +451,7 @@ export async function removeBackground(
 
       // 3. High Precision CPU Bilinear Upscale + Float32 S-Curve
       // Softer floor to preserve soft details and natural organic contours around shoulders & neck.
-      const floor = isMobile ? 180 : 160;
+      const floor = 20;
       const ceil = 245;
 
       for (let y = 0; y < h; y++) {

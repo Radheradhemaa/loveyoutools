@@ -184,7 +184,11 @@ export default function AdvancedPdfCropper() {
       } as any);
       await renderTaskRef.current.promise;
     } catch (error: any) {
-      if (error.name !== 'RenderingCancelledException') {
+      if (
+        error?.name !== 'RenderingCancelledException' && 
+        !error?.message?.includes('cancelled') &&
+        !String(error).includes('cancelled')
+      ) {
         console.error('Error rendering page:', error);
       }
     }

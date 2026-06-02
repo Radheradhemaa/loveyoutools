@@ -442,6 +442,16 @@ const PixelPerfectBlock = ({
     fontStyle: (block.isOriginal && isOriginalStyle && isOriginalFontFamily) ? "normal" : (block.fontStyle || "normal"),
   };
 
+  // Transform matrix from original block if preserved
+  let tMatrix = "none";
+  if (block.originalTransform && Array.isArray(block.originalTransform) && block.originalTransform.length === 6) {
+     const t = block.originalTransform;
+     // The raw pdf transform operates in its own space (often origin bottom-left),
+     // but we translate the block independently in HTML so we isolate rotation/scale matrix
+     // without its unscaled translation offsets.
+     tMatrix = `matrix(${t[0]/block.fontSize}, ${t[1]}, ${t[2]}, ${t[3]/block.fontSize}, 0, 0)`;
+  }
+
   const commonStyle: React.CSSProperties = {
     position: "absolute",
     left: block.left * state.zoom,
@@ -450,7 +460,7 @@ const PixelPerfectBlock = ({
     height: block.fontSize * state.zoom,
     padding: 0,
     margin: 0,
-    lineHeight: 1.0,
+    lineHeight: "1",
     border: "none",
     outline: "none",
     background: "transparent",
@@ -462,26 +472,13 @@ const PixelPerfectBlock = ({
     textRendering: "geometricPrecision",
     whiteSpace: "pre",
     transformOrigin: "top left",
-    overflow: "hidden",
+    transform: tMatrix !== "none" ? tMatrix : "none",
+    overflow: "visible",
+    backgroundColor: (isModified || isEditing) ? (block.bgColor || "white") : "transparent",
   };
 
   return (
     <>
-      {showWhiteout && (
-        <div
-          style={{
-            position: "absolute",
-            left: (block.left - 1) * state.zoom,
-            top: (block.top - 1) * state.zoom,
-            width: (block.width + 2) * state.zoom,
-            height: (block.fontSize + 3) * state.zoom,
-            backgroundColor: block.bgColor || "#ffffff",
-            pointerEvents: "none",
-            zIndex: 5,
-          }}
-        />
-      )}
-
       {/* Hidden measurer to find natural width under standard rendering */}
       <MeasurerText 
         text={text} 
@@ -504,9 +501,10 @@ const PixelPerfectBlock = ({
             data-spellcheck="false"
             data-page-number={state.currentPage}
             data-block-id={block.id}
-            className="editable-text absolute bg-transparent z-50 border-none outline-none ring-0 focus:ring-0 focus:outline-none focus:border-none shadow-none resize-none"
+            className="editable-text absolute bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none focus:border-none shadow-none resize-none"
             style={{
               ...commonStyle,
+              zIndex: 3,
               color: block.color || "#000000",
               cursor: "text",
               pointerEvents: "auto",
@@ -591,13 +589,21 @@ const PixelPerfectBlock = ({
               cursor: (state.tool === 'text' || !block.isOriginal) ? "text" : "default",
               pointerEvents: (state.tool === 'text' || !block.isOriginal) ? "auto" : "none",
               display: "inline-block",
-              zIndex: 10,
               ...fontStyleObj,
             }}
           >
             {text}
           </span>
         )
+      )}
+      
+      {block.isDeleted && block.isOriginal && (
+        <div style={{
+          ...commonStyle,
+          backgroundColor: block.bgColor || "white",
+          color: "transparent",
+          pointerEvents: "none"
+        }} />
       )}
     </>
   );
@@ -1025,9 +1031,8 @@ const PdfEditorWorkspace = React.forwardRef(
           allowTouchScrolling: true,
         });
 
-        // Use appropriate devicePixelRatio with a high definition cap
-        const dpr = window.devicePixelRatio || 1;
-        const renderScale = Math.max(dpr, 2.0);
+        // Use appropriate sharp internal render scale
+        const renderScale = 2.0;
         canvas.setZoom(stateRef.current.zoom);
 
         fabricCanvas.current = canvas;
@@ -1043,6 +1048,11 @@ const PdfEditorWorkspace = React.forwardRef(
           context.imageSmoothingQuality = "high";
           context.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
 
+          // Image extraction removed as per user request to avoid duplicates and ensure pixel-perfect preview
+
+          // 2. We do NOT suppress text in the background canvas. We want pixel-perfect PDF rendering including text!
+          // We will render HTML text on top with transparent color.
+
           const renderContext = {
             canvasContext: context,
             viewport: renderViewport,
@@ -1052,13 +1062,65 @@ const PdfEditorWorkspace = React.forwardRef(
 
           const renderTask = (page as any).render(renderContext);
           activeRenderTaskRef.current = renderTask;
+          
+          // Attach a dummy catch handler immediately to prevent unhandled promise rejections if it fails while we do other async things
+          renderTask.promise.catch(() => {});
+
+          // Re-extract original image positions so we can reliably create interactive overlays
+          const extractedImages: { left: number, top: number, pdfWidth: number, pdfHeight: number }[] = [];
+          try {
+            const ops = await (page as any).getOperatorList();
+            const fnArray = ops.fnArray;
+            const argsArray = ops.argsArray;
+            const SAVE_OP = (pdfjs as any).OPS?.save ?? 2;
+            const RESTORE_OP = (pdfjs as any).OPS?.restore ?? 3;
+            const TRANSFORM_OP = (pdfjs as any).OPS?.transform ?? 11;
+            const PAINT_IMAGE_OP = (pdfjs as any).OPS?.paintImageXObject ?? 82;
+            const PAINT_INLINE_IMAGE_OP = (pdfjs as any).OPS?.paintInlineImageXObject ?? 83;
+
+            const ctmStack: any[] = [];
+            let currentTransform = [1, 0, 0, 1, 0, 0];
+            for (let i = 0; i < fnArray.length; i++) {
+              const fn = fnArray[i];
+              if (fn === SAVE_OP) ctmStack.push([...currentTransform]);
+              else if (fn === RESTORE_OP) { if (ctmStack.length > 0) currentTransform = ctmStack.pop(); }
+              else if (fn === TRANSFORM_OP) {
+                const matrix = argsArray[i];
+                if (matrix && matrix.length >= 6) {
+                  const [a1, b1, c1, d1, e1, f1] = currentTransform;
+                  const [a2, b2, c2, d2, e2, f2] = matrix;
+                  currentTransform = [
+                    a1 * a2 + c1 * b2, b1 * a2 + d1 * b2, a1 * c2 + c1 * d2, b1 * c2 + d1 * d2, a1 * e2 + c1 * f2 + e1, b1 * e2 + d1 * f2 + f1,
+                  ];
+                }
+              } else if (fn === PAINT_IMAGE_OP || fn === PAINT_INLINE_IMAGE_OP) {
+                const [a, b, c, d, tx, ty] = currentTransform;
+                const pdfWidth = Math.sqrt(a * a + b * b);
+                const pdfHeight = Math.sqrt(c * c + d * d);
+                const left = tx;
+                // Since this uses the base unscaled page transform for viewport...
+                const top = (baseViewport.height - ty - pdfHeight);
+                if (pdfWidth < 20 || pdfHeight < 20 || (pdfWidth > baseViewport.width * 0.9 && pdfHeight > baseViewport.height * 0.9)) continue;
+                // Add tiny offset padding just in case
+                extractedImages.push({ left, top, pdfWidth, pdfHeight });
+              }
+            }
+          } catch(e) {
+            console.error("Failed to parse PDF images", e);
+          }
 
           try {
             await renderTask.promise;
           } catch (err: any) {
-            if (err.name === "RenderingCancelledException" || err.message?.includes("cancelled")) {
-              console.log("PDFJS page rendering cancelled.");
-              return;
+            if (
+              err?.name === "RenderingCancelledException" || 
+              err?.message?.includes("cancelled") ||
+              err?.message?.includes("Rendering cancelled") ||
+              String(err).includes("Rendering cancelled") ||
+              String(err).includes("cancelled")
+            ) {
+               console.log("PDFJS page rendering cancelled safely.");
+               return;
             }
             throw err;
           } finally {
@@ -1082,7 +1144,10 @@ const PdfEditorWorkspace = React.forwardRef(
             objectCaching: false,
             data: { isBackground: true },
           });
-          
+
+          // Helper to inject the extracted layers
+          // (Disabled image extraction rendering to prevent duplicates and keep original raster assets)
+
           if (stateRef.current.pageData[pageNum]) {
             await canvas.loadFromJSON(stateRef.current.pageData[pageNum]);
             
@@ -1100,6 +1165,24 @@ const PdfEditorWorkspace = React.forwardRef(
           } else {
             canvas.add(bgImage);
             canvas.sendObjectToBack(bgImage);
+            
+            // Add original images as transparent clickable boxes
+            extractedImages.forEach((imgPos) => {
+              const rect = new Rect({
+                left: imgPos.left,
+                top: imgPos.top,
+                width: imgPos.pdfWidth,
+                height: imgPos.pdfHeight,
+                fill: "rgba(255, 255, 255, 0.01)", // almost transparent so it's clickable
+                stroke: "transparent",
+                strokeWidth: 0,
+                strokeDashArray: [4, 4],
+                selectable: true,
+                hasControls: true,
+                data: { isWhiteoutMask: true, isLogoWhiteoutMask: true },
+              });
+              canvas.add(rect);
+            });
           }
         } else {
           if (stateRef.current.pageData[pageNum]) {
@@ -1352,19 +1435,6 @@ const PdfEditorWorkspace = React.forwardRef(
               originalTransform: item.transform,
               isDeleted: false,
             });
-
-            const whiteoutRect = new Rect({
-              left: x - 1,
-              top: y - fontSize - 1,
-              width: textWidth + 2,
-              height: fontSize + 3,
-              fill: sampledBgColor,
-              visible: false,
-              selectable: false,
-              evented: false,
-              data: { isWhiteout: true, blockId: blockId },
-            });
-            canvas.add(whiteoutRect);
           });
           
           // --- AUTOMATIC IMAGE/LOGO/PHOTO EXTRACTION PRE-LOAD COMPLETED ---
@@ -1483,8 +1553,14 @@ const PdfEditorWorkspace = React.forwardRef(
         });
 
         canvas.renderAll();
-      } catch (err) {
-        console.error("Error rendering page:", err);
+      } catch (err: any) {
+        if (
+          err?.name !== 'RenderingCancelledException' && 
+          !err?.message?.includes('cancelled') &&
+          !String(err).includes('cancelled')
+        ) {
+          console.error("Error rendering page:", err);
+        }
       } finally {
         isRenderingRef.current = false;
         setState((prev) => ({ ...prev, isProcessing: false }));
@@ -1963,8 +2039,24 @@ const PdfEditorWorkspace = React.forwardRef(
           });
 
           // Replace in canvas
-          canvas.remove(currentObj);
-          canvas.add(newImg);
+          if ((currentObj as any).data?.isLogoWhiteoutMask || (currentObj as any).data?.isWhiteoutMask) {
+            currentObj.set({
+              fill: "rgba(255, 255, 255, 1)",
+              strokeWidth: 0,
+              data: { ...((currentObj as any).data || {}), isWhiteoutElement: true }
+            });
+            canvas.add(newImg);
+            canvas.sendObjectToBack(newImg);
+            canvas.sendObjectToBack(currentObj);
+            const bgImgObj = canvas.getObjects().find((o: any) => o.data?.isBackground) as any;
+            if (bgImgObj) {
+              canvas.sendObjectToBack(bgImgObj); // Background always at back
+            }
+          } else {
+            canvas.remove(currentObj);
+            canvas.add(newImg);
+          }
+          
           canvas.setActiveObject(newImg);
           canvas.renderAll();
           
@@ -2048,7 +2140,7 @@ const PdfEditorWorkspace = React.forwardRef(
 
         // Keep bgImgObj first, and rect second in layers stack
         canvas.sendObjectToBack(bgImgObj);
-        rect.sendToBack();
+        canvas.sendObjectToBack(rect);
         canvas.sendObjectToBack(bgImgObj);
 
         canvas.add(croppedFabImg);
@@ -2356,23 +2448,34 @@ const PdfEditorWorkspace = React.forwardRef(
           const pdfjsPage = await pdfDocRef.current.getPage(pageNum);
           const viewport = pdfjsPage.getViewport({ scale: 1.0 });
 
+          // Prevent rasterization - clone native PDF pages for identical structural preservation
           if (pdfDoc) {
             const [page] = await finalPdfDoc.copyPages(pdfDoc, [
               pageNum - 1,
             ]);
-            copiedPage = page;
+            copiedPage = finalPdfDoc.addPage(page);
           } else {
+            // Fallback for encrypted pdfs
             copiedPage = finalPdfDoc.addPage([viewport.width, viewport.height]);
-            // Render at ultra high definition 4.0 scale for pristine HD quality output
             const renderScale = 4.0;
             const renderViewport = pdfjsPage.getViewport({ scale: renderScale });
             const tempCanvas = document.createElement("canvas");
             const tempCtx = tempCanvas.getContext("2d")!;
             tempCanvas.width = renderViewport.width;
             tempCanvas.height = renderViewport.height;
+
+            const originalFillText = tempCtx.fillText;
+            tempCtx.fillText = function () { return; };
+            const originalStrokeText = tempCtx.strokeText;
+            tempCtx.strokeText = function () { return; };
+
             await pdfjsPage.render({ canvasContext: tempCtx, viewport: renderViewport }).promise;
-            const imgData = tempCanvas.toDataURL("image/jpeg", 0.95);
-            const img = await finalPdfDoc.embedJpg(imgData);
+          
+            tempCtx.fillText = originalFillText;
+            tempCtx.strokeText = originalStrokeText;
+
+            let imgData = tempCanvas.toDataURL("image/jpeg", 0.95);
+            let img = await finalPdfDoc.embedJpg(imgData);
             copiedPage.drawImage(img, {
               x: 0,
               y: 0,
@@ -2380,7 +2483,8 @@ const PdfEditorWorkspace = React.forwardRef(
               height: viewport.height,
             });
           }
-                 // 1. Loop over HTML text overlays to add them to PDF FIRST, so they are embedded exactly in the background layer
+
+          // 1. Loop over HTML text overlays to add them to PDF FIRST, so they are embedded exactly in the background layer
           const texts = state.textData[pageNum] || [];
           const runPageTexts = async () => {
              for (const textBlock of texts) {
@@ -2393,7 +2497,7 @@ const PdfEditorWorkspace = React.forwardRef(
                                 textBlock.fontStyle !== (textBlock.originalFontStyle || textBlock.fontStyle);
 
              // If it's original text but has been modified, we must white out the original PDF text
-             if (textBlock.isOriginal && isModified) {
+             if (textBlock.isOriginal && isModified && pdfDoc) {
                 const padLeft = 1;
                 const padRight = 1;
                 const padBottom = 2;
@@ -2416,8 +2520,7 @@ const PdfEditorWorkspace = React.forwardRef(
 
              if (textBlock.isDeleted) continue;
 
-             // Only draw if it's new text OR original text that was modified
-             if (!textBlock.isOriginal || isModified) {
+             if (!textBlock.isOriginal || isModified || !pdfDoc) {
                let fontToUse = helveticaFont;
                const weightVal = typeof textBlock.fontWeight === "number"
                  ? textBlock.fontWeight
@@ -2491,11 +2594,17 @@ const PdfEditorWorkspace = React.forwardRef(
                }
 
                // Restore baseline to originalTx5 if available (because top was shifted)
-               const pdfBaselineY = textBlock.originalTx5 ?? (textBlock.top + textBlock.fontSize * 0.8);
-               const [convertedX, convertedY] = viewport.convertToPdfPoint(
-                  textBlock.left,
-                  pdfBaselineY
-               );
+               let convertedX = 0;
+               let convertedY = 0;
+               if (textBlock.originalTx4 !== undefined && textBlock.originalTx5 !== undefined) {
+                 convertedX = textBlock.originalTx4;
+                 convertedY = textBlock.originalTx5;
+               } else {
+                 const pdfBaselineY = textBlock.top + textBlock.fontSize * 0.8;
+                 const converted = viewport.convertToPdfPoint(textBlock.left, pdfBaselineY);
+                 convertedX = converted[0];
+                 convertedY = converted[1];
+               }
                let drawX = convertedX;
                let drawY = convertedY;
 
@@ -2536,11 +2645,8 @@ const PdfEditorWorkspace = React.forwardRef(
 
             for (const obj of data.objects) {
               if (obj.visible === false) continue;
+              
               if (obj.type === "image" && !obj.selectable) continue;
-
-              const fabricX = obj.left;
-              const fabricY = obj.top;
-              const [pdfX, pdfY] = viewport.convertToPdfPoint(fabricX, fabricY);
 
               if (obj.type === "i-text" || obj.type === "text") {
                 // Handled via state.textData now
@@ -3061,7 +3167,17 @@ const PdfEditorWorkspace = React.forwardRef(
                   <button
                     onClick={() => {
                       if (state.selectedObject) {
-                        fabricCanvas.current?.remove(state.selectedObject);
+                        if ((state.selectedObject as any).data?.isWhiteoutMask || (state.selectedObject as any).data?.isLogoWhiteoutMask) {
+                          state.selectedObject.set({
+                            fill: "rgba(255, 255, 255, 1)",
+                            strokeWidth: 0,
+                            data: { ...((state.selectedObject as any).data || {}), isWhiteoutElement: true }
+                          });
+                          fabricCanvas.current?.discardActiveObject();
+                        } else {
+                          fabricCanvas.current?.remove(state.selectedObject);
+                        }
+                        
                         fabricCanvas.current?.renderAll();
                         savePageState();
                         setState(prev => ({ ...prev, selectedObject: null, showFloatingMenu: false }));
@@ -3074,7 +3190,7 @@ const PdfEditorWorkspace = React.forwardRef(
                       Delete
                     </span>
                   </button>
-                  {state.selectedObject?.type === 'image' && (
+                  {((state.selectedObject?.type === 'image') || (state.selectedObject?.type === 'rect' && ((state.selectedObject as any).data?.isWhiteoutMask || (state.selectedObject as any).data?.isLogoWhiteoutMask))) && (
                     <>
                       <button
                         onClick={() => replaceImageInputRef.current?.click()}
@@ -3104,15 +3220,74 @@ const PdfEditorWorkspace = React.forwardRef(
                     onClick={async () => {
                       if (state.selectedObject && fabricCanvas.current) {
                         try {
-                          const cloned = await state.selectedObject.clone();
-                          cloned.set({
-                            left: (cloned.left || 0) + 15,
-                            top: (cloned.top || 0) + 15,
-                          });
-                          fabricCanvas.current.add(cloned);
-                          fabricCanvas.current.setActiveObject(cloned);
-                          fabricCanvas.current.renderAll();
-                          savePageState();
+                          if ((state.selectedObject as any).data?.isWhiteoutMask || (state.selectedObject as any).data?.isLogoWhiteoutMask) {
+                            const rect = state.selectedObject as any;
+                            const bgImgObj = fabricCanvas.current.getObjects().find((o: any) => o.data?.isBackground) as any;
+                            if (bgImgObj) {
+                              const imgElement = bgImgObj.getElement();
+                              if (imgElement) {
+                                const left = rect.left;
+                                const top = rect.top;
+                                const width = rect.width * rect.scaleX;
+                                const height = rect.height * rect.scaleY;
+
+                                const scaleFactorX = imgElement.width / originalDimensions.current.width;
+                                const scaleFactorY = imgElement.height / originalDimensions.current.height;
+
+                                const cropX = left * scaleFactorX;
+                                const cropY = top * scaleFactorY;
+                                const cropW = width * scaleFactorX;
+                                const cropH = height * scaleFactorY;
+
+                                const cropCanvas = document.createElement("canvas");
+                                cropCanvas.width = cropW;
+                                cropCanvas.height = cropH;
+                                const cropCtx = cropCanvas.getContext("2d");
+                                if (cropCtx) {
+                                  cropCtx.drawImage(
+                                    imgElement,
+                                    cropX, cropY, cropW, cropH,
+                                    0, 0, cropW, cropH
+                                  );
+
+                                  const dataUrl = cropCanvas.toDataURL("image/png");
+                                  const croppedFabImg = await FabricImage.fromURL(dataUrl);
+                                  croppedFabImg.set({
+                                    left: left + 15,
+                                    top: top + 15,
+                                    scaleX: width / croppedFabImg.width,
+                                    scaleY: height / croppedFabImg.height,
+                                    selectable: true,
+                                    evented: true,
+                                    hasBorders: true,
+                                    hasControls: true,
+                                    data: { isExtractedSubArea: true }
+                                  });
+                                  
+                                  fabricCanvas.current.add(croppedFabImg);
+                                  fabricCanvas.current.setActiveObject(croppedFabImg);
+                                  fabricCanvas.current.renderAll();
+                                  savePageState();
+                                  
+                                  setState((prev) => ({
+                                    ...prev,
+                                    selectedObject: croppedFabImg,
+                                    showFloatingMenu: true,
+                                  }));
+                                }
+                              }
+                            }
+                          } else {
+                            const cloned = await state.selectedObject.clone();
+                            cloned.set({
+                              left: (cloned.left || 0) + 15,
+                              top: (cloned.top || 0) + 15,
+                            });
+                            fabricCanvas.current.add(cloned);
+                            fabricCanvas.current.setActiveObject(cloned);
+                            fabricCanvas.current.renderAll();
+                            savePageState();
+                          }
                         } catch (err) {
                           console.error("Cloning failed: ", err);
                         }
@@ -3159,13 +3334,14 @@ const PdfEditorWorkspace = React.forwardRef(
               <div className="absolute -inset-1 bg-gradient-to-tr from-gray-400/20 to-gray-200/20 rounded-lg blur-2xl opacity-50 group-hover:opacity-80 transition duration-1000"></div>
 
               <div className="relative bg-white shadow-[0_50px_100px_rgba(0,0,0,0.15)] rounded-sm transition-all duration-500 ring-1 ring-black/5 overflow-visible">
-                <canvas ref={canvasRef} className="block" />
+                <canvas ref={canvasRef} className="block relative" style={{ zIndex: 1 }} />
                 
                 {/* HTML Text Layer */}
                 {state.textData[state.currentPage] && (
                   <div 
-                    className="absolute z-10"
+                    className="absolute"
                     style={{
+                      zIndex: 2,
                       top: 0,
                       left: 0,
                       width: originalDimensions.current.width * state.zoom,
