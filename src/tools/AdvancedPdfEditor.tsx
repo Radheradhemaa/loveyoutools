@@ -406,18 +406,21 @@ const PixelPerfectBlock = ({
 
   const originalLength = block.originalText?.length || 1;
   const textLength = text.length || 1;
-  const targetWidth = block.width * state.zoom * (textLength / originalLength);
+  const targetWidth = block.width * state.zoom;
 
   let letterSpacing = 0;
-  if (naturalWidth > 0 && textLength > 1) {
+  if (naturalWidth > 0 && textLength > 1 && !isModified) {
     const rawSpacing = (targetWidth - naturalWidth) / (textLength - 1);
-    // Avoid extreme stretches that make letters "bahut door door" (too far apart)
-    // Clamp to a reasonable range, e.g. -1.5px to 1.5px (or a small percentage of font size)
+    // Avoid extreme stretches
     const maxSpacing = Math.min(1.5, Math.max(0, block.fontSize * state.zoom * 0.04));
     const minSpacing = -1.5;
     letterSpacing = Math.max(minSpacing, Math.min(maxSpacing, rawSpacing));
   }
-
+  
+  // When modified or editing, we don't try to stretch it to original width bounds
+  // We just let it render naturally, but keep original letterSpacing if possible, or 0.
+  // Actually, setting to 0 when modified prevents weird jumps.
+  
   const getWeightNumber = (w: any) => {
     if (!w) return 400;
     if (typeof w === "number") return w;
@@ -456,7 +459,7 @@ const PixelPerfectBlock = ({
     position: "absolute",
     left: block.left * state.zoom,
     top: block.top * state.zoom,
-    width: targetWidth + 20, // generous allowance to prevent trailing wrap
+    width: (isModified || isEditing) ? Math.max(targetWidth, naturalWidth + 20) : targetWidth, 
     height: block.fontSize * state.zoom,
     padding: 0,
     margin: 0,
@@ -474,7 +477,9 @@ const PixelPerfectBlock = ({
     transformOrigin: "top left",
     transform: tMatrix !== "none" ? tMatrix : "none",
     overflow: "visible",
-    backgroundColor: (isModified || isEditing) ? (block.bgColor || "white") : "transparent",
+    // Always transparent so it doesn't cover nearby elements with solid blocks.
+    // The original text is already hidden by the Fabric.js whiteout mask.
+    backgroundColor: "transparent",
   };
 
   return (
@@ -501,14 +506,16 @@ const PixelPerfectBlock = ({
             data-spellcheck="false"
             data-page-number={state.currentPage}
             data-block-id={block.id}
-            className="editable-text absolute bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none focus:border-none shadow-none resize-none"
+            className="editable-text absolute bg-transparent outline-none ring-0 focus:ring-0 focus:outline-none shadow-none resize-none"
             style={{
               ...commonStyle,
               zIndex: 3,
               color: block.color || "#000000",
+              caretColor: block.color || "#000000",
               cursor: "text",
               pointerEvents: "auto",
-              boxShadow: "none",
+              boxShadow: "0 0 0 2px rgba(59, 130, 246, 0.8)",
+              backgroundColor: "#ffffff",
               ...fontStyleObj,
             }}
             value={text}
@@ -548,6 +555,13 @@ const PixelPerfectBlock = ({
                 fabricCanvas.current.renderAll();
               }
             }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                // Deselect or just stop the newline
+                (e.currentTarget as HTMLElement).blur();
+              }
+            }}
           />
         ) : (
           <span
@@ -561,7 +575,7 @@ const PixelPerfectBlock = ({
             data-spellcheck="false"
             className="editable-text absolute outline-none border-none ring-0 focus:ring-0 select-text"
             onClick={() => {
-              if (state.tool === 'text' || !block.isOriginal) {
+              if (state.tool === 'text' || state.tool === 'select' || !block.isOriginal) {
                 setState((prev: any) => ({
                   ...prev,
                   editingText: {
@@ -585,9 +599,10 @@ const PixelPerfectBlock = ({
             }}
             style={{
               ...commonStyle,
+              zIndex: 2,
               color: isModified ? (block.color || "#000000") : "transparent",
-              cursor: (state.tool === 'text' || !block.isOriginal) ? "text" : "default",
-              pointerEvents: (state.tool === 'text' || !block.isOriginal) ? "auto" : "none",
+              cursor: (state.tool === 'text' || state.tool === 'select' || !block.isOriginal) ? "text" : "default",
+              pointerEvents: (state.tool === 'text' || state.tool === 'select' || !block.isOriginal) ? "auto" : "none",
               display: "inline-block",
               ...fontStyleObj,
             }}
@@ -597,12 +612,14 @@ const PixelPerfectBlock = ({
         )
       )}
       
-      {block.isDeleted && block.isOriginal && (
+      {(block.isDeleted || isModified || isEditing) && block.isOriginal && (
         <div style={{
           ...commonStyle,
+          width: targetWidth,
           backgroundColor: block.bgColor || "white",
           color: "transparent",
-          pointerEvents: "none"
+          pointerEvents: "none",
+          zIndex: 1, // put it behind the actual text which has zIndex: 3
         }} />
       )}
     </>
@@ -1031,8 +1048,10 @@ const PdfEditorWorkspace = React.forwardRef(
           allowTouchScrolling: true,
         });
 
-        // Use appropriate sharp internal render scale
-        const renderScale = 2.0;
+        // Use appropriate sharp internal render scale based on device pixel ratio and zoom
+        // Multiply by 4.0 as a baseline multiplier for crystal clear text parsing, and scale with native PR
+        const dpr = typeof window !== 'undefined' ? window.devicePixelRatio : 1;
+        const renderScale = Math.max(4.0, dpr * 2.5);
         canvas.setZoom(stateRef.current.zoom);
 
         fabricCanvas.current = canvas;
@@ -1070,6 +1089,7 @@ const PdfEditorWorkspace = React.forwardRef(
           const extractedImages: { left: number, top: number, pdfWidth: number, pdfHeight: number }[] = [];
           try {
             const ops = await (page as any).getOperatorList();
+            if (currentCallId !== renderPageRef.current) return;
             const fnArray = ops.fnArray;
             const argsArray = ops.argsArray;
             const SAVE_OP = (pdfjs as any).OPS?.save ?? 2;
@@ -1129,9 +1149,16 @@ const PdfEditorWorkspace = React.forwardRef(
             }
           }
 
+          if (currentCallId !== renderPageRef.current) return;
+
           const bgImage = await FabricImage.fromURL(
             tempCanvas.toDataURL("image/png"),
           );
+          
+          tempCanvas.width = 0;
+          tempCanvas.height = 0;
+          
+          if (currentCallId !== renderPageRef.current) return;
           bgImage.set({
             selectable: false,
             evented: false,
@@ -1150,6 +1177,7 @@ const PdfEditorWorkspace = React.forwardRef(
 
           if (stateRef.current.pageData[pageNum]) {
             await canvas.loadFromJSON(stateRef.current.pageData[pageNum]);
+            if (currentCallId !== renderPageRef.current) return;
             
             // Remove any old backgrounds to avoid layering duplicates
             const objects = canvas.getObjects();
@@ -1187,12 +1215,14 @@ const PdfEditorWorkspace = React.forwardRef(
         } else {
           if (stateRef.current.pageData[pageNum]) {
             await canvas.loadFromJSON(stateRef.current.pageData[pageNum]);
+            if (currentCallId !== renderPageRef.current) return;
             attachTextHandlers(canvas);
           }
         }
 
         if (!stateRef.current.pageData[pageNum]) {
           const textContent = await page.getTextContent();
+          if (currentCallId !== renderPageRef.current) return;
           let items = textContent.items as any[];
 
           let validItems = items.filter((item) => item.str.trim().length > 0);
@@ -1204,6 +1234,8 @@ const PdfEditorWorkspace = React.forwardRef(
               const worker = await Tesseract.createWorker("eng");
               const ret = await worker.recognize(imgUrl);
               await worker.terminate();
+              
+              if (currentCallId !== renderPageRef.current) return;
 
               if (ret.data && ret.data.words) {
                 ret.data.words.forEach((word) => {
@@ -1262,11 +1294,11 @@ const PdfEditorWorkspace = React.forwardRef(
             };
           });
 
-          // Sort primarily by Y, then by X
+          // Sort primarily by Y, then by X. Use a stable threshold for Y.
           itemsWithCoords.sort((a, b) => {
             const yDiff = a.tx[5] - b.tx[5];
-            if (Math.abs(yDiff) > a.fontSize * 0.5) {
-              return yDiff;
+            if (Math.abs(yDiff) > 4) {
+              return yDiff > 0 ? 1 : -1;
             }
             return a.tx[4] - b.tx[4];
           });
@@ -1275,7 +1307,7 @@ const PdfEditorWorkspace = React.forwardRef(
           let currentGroup: any = null;
 
           itemsWithCoords.forEach((item) => {
-            if (!item.str || (!item.str.trim() && item.textWidth === 0)) return;
+            if (!item.str || !item.str.trim()) return;
 
             if (!currentGroup) {
               currentGroup = { ...item };
@@ -1289,12 +1321,13 @@ const PdfEditorWorkspace = React.forwardRef(
                 item.tx[4] - (currentGroup.tx[4] + currentGroup.textWidth);
 
               if (
-                yDiff < currentGroup.fontSize * 0.5 &&
+                yDiff < 4 &&
                 isSameFont &&
-                space < currentGroup.fontSize * 2
+                space > -currentGroup.fontSize * 0.2 &&
+                space < currentGroup.fontSize * 0.25
               ) {
                 const needsSpace =
-                  space > currentGroup.fontSize * 0.2 &&
+                  space > currentGroup.fontSize * 0.1 &&
                   !currentGroup.str.endsWith(" ") &&
                   !item.str.startsWith(" ");
                 const addSpace = needsSpace ? " " : "";
@@ -1552,6 +1585,7 @@ const PdfEditorWorkspace = React.forwardRef(
           showControls(obj);
         });
 
+        if (currentCallId !== renderPageRef.current) return;
         canvas.renderAll();
       } catch (err: any) {
         if (
@@ -1687,11 +1721,12 @@ const PdfEditorWorkspace = React.forwardRef(
           const newThumbnails = [];
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
-            const viewport = page.getPageViewport ? page.getPageViewport({ scale: 0.8 }) : page.getViewport({ scale: 0.8 });
+            const viewport = page.getPageViewport ? page.getPageViewport({ scale: 1.5 }) : page.getViewport({ scale: 1.5 });
             const canvas = document.createElement("canvas");
             canvas.width = viewport.width;
             canvas.height = viewport.height;
-            const ctx = canvas.getContext("2d")!;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) continue;
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = "high";
             await (page as any).render({
@@ -1699,6 +1734,10 @@ const PdfEditorWorkspace = React.forwardRef(
               viewport,
             }).promise;
             newThumbnails.push(canvas.toDataURL());
+            
+            // Explicitly release canvas memory
+            canvas.width = 0;
+            canvas.height = 0;
           }
 
           let initialZoom = 1;
@@ -1928,6 +1967,9 @@ const PdfEditorWorkspace = React.forwardRef(
         hasBorders: false,
       });
 
+      text.on("changed", savePageState);
+      text.on("editing:exited", savePageState);
+
       text.on("mousedblclick", () => {
         const currentState = stateRef.current;
         if (currentState.tool === "select" || currentState.tool === "text") {
@@ -2026,10 +2068,8 @@ const PdfEditorWorkspace = React.forwardRef(
             left: currentObj.left,
             top: currentObj.top,
             angle: currentObj.angle,
-            scaleX: currentObj.scaleX,
-            scaleY: currentObj.scaleY,
-            width: currentObj.width,
-            height: currentObj.height,
+            scaleX: (currentObj.width * currentObj.scaleX) / newImg.width,
+            scaleY: (currentObj.height * currentObj.scaleY) / newImg.height,
             originX: currentObj.originX,
             originY: currentObj.originY,
             flipX: currentObj.flipX,
@@ -2154,6 +2194,9 @@ const PdfEditorWorkspace = React.forwardRef(
           selectedObject: croppedFabImg,
           showFloatingMenu: true,
         }));
+        
+        cropCanvas.width = 0;
+        cropCanvas.height = 0;
       } catch (err) {
         console.error("Failed to extract area as image:", err);
       }
@@ -2428,19 +2471,6 @@ const PdfEditorWorkspace = React.forwardRef(
           return null;
         };
 
-        const activeDomTexts: Record<string, string> = {};
-        document.querySelectorAll('.editable-text').forEach((el) => {
-          const ta = el as HTMLTextAreaElement | HTMLSpanElement;
-          const blockId = ta.getAttribute('data-block-id');
-          if (blockId) {
-            if ("value" in ta) {
-                activeDomTexts[blockId] = ta.value;
-            } else {
-                activeDomTexts[blockId] = ta.textContent || "";
-            }
-          }
-        });
-
         for (const pageNum of state.pageOrder) {
           if (state.deletedPages.includes(pageNum)) continue;
 
@@ -2488,7 +2518,7 @@ const PdfEditorWorkspace = React.forwardRef(
           const texts = state.textData[pageNum] || [];
           const runPageTexts = async () => {
              for (const textBlock of texts) {
-             const finalTextBlockText = activeDomTexts[textBlock.id] ?? textBlock.text;
+             const finalTextBlockText = textBlock.text;
              const isModified = textBlock.isDeleted || 
                                 finalTextBlockText !== textBlock.originalText || 
                                 textBlock.color !== textBlock.originalColor || 
@@ -2593,12 +2623,13 @@ const PdfEditorWorkspace = React.forwardRef(
                  }
                }
 
-               // Restore baseline to originalTx5 if available (because top was shifted)
+               // Restore baseline to exact CSS y if available to prevent vertical shifting drifting
                let convertedX = 0;
                let convertedY = 0;
                if (textBlock.originalTx4 !== undefined && textBlock.originalTx5 !== undefined) {
-                 convertedX = textBlock.originalTx4;
-                 convertedY = textBlock.originalTx5;
+                 const exactConverted = viewport.convertToPdfPoint(textBlock.originalTx4, textBlock.originalTx5);
+                 convertedX = exactConverted[0];
+                 convertedY = exactConverted[1];
                } else {
                  const pdfBaselineY = textBlock.top + textBlock.fontSize * 0.8;
                  const converted = viewport.convertToPdfPoint(textBlock.left, pdfBaselineY);
@@ -2648,8 +2679,50 @@ const PdfEditorWorkspace = React.forwardRef(
               
               if (obj.type === "image" && !obj.selectable) continue;
 
+              const pdfCoords = viewport.convertToPdfPoint(obj.left, obj.top);
+              const pdfX = pdfCoords[0];
+              const pdfY = pdfCoords[1];
+
               if (obj.type === "i-text" || obj.type === "text") {
-                // Handled via state.textData now
+                // User-added I-Text on the Fabric Canvas
+                const textToDraw = obj.text || "";
+                let fontToUse = helveticaFont;
+                const isBold = obj.fontWeight === "bold" || (typeof obj.fontWeight === "number" && obj.fontWeight > 400);
+                const isItalic = obj.fontStyle === "italic" || obj.fontStyle === "oblique";
+                
+                if (isBold && isItalic) fontToUse = helveticaBoldObliqueFont;
+                else if (isBold) fontToUse = helveticaBoldFont;
+                else if (isItalic) fontToUse = helveticaObliqueFont;
+
+                let r = 0, g = 0, b = 0;
+                if (obj.fill && typeof obj.fill === "string") {
+                  if (obj.fill.startsWith("rgba")) {
+                    const m = obj.fill.match(/[\d.]+/g);
+                    if (m && m.length >= 3) {
+                      r = Number(m[0]) / 255; g = Number(m[1]) / 255; b = Number(m[2]) / 255;
+                    }
+                  } else if (obj.fill.startsWith("#")) {
+                    r = (parseInt(obj.fill.slice(1, 3), 16) || 0) / 255;
+                    g = (parseInt(obj.fill.slice(3, 5), 16) || 0) / 255;
+                    b = (parseInt(obj.fill.slice(5, 7), 16) || 0) / 255;
+                  }
+                }
+                
+                try {
+                  const drawFontSize = (obj.fontSize || 16) * (obj.scaleY || 1);
+                  // Fabric I-Text 'top' is the top edge. DrawText expects the bottom edge (baseline)
+                  // So we must add the height. But we are shifting everything to bottom-left with (- obj.height * obj.scaleY).
+                  // pdf-lib drawText places it at the baseline.
+                  copiedPage.drawText(textToDraw, {
+                    x: pdfX,
+                    y: pdfY - (obj.height * (obj.scaleY || 1)) + ((obj.fontSize || 16) * 0.2), // Adjust for baseline
+                    size: drawFontSize,
+                    font: fontToUse,
+                    color: rgb(r, g, b),
+                  });
+                } catch (e) {
+                  console.warn("Failed user added text", e);
+                }
               } else if (obj.type === "image") {
                 try {
                   const imgBytes = await getImgBytes(obj.src);
@@ -3164,32 +3237,6 @@ const PdfEditorWorkspace = React.forwardRef(
                       <div className="h-6 w-px bg-gray-200 mx-1" />
                     </>
                   )}
-                  <button
-                    onClick={() => {
-                      if (state.selectedObject) {
-                        if ((state.selectedObject as any).data?.isWhiteoutMask || (state.selectedObject as any).data?.isLogoWhiteoutMask) {
-                          state.selectedObject.set({
-                            fill: "rgba(255, 255, 255, 1)",
-                            strokeWidth: 0,
-                            data: { ...((state.selectedObject as any).data || {}), isWhiteoutElement: true }
-                          });
-                          fabricCanvas.current?.discardActiveObject();
-                        } else {
-                          fabricCanvas.current?.remove(state.selectedObject);
-                        }
-                        
-                        fabricCanvas.current?.renderAll();
-                        savePageState();
-                        setState(prev => ({ ...prev, selectedObject: null, showFloatingMenu: false }));
-                      }
-                    }}
-                    className="p-2 rounded-xl hover:bg-red-50 text-red-500 transition-all flex items-center gap-2 px-3"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    <span className="text-[10px] font-black uppercase">
-                      Delete
-                    </span>
-                  </button>
                   {((state.selectedObject?.type === 'image') || (state.selectedObject?.type === 'rect' && ((state.selectedObject as any).data?.isWhiteoutMask || (state.selectedObject as any).data?.isLogoWhiteoutMask))) && (
                     <>
                       <button
@@ -3199,113 +3246,6 @@ const PdfEditorWorkspace = React.forwardRef(
                       >
                         <RefreshCw className="w-4 h-4 text-emerald-55 border-none" />
                         Replace Image
-                      </button>
-                      <div className="h-6 w-px bg-gray-200 mx-1" />
-                    </>
-                  )}
-                  {state.selectedObject?.type === 'rect' && (state.selectedObject as any).data?.isWhiteoutMask && (
-                    <>
-                      <button
-                        onClick={() => extractAreaAsImage(state.selectedObject)}
-                        className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-sky-50 text-sky-600 text-[10px] font-black uppercase transition-all"
-                        title="Extract Area as Image"
-                      >
-                        <Scissors className="w-4 h-4 text-sky-500" />
-                        Extract Area
-                      </button>
-                      <div className="h-6 w-px bg-gray-200 mx-1" />
-                    </>
-                  )}
-                  <button
-                    onClick={async () => {
-                      if (state.selectedObject && fabricCanvas.current) {
-                        try {
-                          if ((state.selectedObject as any).data?.isWhiteoutMask || (state.selectedObject as any).data?.isLogoWhiteoutMask) {
-                            const rect = state.selectedObject as any;
-                            const bgImgObj = fabricCanvas.current.getObjects().find((o: any) => o.data?.isBackground) as any;
-                            if (bgImgObj) {
-                              const imgElement = bgImgObj.getElement();
-                              if (imgElement) {
-                                const left = rect.left;
-                                const top = rect.top;
-                                const width = rect.width * rect.scaleX;
-                                const height = rect.height * rect.scaleY;
-
-                                const scaleFactorX = imgElement.width / originalDimensions.current.width;
-                                const scaleFactorY = imgElement.height / originalDimensions.current.height;
-
-                                const cropX = left * scaleFactorX;
-                                const cropY = top * scaleFactorY;
-                                const cropW = width * scaleFactorX;
-                                const cropH = height * scaleFactorY;
-
-                                const cropCanvas = document.createElement("canvas");
-                                cropCanvas.width = cropW;
-                                cropCanvas.height = cropH;
-                                const cropCtx = cropCanvas.getContext("2d");
-                                if (cropCtx) {
-                                  cropCtx.drawImage(
-                                    imgElement,
-                                    cropX, cropY, cropW, cropH,
-                                    0, 0, cropW, cropH
-                                  );
-
-                                  const dataUrl = cropCanvas.toDataURL("image/png");
-                                  const croppedFabImg = await FabricImage.fromURL(dataUrl);
-                                  croppedFabImg.set({
-                                    left: left + 15,
-                                    top: top + 15,
-                                    scaleX: width / croppedFabImg.width,
-                                    scaleY: height / croppedFabImg.height,
-                                    selectable: true,
-                                    evented: true,
-                                    hasBorders: true,
-                                    hasControls: true,
-                                    data: { isExtractedSubArea: true }
-                                  });
-                                  
-                                  fabricCanvas.current.add(croppedFabImg);
-                                  fabricCanvas.current.setActiveObject(croppedFabImg);
-                                  fabricCanvas.current.renderAll();
-                                  savePageState();
-                                  
-                                  setState((prev) => ({
-                                    ...prev,
-                                    selectedObject: croppedFabImg,
-                                    showFloatingMenu: true,
-                                  }));
-                                }
-                              }
-                            }
-                          } else {
-                            const cloned = await state.selectedObject.clone();
-                            cloned.set({
-                              left: (cloned.left || 0) + 15,
-                              top: (cloned.top || 0) + 15,
-                            });
-                            fabricCanvas.current.add(cloned);
-                            fabricCanvas.current.setActiveObject(cloned);
-                            fabricCanvas.current.renderAll();
-                            savePageState();
-                          }
-                        } catch (err) {
-                          console.error("Cloning failed: ", err);
-                        }
-                      }
-                    }}
-                    className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition-all flex items-center gap-2 px-3"
-                    title="Duplicate Element"
-                  >
-                    <Copy className="w-4 h-4" />
-                    <span className="text-[10px] font-black uppercase">
-                      Duplicate
-                    </span>
-                  </button>
-                  {(state.selectedObject?.type === 'i-text' || state.selectedObject?.type === 'text') && (
-                    <>
-                      <div className="h-6 w-px bg-gray-200 mx-1" />
-                      <button className="p-2 rounded-xl hover:bg-yellow-50 text-yellow-600 transition-all">
-                        <Highlighter className="w-4 h-4" />
                       </button>
                     </>
                   )}
@@ -3479,18 +3419,6 @@ const PdfEditorWorkspace = React.forwardRef(
                       className="w-12 text-xs border rounded p-1"
                       title="Font Size"
                     />
-                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        updateActiveTextData({ isDeleted: true });
-                        setState(prev => ({ ...prev, editingText: null }));
-                      }}
-                      className="p-1.5 rounded hover:bg-red-50 text-red-500"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
                   </div>
                 )}
 
