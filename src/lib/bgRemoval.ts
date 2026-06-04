@@ -255,22 +255,20 @@ export async function removeBackground(
           const idx = rowOffset + x;
           const val = mData[idx] * maskScale;
           
-          // Near the shoulders (lower 60% of the image), we raise the threshold to filter out faint background clutter,
-          // light shadows, and edge glare around shirt collars and shoulders. For the head and hair region, we keep
-          // a lower threshold to preserve fine hair details.
-          const threshold = y > mh * 0.40 ? 35 : 15; 
+          // Use a very gentle threshold to ensure we don't cut off genuine shoulder edges or hair
+          const threshold = y > mh * 0.40 ? 40 : 15; 
           binMask[idx] = val >= threshold ? 1 : 0;
         }
       }
 
-      // 1b. Erosion Pass (Dynamic Radius based on vertical zones to aggressively sever broad background connections)
+      // 1b. Erosion Pass
       const erodedBin = new Uint8Array(mw * mh);
       for (let y = 0; y < mh; y++) {
         for (let x = 0; x < mw; x++) {
-          let erRad = 1; // Extremely gentle erosion to purely preserve the subject
-          if (y > mh * 0.40) {
-            // Near the shoulders and lower torso, we use a moderately stronger erosion radius (2)
-            // to aggressively sever connections to background chairs, coat racks, shadows, or other noise.
+          let erRad = 1; // Gentle erosion for head/face
+          if (y > mh * 0.45) {
+            // Very slightly stronger erosion at lower torso to cut off distinct noise 
+            // without harming the real shoulder bounds
             erRad = 2;
           }
 
@@ -817,26 +815,78 @@ async function polishAndEnhance(blob: Blob): Promise<Blob> {
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const d = data.data;
 
-      // Gentle overall enhancement
+      // Gentle overall enhancement for portrait beautification
       for (let i = 0; i < d.length; i += 4) {
         if (d[i + 3] < 5) continue; // skip transparent
 
-        // Slight contrast boost
+        // Slight contrast and brightness boost (beautify)
         for (let j = 0; j < 3; j++) {
           let v = d[i + j] / 255;
-          v = (v - 0.5) * 1.05 + 0.5; // very mild contrast curve (1.05)
+          v = (v - 0.5) * 1.08 + 0.5; // slight contrast enhancement
+          v = v * 1.06; // brightness boost for fresh look
           d[i + j] = Math.min(255, Math.max(0, v * 255));
         }
 
-        // Slight saturation boost
+        // Slight saturation and "warmth" boost for skin
         const r = d[i] / 255,
           g = d[i + 1] / 255,
           b = d[i + 2] / 255;
         const l = 0.299 * r + 0.587 * g + 0.114 * b;
-        const sat = 1.1; // 10% saturation boost
-        d[i] = Math.min(255, Math.max(0, (l + (r - l) * sat) * 255));
-        d[i + 1] = Math.min(255, Math.max(0, (l + (g - l) * sat) * 255));
-        d[i + 2] = Math.min(255, Math.max(0, (l + (b - l) * sat) * 255));
+        const sat = 1.18; // 18% saturation boost (healthy glow)
+        let nr = Math.min(255, Math.max(0, (l + (r - l) * sat) * 255));
+        let ng = Math.min(255, Math.max(0, (l + (g - l) * sat) * 255));
+        let nb = Math.min(255, Math.max(0, (l + (b - l) * sat) * 255));
+        
+        // Add a tiny bit of red/yellow (warmth) for beautification of skin tones
+        nr = Math.min(255, nr * 1.03);
+        ng = Math.min(255, ng * 1.015);
+        
+        d[i] = nr;
+        d[i + 1] = ng;
+        d[i + 2] = nb;
+      }
+
+      // Automatically extent the shoulder to fit the frame (bottom 25% of image)
+      // This prevents the "cut off shoulders" look and smoothly fills the bottom corners.
+      const shoulderLimit = Math.floor(canvas.height * 0.75);
+      for (let y = shoulderLimit; y < canvas.height; y++) {
+        let lx = -1;
+        let rx = -1;
+        for (let x = 0; x < canvas.width; x++) {
+          if (d[(y * canvas.width + x) * 4 + 3] > 200) {
+            lx = x; break;
+          }
+        }
+        for (let x = canvas.width - 1; x >= 0; x--) {
+          if (d[(y * canvas.width + x) * 4 + 3] > 200) {
+            rx = x; break;
+          }
+        }
+        
+        // If we found valid shoulder bounds that are wide enough (> 40% of image), stretch them to the edges
+        if (lx > 0 && rx > lx && (rx - lx) > canvas.width * 0.40) {
+          const lIdx = (y * canvas.width + lx) * 4;
+          for (let x = 0; x < lx; x++) {
+            const idx = (y * canvas.width + x) * 4;
+            // Add a subtle darkening towards the edge to simulate depth/falloff
+            const falloff = Math.max(0.7, 1 - ((lx - x) / lx) * 0.3);
+            d[idx] = d[lIdx] * falloff;
+            d[idx + 1] = d[lIdx + 1] * falloff;
+            d[idx + 2] = d[lIdx + 2] * falloff;
+            d[idx + 3] = d[lIdx + 3];
+          }
+          
+          const rIdx = (y * canvas.width + rx) * 4;
+          const rightDist = canvas.width - 1 - rx;
+          for (let x = rx + 1; x < canvas.width; x++) {
+            const idx = (y * canvas.width + x) * 4;
+            const falloff = Math.max(0.7, 1 - ((x - rx) / rightDist) * 0.3);
+            d[idx] = d[rIdx] * falloff;
+            d[idx + 1] = d[rIdx + 1] * falloff;
+            d[idx + 2] = d[rIdx + 2] * falloff;
+            d[idx + 3] = d[rIdx + 3];
+          }
+        }
       }
 
       ctx.putImageData(data, 0, 0);
