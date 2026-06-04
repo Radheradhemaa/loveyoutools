@@ -302,7 +302,7 @@ export default function AdvancedPdfCropper() {
     const maxWidth = pageData.viewport.width;
     const maxHeight = pageData.viewport.height;
 
-    let newBox = { ...initialCropBox };
+    const newBox = { ...initialCropBox };
 
     if (resizeHandle === 'move') {
       newBox.x = Math.max(0, Math.min(maxWidth - newBox.width, initialCropBox.x + dx));

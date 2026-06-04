@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Scale, Info, CheckCircle2, AlertTriangle, TrendingUp } from 'lucide-react';
+import { Scale, CheckCircle2, AlertTriangle, TrendingUp } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 export default function PregnancyWeightGainCalculator() {
@@ -26,9 +26,9 @@ export default function PregnancyWeightGainCalculator() {
     const weightKg = preWeight * 0.453592;
     const bmi = weightKg / (heightMeters * heightMeters);
 
-    let category = '';
-    let totalRecommended: [number, number] = [0, 0];
-    let weeklyRate2nd3rdTrim: [number, number] = [0, 0]; // (lbs per week)
+    let category: string;
+    let totalRecommended: [number, number];
+    let weeklyRate2nd3rdTrim: [number, number]; // (lbs per week)
 
     // Guidelines based on Institute of Medicine (IOM) for singletons
     if (!isTwins) {
@@ -71,8 +71,8 @@ export default function PregnancyWeightGainCalculator() {
 
     // Calculate expected gain up to current week
     // Assumption: 1st trimester (weeks 1-13) gain is a flat rate: 1-4 lbs total for normal weight
-    let expectedMin = 0;
-    let expectedMax = 0;
+    let expectedMin: number;
+    let expectedMax: number;
 
     const firstTrimGainMin = bmi < 18.5 ? 2.2 : (bmi >= 25 ? 1.1 : 2.2);
     const firstTrimGainMax = bmi < 18.5 ? 6.6 : (bmi >= 25 ? 4.4 : 6.6);

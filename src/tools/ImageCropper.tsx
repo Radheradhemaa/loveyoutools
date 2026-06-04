@@ -119,7 +119,7 @@ export default function ImageCropper() {
   };
 
   const downloadAll = async () => {
-    let finalImages = [...images];
+    const finalImages = [...images];
     
     // Auto-crop current image if it hasn't been cropped and we have a valid crop box
     if (finalImages.length > 0 && !finalImages[currentIndex].output && completedCrop && imgRef.current) {

@@ -1223,9 +1223,9 @@ const PdfEditorWorkspace = React.forwardRef(
         if (!stateRef.current.pageData[pageNum]) {
           const textContent = await page.getTextContent();
           if (currentCallId !== renderPageRef.current) return;
-          let items = textContent.items as any[];
+          const items = textContent.items as any[];
 
-          let validItems = items.filter((item) => item.str.trim().length > 0);
+          const validItems = items.filter((item) => item.str.trim().length > 0);
 
           // OCR Fallback for scanned PDFs
           if (validItems.length === 0) {
@@ -2504,8 +2504,8 @@ const PdfEditorWorkspace = React.forwardRef(
             tempCtx.fillText = originalFillText;
             tempCtx.strokeText = originalStrokeText;
 
-            let imgData = tempCanvas.toDataURL("image/jpeg", 0.95);
-            let img = await finalPdfDoc.embedJpg(imgData);
+            const imgData = tempCanvas.toDataURL("image/jpeg", 0.95);
+            const img = await finalPdfDoc.embedJpg(imgData);
             copiedPage.drawImage(img, {
               x: 0,
               y: 0,
@@ -2636,8 +2636,8 @@ const PdfEditorWorkspace = React.forwardRef(
                  convertedX = converted[0];
                  convertedY = converted[1];
                }
-               let drawX = convertedX;
-               let drawY = convertedY;
+               const drawX = convertedX;
+               const drawY = convertedY;
 
                 try {
                   copiedPage.drawText(textToDraw, {
@@ -2749,7 +2749,7 @@ const PdfEditorWorkspace = React.forwardRef(
               } else if (obj.type === "rect" || obj.type === "path") {
                 let rectColor = { r: 1, g: 1, b: 1 };
                 let strokeColor = { r: 0, g: 0, b: 0 };
-                let strokeWidth = obj.strokeWidth || 0;
+                const strokeWidth = obj.strokeWidth || 0;
                 let opacity = obj.opacity || 1;
 
                 if (obj.fill && typeof obj.fill === "string") {

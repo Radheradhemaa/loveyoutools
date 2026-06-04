@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, Check, RefreshCw, Youtube, Instagram, Download, Image as ImageIcon, Type, MessageSquare, Sparkles, Send, AlertCircle, Hash, Shuffle, Twitter, User, Smile, Plus, Trash2, Tag, AlignLeft } from 'lucide-react';
+import { Copy, Check, RefreshCw, Youtube, Instagram, Download, Image as ImageIcon, Type, MessageSquare, Sparkles, AlertCircle, Hash, Shuffle, Twitter, User, Smile, Trash2, Tag, AlignLeft } from 'lucide-react';
 
 const HASHTAG_DATA = {
   travel: ['#travel', '#travelgram', '#instatravel', '#wanderlust', '#travelphotography', '#vacation', '#traveling', '#adventure', '#explore', '#trip', '#holiday', '#landscape', '#nature', '#tourist', '#travelblogger', '#traveler', '#photooftheday', '#beautiful', '#sunset', '#beach', '#mountains', '#city', '#exploretheworld', '#traveladdict', '#globetrotter', '#traveldiaries', '#passportready', '#worldtraveler', '#travelgoals', '#seetheworld'],
@@ -136,7 +136,7 @@ export default function SocialTools({ toolId }: { toolId: string }) {
   };
 
   const getYoutubeId = (url: string) => {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch?v=|&v=)([^#&?]*).*/;
     const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
   };
@@ -146,7 +146,7 @@ export default function SocialTools({ toolId }: { toolId: string }) {
     const generic = ['#trending', '#viral', '#explorepage', '#fyp', '#explore', '#instagood', '#like', '#follow', '#photography', '#lifestyle', '#design', '#inspiration', '#art', '#beautiful', '#happy', '#life', '#style', '#smile', '#nature', '#photooftheday', '#picoftheday', '#instagram', '#bhfyp', '#instadaily', '#me', '#cute', '#myself', '#fashion', '#model', '#beauty'];
     
     const category = Object.keys(HASHTAG_DATA).find(k => keyword.toLowerCase().includes(k));
-    let selected = category ? HASHTAG_DATA[category as keyof typeof HASHTAG_DATA] : generic;
+    const selected = category ? HASHTAG_DATA[category as keyof typeof HASHTAG_DATA] : generic;
     
     const shuffled = [...selected].sort(() => 0.5 - Math.random());
     const finalTags = [base, ...shuffled.slice(0, 24)];
@@ -164,7 +164,7 @@ export default function SocialTools({ toolId }: { toolId: string }) {
       await new Promise(resolve => setTimeout(resolve, 800)); // Small delay for UX
       
       switch (toolId) {
-        case 'youtube-thumbnail-downloader':
+        case 'youtube-thumbnail-downloader': {
           const videoId = getYoutubeId(input);
           if (videoId) {
             setYtThumbnails([
@@ -176,6 +176,7 @@ export default function SocialTools({ toolId }: { toolId: string }) {
             setError('Invalid YouTube URL. Please provide a valid video link.');
           }
           break;
+        }
 
         case 'instagram-image-downloader':
           if (!input) {
@@ -202,7 +203,7 @@ export default function SocialTools({ toolId }: { toolId: string }) {
           setCaptionsList([...CAPTIONS[captionCategory]].sort(() => 0.5 - Math.random()));
           break;
 
-        case 'youtube-tag-generator':
+        case 'youtube-tag-generator': {
           if (!input) {
             setError('Please enter a video topic or keyword.');
             break;
@@ -226,8 +227,9 @@ export default function SocialTools({ toolId }: { toolId: string }) {
           ].map(t => t.replace(/[^a-zA-Z0-9 ]/g, '').trim()).filter(Boolean);
           setYtTags(tags);
           break;
+        }
 
-        case 'social-media-bio-generator':
+        case 'social-media-bio-generator': {
           if (!bioName || !bioNiche) {
             setError('Please enter your name and niche/profession.');
             break;
@@ -252,11 +254,12 @@ export default function SocialTools({ toolId }: { toolId: string }) {
           }
           setGeneratedBios(bios);
           break;
+        }
 
         default:
           setOutput('Tool not implemented yet.');
       }
-    } catch (err) {
+    } catch {
       setError('Error processing request. Please try again.');
     }
     setLoading(false);

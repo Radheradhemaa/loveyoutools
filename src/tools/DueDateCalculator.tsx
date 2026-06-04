@@ -19,7 +19,7 @@ export default function DueDateCalculator() {
     
     const baseDate = new Date(dateInput);
     baseDate.setHours(0, 0, 0, 0);
-    let edd = new Date(baseDate);
+    const edd = new Date(baseDate);
 
     if (method === 'lmp') {
       // EDD = LMP + 280 days + (cycleLength - 28)

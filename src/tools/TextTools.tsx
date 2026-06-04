@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, Trash2, ArrowRightLeft, Check } from 'lucide-react';
+import { Copy, Trash2, Check } from 'lucide-react';
 
 export default function TextTools({ toolId }: { toolId: string }) {
   const [input, setInput] = useState('');
@@ -39,7 +39,7 @@ export default function TextTools({ toolId }: { toolId: string }) {
         res = [...new Set(lines)].join('\n');
         break;
       case 'text-sorter':
-        let arr = input.split('\n');
+        const arr = input.split('\n');
         if (action === 'az') res = arr.sort().join('\n');
         if (action === 'za') res = arr.sort().reverse().join('\n');
         if (action === 'len') res = arr.sort((a, b) => a.length - b.length).join('\n');

@@ -244,7 +244,7 @@ export default function PhotoSignResizer() {
     // For final download, use Blobs for better reliability
     const targetBytes = Math.floor(targetKB * 1024);
     let blob = await new Promise<Blob>((resolve) => canvas.toBlob(b => resolve(b!), 'image/jpeg', min));
-    let currentBytes = blob.size;
+    const currentBytes = blob.size;
     
     if (currentBytes < targetBytes) {
       const arrayBuffer = await blob.arrayBuffer();

@@ -32,7 +32,7 @@ export default function GeneratorTools({ toolId }: { toolId: string }) {
         let uc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
         let lc = 'abcdefghijklmnopqrstuvwxyz';
         let num = '0123456789';
-        let sym = '!@#$%^&*()_+~`|}{[]:;?><,./-=';
+        const sym = '!@#$%^&*()_+~`|}{[]:;?><,./-=';
         
         if (options.excludeSimilar) {
           uc = uc.replace(/[ILO]/g, '');
@@ -73,7 +73,7 @@ export default function GeneratorTools({ toolId }: { toolId: string }) {
         const max = parseFloat(options.max || '100');
         const count = parseInt(options.count || '1');
         const decimals = parseInt(options.decimal || '0');
-        let nums: number[] = [];
+        const nums: number[] = [];
         
         let attempts = 0;
         while (nums.length < count && attempts < count * 10) {
@@ -93,7 +93,7 @@ export default function GeneratorTools({ toolId }: { toolId: string }) {
         break;
 
       case 'random-name-picker':
-        let names = (options.names || '').split('\n').filter((n: string) => n.trim() !== '');
+        const names = (options.names || '').split('\n').filter((n: string) => n.trim() !== '');
         if (names.length === 0) {
           res = 'Please enter some names first.';
           break;

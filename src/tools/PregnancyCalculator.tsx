@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Baby, Calendar, Info, Activity, Star, AlertCircle } from 'lucide-react';
+import { Baby, Calendar, Info, Activity, Star } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const FRUITS: Record<number, { name: string, length: string, weight: string, emoji: string }> = {
@@ -78,8 +78,8 @@ export default function PregnancyCalculator() {
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
     
     // Gestation is typically capped at 42 weeks
-    let weeks = Math.floor(diffDays / 7);
-    let days = diffDays % 7;
+    const weeks = Math.floor(diffDays / 7);
+    const days = diffDays % 7;
 
     if (today < lmp || diffDays > 300) {
       setResults(null);

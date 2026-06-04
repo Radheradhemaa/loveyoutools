@@ -367,7 +367,7 @@ export default function BackgroundRemover() {
   }, [brightness, contrast, saturation, sharpness, smoothness, edgeSoftness, beautyFace, isUltraHD]);
 
   const getFilterStyle = () => {
-    let b = brightness;
+    const b = brightness;
     let c = contrast;
     let s = saturation;
     
@@ -705,7 +705,7 @@ export default function BackgroundRemover() {
     if (!tempCtx) return;
 
     // Apply Filters to the subject
-    let b = appliedAdjustments.brightness;
+    const b = appliedAdjustments.brightness;
     let c = appliedAdjustments.contrast;
     let s = appliedAdjustments.saturation;
     

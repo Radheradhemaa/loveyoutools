@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, Trash2, Check, RefreshCw, Hash, Link as LinkIcon, Image as ImageIcon, FileText, Search, Globe, Shield, Zap, BarChart3 } from 'lucide-react';
+import { Copy, Check, RefreshCw, FileText, Search, Globe, Zap, BarChart3 } from 'lucide-react';
 
 export default function SeoTools({ toolId }: { toolId: string }) {
   const [inputs, setInputs] = useState<any>({});
@@ -124,7 +124,7 @@ Allow: /
 Sitemap: ${inputs.sitemap || 'https://example.com/sitemap.xml'}`;
           break;
 
-        case 'keyword-density-checker':
+        case 'keyword-density-checker': {
           const text = (inputs.text || '').toLowerCase();
           const words = text.match(/\b\w+\b/g) || [];
           const counts: any = {};
@@ -134,26 +134,31 @@ Sitemap: ${inputs.sitemap || 'https://example.com/sitemap.xml'}`;
           const sorted = Object.entries(counts).sort((a: any, b: any) => b[1] - a[1]).slice(0, 15);
           res = `Total Words: ${words.length}\n\nTop Keywords:\n` + sorted.map(([w, c]) => `- ${w}: ${c} times (${((c as number / words.length) * 100).toFixed(2)}%)`).join('\n');
           break;
+        }
 
-        case 'url-slug-generator':
+        case 'url-slug-generator': {
           res = (inputs.text || '').toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/(^-|-$)+/g, '');
           break;
+        }
 
-        case 'open-graph-generator':
+        case 'open-graph-generator': {
           res = `<meta property="og:title" content="${inputs.title || ''}">\n<meta property="og:description" content="${inputs.desc || ''}">\n<meta property="og:image" content="${inputs.img || ''}">\n<meta property="og:url" content="${inputs.url || ''}">\n<meta property="og:type" content="${inputs.type || 'website'}">\n<meta property="og:site_name" content="${inputs.site || ''}">`;
           break;
+        }
 
-        case 'seo-title-generator':
+        case 'seo-title-generator': {
           const t = inputs.topic || 'Keyword';
           res = `1. The Ultimate Guide to ${t} in 2026\n2. 10 Best ${t} Strategies You Need to Know\n3. How to Master ${t} for Better Results\n4. ${t}: Everything You Need to Know (Expert Guide)\n5. Top 7 Secrets About ${t} Revealed\n6. Why ${t} is Important for Your Business\n7. Step-by-Step Tutorial: Mastering ${t}\n8. ${t} Checklist for Beginners`;
           break;
+        }
 
-        case 'seo-description-generator':
+        case 'seo-description-generator': {
           const kw = inputs.topic || 'Keyword';
           res = `Looking for the best information on ${kw}? Discover our comprehensive guide covering top strategies, expert tips, and everything you need to know about ${kw}. Read more now to boost your knowledge!\n\nAlternative:\nMaster ${kw} with our expert tips and tricks. Learn how to optimize your ${kw} strategy for maximum impact and success in 2026.`;
           break;
+        }
       }
     } catch (error) {
       res = 'Error generating content. Please check your connection and try again.';

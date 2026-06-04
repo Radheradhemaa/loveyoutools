@@ -241,7 +241,7 @@ const articles = [
 
 const blogFilePath = './src/data/blog.ts';
 
-let content = fs.readFileSync(blogFilePath, 'utf-8');
+const content = fs.readFileSync(blogFilePath, 'utf-8');
 
 const arrayStartMarker = "export const blogPosts: BlogPost[] = [";
 const insertIndex = content.indexOf(arrayStartMarker) + arrayStartMarker.length;

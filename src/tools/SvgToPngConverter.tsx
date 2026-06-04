@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Upload, Download, Image as ImageIcon, X, Settings, CheckCircle2, AlertCircle, Plus, Undo, Redo, ZoomIn, ZoomOut, Move, Type, Droplet, Square, Box, Layers, Trash2, ImagePlus, RotateCcw } from 'lucide-react';
+import { Download, Image as ImageIcon, X, Settings, Plus, Undo, Redo, ZoomIn, ZoomOut, Type, Droplet, Square, Box, Layers, RotateCcw } from 'lucide-react';
 import ToolLayout from '../components/tool-system/ToolLayout';
 import RelatedTools from '../components/tool-system/RelatedTools';
 
@@ -95,12 +95,12 @@ export default function SvgToPngConverter() {
     if (historyIndex < history.length - 1) setHistoryIndex(historyIndex + 1);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
+  const _handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
   };
 
-  const handleDragLeave = (e: React.DragEvent) => {
+  const _handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
   };
@@ -185,7 +185,7 @@ export default function SvgToPngConverter() {
     });
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const _handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -476,7 +476,7 @@ export default function SvgToPngConverter() {
     setFiles([...updatedFiles]);
   };
 
-  const clearAll = (onReset?: () => void) => {
+  const _clearAll = (onReset?: () => void) => {
     setFiles([]);
     setSelectedFileId(null);
     setHistory([initialState]);
@@ -494,7 +494,7 @@ export default function SvgToPngConverter() {
       multiple={true}
       onDownload={handleConvertAll}
     >
-      {({ file: uploadedFiles, state: toolState, onReset }) => {
+      {({ file: uploadedFiles, state:  onReset }) => {
         // Sync uploaded files with internal state
         useEffect(() => {
           if (!uploadedFiles) {

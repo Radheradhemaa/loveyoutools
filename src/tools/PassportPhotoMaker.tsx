@@ -452,7 +452,7 @@ export default function PassportPhotoMaker() {
   };
 
   const removeBackgroundFromSrc = async (src: string) => {
-    let showProcessingLoader = setTimeout(() => {
+    const showProcessingLoader = setTimeout(() => {
       setIsProcessing(true);
     }, 150); // Show generic loader only if it takes more than 150ms
     
@@ -563,7 +563,7 @@ export default function PassportPhotoMaker() {
         if (!tempCtx) return;
 
         // Apply Filters to the subject
-        let b = appliedAdjustments.brightness;
+        const b = appliedAdjustments.brightness;
         let c = appliedAdjustments.contrast;
         let s = appliedAdjustments.saturation;
         

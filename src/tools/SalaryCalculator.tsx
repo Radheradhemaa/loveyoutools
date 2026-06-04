@@ -1,11 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { IndianRupee, DollarSign, Wallet, Calculator, Clock, Info, Banknote, CalendarDays, BookOpen, Sigma } from 'lucide-react';
+import { IndianRupee, DollarSign, Wallet, Calculator, Info, Banknote, CalendarDays, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 type Frequency = 'hourly' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'annually';
 
 export default function SalaryCalculator() {
-  const currentYear = new Date().getFullYear();
+  
   const [currency, setCurrency] = useState<'USD' | 'INR'>('USD');
   const [baseInput, setBaseInput] = useState<number | ''>(50000);
   const [inputFrequency, setInputFrequency] = useState<Frequency>('annually');

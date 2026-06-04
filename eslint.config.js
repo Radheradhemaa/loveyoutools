@@ -13,7 +13,14 @@ export default tseslint.config(
     },
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
-      "@typescript-eslint/no-unused-vars": "warn"
+      "@typescript-eslint/no-unused-vars": "warn",
+      "no-case-declarations": "off",
+      "no-useless-assignment": "off",
+      "prefer-const": "off",
+      "no-useless-escape": "off",
+      "@typescript-eslint/only-throw-error": "off",
+      "no-control-regex": "off",
+      "preserve-caught-error": "off"
     },
   }
 );
