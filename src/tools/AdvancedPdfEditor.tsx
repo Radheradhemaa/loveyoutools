@@ -2826,9 +2826,6 @@ const PdfEditorWorkspace = React.forwardRef(
             }
           }
 
-          if (pdfDoc) {
-             finalPdfDoc.addPage(copiedPage);
-          }
         }
 
         const pdfBytes = await finalPdfDoc.save({

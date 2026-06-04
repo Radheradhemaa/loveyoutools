@@ -255,8 +255,10 @@ export async function removeBackground(
           const idx = rowOffset + x;
           const val = mData[idx] * maskScale;
           
-          // very safe threshold to fully purely preserve face/head/subject naturally
-          const threshold = 15; 
+          // Near the shoulders (lower 60% of the image), we raise the threshold to filter out faint background clutter,
+          // light shadows, and edge glare around shirt collars and shoulders. For the head and hair region, we keep
+          // a lower threshold to preserve fine hair details.
+          const threshold = y > mh * 0.40 ? 35 : 15; 
           binMask[idx] = val >= threshold ? 1 : 0;
         }
       }
@@ -266,6 +268,11 @@ export async function removeBackground(
       for (let y = 0; y < mh; y++) {
         for (let x = 0; x < mw; x++) {
           let erRad = 1; // Extremely gentle erosion to purely preserve the subject
+          if (y > mh * 0.40) {
+            // Near the shoulders and lower torso, we use a moderately stronger erosion radius (2)
+            // to aggressively sever connections to background chairs, coat racks, shadows, or other noise.
+            erRad = 2;
+          }
 
           const idx = y * mw + x;
           if (binMask[idx] === 0) {

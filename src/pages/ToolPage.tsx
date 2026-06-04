@@ -31,7 +31,6 @@ const PdfTools = lazy(() => import('../tools/PdfTools'));
 const PhotoSignResizer = lazy(() => import('../tools/PhotoSignResizer'));
 const AdvancedPdfEditor = lazy(() => import('../tools/AdvancedPdfEditor'));
 const AdvancedPdfCropper = lazy(() => import('../tools/AdvancedPdfCropper'));
-const KdpFixer = lazy(() => import('../tools/KdpFixer'));
 const ImageCropper = lazy(() => import('../tools/ImageCropper'));
 const ImageColorPicker = lazy(() => import('../tools/ImageColorPicker'));
 const GifMaker = lazy(() => import('../tools/GifMaker'));
@@ -111,7 +110,6 @@ export default function ToolPage() {
     if (tool.id === 'photo-sign-resizer') return <PhotoSignResizer />;
     if (tool.id === 'pdf-editor') return <AdvancedPdfEditor />;
     if (tool.id === 'crop-pdf') return <AdvancedPdfCropper />;
-    if (tool.id === 'kdp-margin-bleed-fixer') return <KdpFixer />;
     if (tool.id === 'image-cropper') return <ImageCropper />;
     if (tool.id === 'image-color-picker') return <ImageColorPicker />;
     if (tool.id === 'gif-maker') return <GifMaker />;
