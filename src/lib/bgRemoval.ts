@@ -1,4 +1,4 @@
-import { pipeline, env, RawImage } from "@huggingface/transformers";
+import { pipeline, env } from "@huggingface/transformers";
 
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
@@ -78,7 +78,6 @@ export const ensurePreloaded = async () => {
   await ensureIsnetLoaded();
 };
 export const ensureModnetLoaded = async () => ensureIsnetLoaded();
-export const ensureU2netLoaded = async () => ensureIsnetLoaded(); // stub
 
 /**
  * Robust downscaling and preprocessing.
@@ -145,9 +144,9 @@ export async function removeBackground(
   isManualMode = false,
 ): Promise<Blob> {
   const startTime = Date.now();
-  onProgress("Initializing Hybrid AI Core...");
+  onProgress("Initializing AI Core...");
 
-  // Load model
+  // Load models
   await ensureIsnetLoaded().catch(console.error);
 
   // Ensure input is a string (DataURL or URL)
@@ -168,33 +167,31 @@ export async function removeBackground(
   try {
     onProgress("Analyzing Foreground (ModNet Pass)...");
 
-    // Execute primary model
+    // Execute primary model (MODNet)
     let resModel = null;
     if (isnetPipeline) {
       resModel = await isnetPipeline(imageSrc).catch((e: any) => {
-        console.error("Model pass failed", e);
+        console.error("Modnet pass failed", e);
         return null;
       });
     }
 
-    // If failed and we were using webgpu, there might be a silent webgpu failure during inference
-    // Let's forcibly fallback to WASM
     if (!resModel && hasWebGPU) {
       console.warn("[AI] WebGPU inference failed, forcing WASM fallback...");
-      hasWebGPU = false; // Disable webgpu for future
+      hasWebGPU = false; 
       isnetPipeline = null;
       await ensureIsnetLoaded().catch(console.error);
       resModel = await isnetPipeline(imageSrc).catch((e: any) => {
-        console.error("WASM pass failed", e);
+        console.error("WASM Modnet pass failed", e);
         return null;
       });
     }
 
     if (!resModel) {
-      throw new Error("AI model failed to process the image.");
+      throw new Error("AI models failed to process the image.");
     }
 
-    onProgress("Merging AI Visions...");
+    onProgress("Extracting Subject Data...");
 
     // Helper to extract mask data and normalize
     const getMask = (result: any) => {
@@ -209,7 +206,7 @@ export async function removeBackground(
       return segment.mask;
     };
 
-    const maskData = getMask(resModel);
+    let maskData = getMask(resModel);
 
     // Load Full Original Image to get maximum quality output
     const origImg = new Image();
@@ -228,7 +225,7 @@ export async function removeBackground(
     const pixels = imageData.data;
 
     // --- High-Precision CPU-Grade Compositing Pipeline ---
-    // Completely bypasses browser Canvas rendering engines to guarantee 0 GPU artifacts
+    // Bypasses browser Canvas rendering engines to guarantee 0 GPU artifacts
     const processMaskAndCompositeCPU = (mask: any) => {
       if (!mask) return;
       const mw = mask.width;
@@ -244,219 +241,9 @@ export async function removeBackground(
       }
       const maskScale = maxFound > 0 && maxFound <= 1.2 ? 255 : 1;
 
-      const isMobile = isMobileDevice();
-
-      // 1. High-Precision Morphological Opening (Erosion + Connected Component Filter + Dilation)
-      // This severs thin bridges connecting background clutter (chairs, wall shadows) to cheeks, head, neck, and shoulders.
-      const binMask = new Uint8Array(mw * mh);
-      for (let y = 0; y < mh; y++) {
-        const rowOffset = y * mw;
-        for (let x = 0; x < mw; x++) {
-          const idx = rowOffset + x;
-          const val = mData[idx] * maskScale;
-          
-          // Use a very gentle threshold to ensure we don't cut off genuine shoulder edges or hair
-          const threshold = y > mh * 0.40 ? 40 : 15; 
-          binMask[idx] = val >= threshold ? 1 : 0;
-        }
-      }
-
-      // 1b. Erosion Pass
-      const erodedBin = new Uint8Array(mw * mh);
-      for (let y = 0; y < mh; y++) {
-        for (let x = 0; x < mw; x++) {
-          let erRad = 1; // Gentle erosion for head/face
-          if (y > mh * 0.45) {
-            // Very slightly stronger erosion at lower torso to cut off distinct noise 
-            // without harming the real shoulder bounds
-            erRad = 2;
-          }
-
-          const idx = y * mw + x;
-          if (binMask[idx] === 0) {
-            erodedBin[idx] = 0;
-            continue;
-          }
-          let allOne = 1;
-          for (let dy = -erRad; dy <= erRad; dy++) {
-            const ny = y + dy;
-            if (ny < 0 || ny >= mh) {
-              allOne = 0;
-              break;
-            }
-            for (let dx = -erRad; dx <= erRad; dx++) {
-              const nx = x + dx;
-              if (nx < 0 || nx >= mw) {
-                allOne = 0;
-                break;
-              }
-              if (binMask[ny * mw + nx] === 0) {
-                allOne = 0;
-                break;
-              }
-            }
-            if (allOne === 0) break;
-          }
-          erodedBin[idx] = allOne;
-        }
-      }
-
-      // 1c. Connected Component Analysis (CCA) to isolate target subject (the person)
-      const visited = new Uint8Array(mw * mh);
-      const stack = new Int32Array(mw * mh);
-      const compLabels = new Int32Array(mw * mh);
-      let bestCompId = 0;
-      let maxCompSize = 0;
-      let labelCounter = 0;
-
-      for (let y = 0; y < mh; y++) {
-        for (let x = 0; x < mw; x++) {
-          const idx = y * mw + x;
-          if (erodedBin[idx] === 1 && visited[idx] === 0) {
-            labelCounter++;
-            let head = 0;
-            let tail = 0;
-
-            stack[tail++] = idx;
-            visited[idx] = 1;
-            compLabels[idx] = labelCounter;
-
-            while (head < tail) {
-              const curr = stack[head++];
-              const cx = curr % mw;
-              const cy = Math.floor(curr / mw);
-
-              const neighbors = [curr - 1, curr + 1, curr - mw, curr + mw];
-              for (let n = 0; n < neighbors.length; n++) {
-                const nIdx = neighbors[n];
-                if (nIdx >= 0 && nIdx < mw * mh) {
-                  const nx = nIdx % mw;
-                  const ny = Math.floor(nIdx / mw);
-                  if (Math.abs(nx - cx) <= 1 && Math.abs(ny - cy) <= 1) {
-                    if (erodedBin[nIdx] === 1 && visited[nIdx] === 0) {
-                      visited[nIdx] = 1;
-                      compLabels[nIdx] = labelCounter;
-                      stack[tail++] = nIdx;
-                    }
-                  }
-                }
-              }
-            }
-
-            if (tail > maxCompSize) {
-              maxCompSize = tail;
-              bestCompId = labelCounter;
-            }
-          }
-        }
-      }
-
-      // Isolate only pixels belonging to the primary component
-      const cleanBin = new Uint8Array(mw * mh);
-      if (bestCompId > 0) {
-        for (let i = 0; i < mw * mh; i++) {
-          if (compLabels[i] === bestCompId) {
-            cleanBin[i] = 1;
-          }
-        }
-      }
-
-      // 1d. Morphological Dilation Pass (Radius = 2, leaves a strong 2-5 pixel inward crop to remove all edge halos)
-      let dilatedBin = cleanBin;
-      for (let iter = 0; iter < 2; iter++) {
-        const next = new Uint8Array(mw * mh);
-        for (let y = 0; y < mh; y++) {
-          for (let x = 0; x < mw; x++) {
-            const idx = y * mw + x;
-            if (dilatedBin[idx] === 1) {
-              next[idx] = 1;
-              continue;
-            }
-            let isDilated = false;
-            for (let dy = -1; dy <= 1; dy++) {
-              const ny = y + dy;
-              if (ny >= 0 && ny < mh) {
-                for (let dx = -1; dx <= 1; dx++) {
-                  const nx = x + dx;
-                  if (nx >= 0 && nx < mw) {
-                    if (dilatedBin[ny * mw + nx] === 1) {
-                      isDilated = true;
-                      break;
-                    }
-                  }
-                }
-              }
-              if (isDilated) break;
-            }
-            next[idx] = isDilated ? 1 : 0;
-          }
-        }
-        dilatedBin = next;
-      }
-
-      // Apply the dilated subject profile to mask, filtering all outside fragments (chairs, shadows, specks) completely.
-      const correctedMask = new Float32Array(mw * mh);
-      for (let y = 0; y < mh; y++) {
-        for (let x = 0; x < mw; x++) {
-          const idx = y * mw + x;
-          let val = mData[idx] * maskScale * dilatedBin[idx];
-
-          // Gentle internal thresholding inside subject container
-          const internalThresh = 15;
-          if (val < internalThresh) {
-            val = 0;
-          }
-
-          // Kill spikes
-          if (x > 1 && x < mw - 2) {
-            const left1 = mData[y * mw + x - 1] * maskScale * dilatedBin[y * mw + x - 1];
-            const right1 = mData[y * mw + x + 1] * maskScale * dilatedBin[y * mw + x + 1];
-            const nAvg = (left1 + right1) / 2;
-            if (Math.abs(val - nAvg) > 50) val = nAvg;
-          }
-          correctedMask[idx] = val;
-        }
-      }
-
-      // 1e. Simple Erosion to eliminate wild flyaway fringes near head & template boundary
-      const erodedMask = correctedMask;
-
-      // 2. Separable Spatial Tensor Blur to soften the mask's micro-boundaries naturally
-      const blurRad = 2;
-      const tempMask = new Float32Array(mw * mh);
-      const cleanMask = new Float32Array(mw * mh);
-
-      for (let y = 0; y < mh; y++) {
-        for (let x = 0; x < mw; x++) {
-          let sum = 0, count = 0;
-          for (let dx = -blurRad; dx <= blurRad; dx++) {
-            const nx = x + dx;
-            if (nx >= 0 && nx < mw) {
-              sum += erodedMask[y * mw + nx];
-              count++;
-            }
-          }
-          tempMask[y * mw + x] = sum / count;
-        }
-      }
-      for (let y = 0; y < mh; y++) {
-        for (let x = 0; x < mw; x++) {
-          let sum = 0,
-            count = 0;
-          for (let dy = -blurRad; dy <= blurRad; dy++) {
-            const ny = y + dy;
-            if (ny >= 0 && ny < mh) {
-              sum += tempMask[ny * mw + x];
-              count++;
-            }
-          }
-          cleanMask[y * mw + x] = sum / count;
-        }
-      }
-
-      // 3. High Precision CPU Bilinear Upscale + Float32 S-Curve
+      // High Precision CPU Bilinear Upscale + Float32 S-Curve
       // Softer floor to preserve soft details and natural organic contours around shoulders & neck.
-      const floor = 20;
+      const floor = 10;
       const ceil = 245;
 
       for (let y = 0; y < h; y++) {
@@ -483,10 +270,10 @@ export async function removeBackground(
           const row1 = y1 * mw;
           const row2 = y2 * mw;
 
-          const p11 = cleanMask[row1 + x1];
-          const p21 = cleanMask[row1 + x2];
-          const p12 = cleanMask[row2 + x1];
-          const p22 = cleanMask[row2 + x2];
+          const p11 = mData[row1 + x1] * maskScale;
+          const p21 = mData[row1 + x2] * maskScale;
+          const p12 = mData[row2 + x1] * maskScale;
+          const p22 = mData[row2 + x2] * maskScale;
 
           let a =
             p11 * invFx * invFy +
@@ -531,8 +318,8 @@ export async function removeBackground(
           }
 
           // Strict background suppression
-          if (a < 8) a = 0;
-          if (a > 248) a = 255;
+          if (a < 5) a = 0;
+          if (a > 250) a = 255;
 
           pixels[idx + 3] = Math.round(a);
         }
@@ -573,8 +360,7 @@ export async function removeBackground(
 
 /**
  * Natural Contour Polish & Artifact Eradication
- * Eradicates boundary patches and noisy webs via density morphological cleaning,
- * then applies S-Curve edge refinement and Halo Decontamination.
+ * Applies Halo Decontamination to perfectly preserve edge detail while removing colored fringing.
  */
 async function polishCutoutEdges(blob: Blob): Promise<Blob> {
   return new Promise((resolve) => {
@@ -591,197 +377,29 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
       const imageData = ctx.getImageData(0, 0, w, h);
       const data = imageData.data;
 
-      // 1. High-precision 1:1 Connected Component Analysis to isolate subject and erase all background noise
-      const visited = new Uint32Array(w * h);
-      let componentCount = 0;
-      
-      const compSizes = [0];
-      const compSumX = [0];
-      const compSumY = [0];
-      
-      const stack = new Int32Array(w * h);
-      let stackLen = 0;
-
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          const idx = y * w + x;
-          const a = data[idx * 4 + 3];
-
-          if (a > 20 && visited[idx] === 0) {
-            componentCount++;
-            const compId = componentCount;
-            compSizes[compId] = 0;
-            compSumX[compId] = 0;
-            compSumY[compId] = 0;
-
-            stack[0] = idx;
-            stackLen = 1;
-            visited[idx] = compId;
-
-            while (stackLen > 0) {
-              const curr = stack[--stackLen];
-              const cx = curr % w;
-              const cy = Math.floor(curr / w);
-
-              compSizes[compId]++;
-              compSumX[compId] += cx;
-              compSumY[compId] += cy;
-
-              if (cx > 0) {
-                const n = curr - 1;
-                if (visited[n] === 0 && data[n * 4 + 3] > 20) {
-                  visited[n] = compId;
-                  stack[stackLen++] = n;
-                }
-              }
-              if (cx < w - 1) {
-                const n = curr + 1;
-                if (visited[n] === 0 && data[n * 4 + 3] > 20) {
-                  visited[n] = compId;
-                  stack[stackLen++] = n;
-                }
-              }
-              if (cy > 0) {
-                const n = curr - w;
-                if (visited[n] === 0 && data[n * 4 + 3] > 20) {
-                  visited[n] = compId;
-                  stack[stackLen++] = n;
-                }
-              }
-              if (cy < h - 1) {
-                const n = curr + w;
-                if (visited[n] === 0 && data[n * 4 + 3] > 20) {
-                  visited[n] = compId;
-                  stack[stackLen++] = n;
-                }
-              }
-            }
-          }
-        }
-      }
-
-      let bestCompId = 1;
-      let maxScore = -1;
-
-      for (let id = 1; id <= componentCount; id++) {
-        const size = compSizes[id];
-        if (size === 0) continue;
-
-        const avgX = compSumX[id] / size;
-        const avgY = compSumY[id] / size;
-
-        const dx = (avgX - w / 2) / (w / 2);
-        const dy = (avgY - h / 2) / (h / 2);
-        const centerDistance = Math.sqrt(dx * dx + dy * dy);
-
-        const score = size * (1.0 - 0.6 * centerDistance);
-        if (score > maxScore) {
-          maxScore = score;
-          bestCompId = id;
-        }
-      }
-
-      // Fill holes and build solid foreground mask
-      const alphaMap = new Uint8Array(w * h);
+      // Only perform Color Decontamination on semi-transparent pixels (the edge boundaries)
       for (let i = 0; i < w * h; i++) {
-        if (visited[i] === bestCompId) {
-          alphaMap[i] = 1;
-        }
-      }
+        // Keep pristine original edge processing for the main subject!
+        // No dual blurring or S-curving to prevent ANY outline, haloing, or "double cutout lines".
+        const finalA = data[i * 4 + 3];
+        if (finalA > 0 && finalA < 255) {
+          const idx = i * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          const maxVal = Math.max(r, g, b);
+          const minVal = Math.min(r, g, b);
+          const sat = maxVal > 0 ? (maxVal - minVal) / maxVal : 0;
+          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
 
-      const isExternal = new Uint8Array(w * h);
-      const q = new Int32Array(w * h);
-      let qHead = 0;
-      let qTail = 0;
-
-      for (let x = 0; x < w; x++) {
-        const topIdx = x;
-        if (alphaMap[topIdx] === 0) {
-          isExternal[topIdx] = 1;
-          q[qTail++] = topIdx;
-        }
-        const botIdx = (h - 1) * w + x;
-        if (alphaMap[botIdx] === 0) {
-          isExternal[botIdx] = 1;
-          q[qTail++] = botIdx;
-        }
-      }
-      for (let y = 0; y < h; y++) {
-        const leftIdx = y * w;
-        if (alphaMap[leftIdx] === 0) {
-          isExternal[leftIdx] = 1;
-          q[qTail++] = leftIdx;
-        }
-        const rightIdx = y * w + (w - 1);
-        if (alphaMap[rightIdx] === 0) {
-          isExternal[rightIdx] = 1;
-          q[qTail++] = rightIdx;
-        }
-      }
-
-      while (qHead < qTail) {
-        const curr = q[qHead++];
-        const cx = curr % w;
-        const cy = Math.floor(curr / w);
-
-        if (cx > 0) {
-          const n = curr - 1;
-          if (alphaMap[n] === 0 && isExternal[n] === 0) {
-            isExternal[n] = 1;
-            q[qTail++] = n;
-          }
-        }
-        if (cx < w - 1) {
-          const n = curr + 1;
-          if (alphaMap[n] === 0 && isExternal[n] === 0) {
-            isExternal[n] = 1;
-            q[qTail++] = n;
-          }
-        }
-        if (cy > 0) {
-          const n = curr - w;
-          if (alphaMap[n] === 0 && isExternal[n] === 0) {
-            isExternal[n] = 1;
-            q[qTail++] = n;
-          }
-        }
-        if (cy < h - 1) {
-          const n = curr + w;
-          if (alphaMap[n] === 0 && isExternal[n] === 0) {
-            isExternal[n] = 1;
-            q[qTail++] = n;
-          }
-        }
-      }
-
-      // Erase all background pixels (either external/border-touching or non-subject components)
-      // to guarantee absolute elimination of any floating or partially touching background fragments, chairs, or shadows.
-      for (let i = 0; i < w * h; i++) {
-        if (isExternal[i] === 1 || visited[i] !== bestCompId) {
-          data[i * 4 + 3] = 0;
-        } else {
-          // Keep pristine original edge processing for the main subject!
-          // No dual blurring or S-curving to prevent ANY outline, haloing, or "double cutout lines".
-          const finalA = data[i * 4 + 3];
-          if (finalA > 0 && finalA < 255) {
-            const idx = i * 4;
-            const r = data[idx];
-            const g = data[idx + 1];
-            const b = data[idx + 2];
-            const maxVal = Math.max(r, g, b);
-            const minVal = Math.min(r, g, b);
-            const sat = maxVal > 0 ? (maxVal - minVal) / maxVal : 0;
-            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-
-            // Smart edge-only de-halo pass to purge light background halos from clothing, skin and hair
-            const isWhiteShirt = sat < 0.15 && lum > 160;
-            if (!isWhiteShirt && lum > 110) {
-              const transFactor = (255 - finalA) / 255;
-              const darkening = 1.0 - transFactor * 0.70;
-              data[idx] = Math.max(0, Math.min(255, Math.round(r * darkening)));
-              data[idx + 1] = Math.max(0, Math.min(255, Math.round(g * darkening)));
-              data[idx + 2] = Math.max(0, Math.min(255, Math.round(b * darkening)));
-            }
+          // Smart edge-only de-halo pass to purge light background halos from clothing, skin and hair
+          const isWhiteShirt = sat < 0.15 && lum > 160;
+          if (!isWhiteShirt && lum > 110) {
+            const transFactor = (255 - finalA) / 255;
+            const darkening = 1.0 - transFactor * 0.70;
+            data[idx] = Math.max(0, Math.min(255, Math.round(r * darkening)));
+            data[idx + 1] = Math.max(0, Math.min(255, Math.round(g * darkening)));
+            data[idx + 2] = Math.max(0, Math.min(255, Math.round(b * darkening)));
           }
         }
       }
@@ -846,49 +464,10 @@ async function polishAndEnhance(blob: Blob): Promise<Blob> {
         d[i + 2] = nb;
       }
 
-      // Automatically extent the shoulder to fit the frame (bottom 25% of image)
-      // This prevents the "cut off shoulders" look and smoothly fills the bottom corners.
-      const shoulderLimit = Math.floor(canvas.height * 0.75);
-      for (let y = shoulderLimit; y < canvas.height; y++) {
-        let lx = -1;
-        let rx = -1;
-        for (let x = 0; x < canvas.width; x++) {
-          if (d[(y * canvas.width + x) * 4 + 3] > 200) {
-            lx = x; break;
-          }
-        }
-        for (let x = canvas.width - 1; x >= 0; x--) {
-          if (d[(y * canvas.width + x) * 4 + 3] > 200) {
-            rx = x; break;
-          }
-        }
-        
-        // If we found valid shoulder bounds that are wide enough (> 40% of image), stretch them to the edges
-        if (lx > 0 && rx > lx && (rx - lx) > canvas.width * 0.40) {
-          const lIdx = (y * canvas.width + lx) * 4;
-          for (let x = 0; x < lx; x++) {
-            const idx = (y * canvas.width + x) * 4;
-            // Add a subtle darkening towards the edge to simulate depth/falloff
-            const falloff = Math.max(0.7, 1 - ((lx - x) / lx) * 0.3);
-            d[idx] = d[lIdx] * falloff;
-            d[idx + 1] = d[lIdx + 1] * falloff;
-            d[idx + 2] = d[lIdx + 2] * falloff;
-            d[idx + 3] = d[lIdx + 3];
-          }
-          
-          const rIdx = (y * canvas.width + rx) * 4;
-          const rightDist = canvas.width - 1 - rx;
-          for (let x = rx + 1; x < canvas.width; x++) {
-            const idx = (y * canvas.width + x) * 4;
-            const falloff = Math.max(0.7, 1 - ((x - rx) / rightDist) * 0.3);
-            d[idx] = d[rIdx] * falloff;
-            d[idx + 1] = d[rIdx + 1] * falloff;
-            d[idx + 2] = d[rIdx + 2] * falloff;
-            d[idx + 3] = d[rIdx + 3];
-          }
-        }
-      }
-
+      // -------------------------------------------------------------
+      // (Shoulder stretching removed to preserve natural contours)
+      // -------------------------------------------------------------
+      
       ctx.putImageData(data, 0, 0);
       canvas.toBlob((b) => resolve(b || cleanBlob), "image/png");
     };
