@@ -169,6 +169,7 @@ export default function PassportPhotoMaker() {
   const [customGrid, setCustomGrid] = useState({ rows: 2, cols: 4 });
   const [hasBorder, setHasBorder] = useState(true);
   const [hasCutLines, setHasCutLines] = useState(true);
+  const [printOrientation, setPrintOrientation] = useState<'vertical' | 'horizontal'>('vertical');
   
   // Processing State
   const [isProcessing, setIsProcessing] = useState(false);
@@ -772,8 +773,19 @@ export default function PassportPhotoMaker() {
 
     // Generate A4/Grid
     const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
-    const photoWidth = Math.round((targetPreset.width / 25.4) * dpi);
-    const photoHeight = Math.round((targetPreset.height / 25.4) * dpi);
+    const isHorizontal = printOrientation === 'horizontal';
+    
+    // Determine target dimensions based on orientation
+    const targetWidthMm = isHorizontal ? targetPreset.height : targetPreset.width;
+    const targetHeightMm = isHorizontal ? targetPreset.width : targetPreset.height;
+
+    const photoWidth = Math.round((targetWidthMm / 25.4) * dpi);
+    const photoHeight = Math.round((targetHeightMm / 25.4) * dpi);
+    
+    // Use original dimensions for drawing the unrotated image
+    const origPhotoWidth = Math.round((targetPreset.width / 25.4) * dpi);
+    const origPhotoHeight = Math.round((targetPreset.height / 25.4) * dpi);
+
     const marginMm = 2; // Reduced from 5mm to make cutlines closer
     const margin = Math.round((marginMm / 25.4) * dpi);
 
@@ -781,8 +793,8 @@ export default function PassportPhotoMaker() {
     let sheetHeightMm = paperSize.id === 'custom' ? customPaper.height : paperSize.height;
 
     if (paperSize.id === 'custom-grid') {
-      sheetWidthMm = customGrid.cols * targetPreset.width + (customGrid.cols + 1) * marginMm;
-      sheetHeightMm = customGrid.rows * targetPreset.height + (customGrid.rows + 1) * marginMm;
+      sheetWidthMm = customGrid.cols * targetWidthMm + (customGrid.cols + 1) * marginMm;
+      sheetHeightMm = customGrid.rows * targetHeightMm + (customGrid.rows + 1) * marginMm;
     }
 
     const sheetWidth = Math.round((sheetWidthMm / 25.4) * dpi);
@@ -827,7 +839,15 @@ export default function PassportPhotoMaker() {
         const x = startX + c * (photoWidth + margin);
         const y = startY + r * (photoHeight + margin);
         
-        ctx.drawImage(printImageElement, x, y, photoWidth, photoHeight);
+        ctx.save();
+        if (isHorizontal) {
+          ctx.translate(x + photoWidth / 2, y + photoHeight / 2);
+          ctx.rotate(Math.PI / 2); // 90 degrees
+          ctx.drawImage(printImageElement, -origPhotoWidth / 2, -origPhotoHeight / 2, origPhotoWidth, origPhotoHeight);
+        } else {
+          ctx.drawImage(printImageElement, x, y, photoWidth, photoHeight);
+        }
+        ctx.restore();
         
         if (hasCutLines) {
           ctx.strokeStyle = '#cccccc';
@@ -885,8 +905,12 @@ export default function PassportPhotoMaker() {
     }
 
     const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
-    const photoWidthMm = targetPreset.width;
-    const photoHeightMm = targetPreset.height;
+    const isHorizontal = printOrientation === 'horizontal';
+    const photoWidthMm = isHorizontal ? targetPreset.height : targetPreset.width;
+    const photoHeightMm = isHorizontal ? targetPreset.width : targetPreset.height;
+    const origPhotoWidthMm = targetPreset.width;
+    const origPhotoHeightMm = targetPreset.height;
+
     const marginMm = 2; // Reduced from 5mm to make cutlines closer
     
     let sheetWidthMm = paperSize.id === 'custom' ? customPaper.width : paperSize.width;
@@ -930,7 +954,7 @@ export default function PassportPhotoMaker() {
             return (
               <div 
                 key={`${r}-${c}`} 
-                className="absolute flex items-center justify-center" 
+                className="absolute flex items-center justify-center overflow-visible" 
                 style={{ 
                   left: `${(x / sheetWidthMm) * 100}%`, 
                   top: `${(y / sheetHeightMm) * 100}%`, 
@@ -945,15 +969,24 @@ export default function PassportPhotoMaker() {
                       left: `-${(marginMm/2 / photoWidthMm) * 100}%`, 
                       top: `-${(marginMm/2 / photoHeightMm) * 100}%`, 
                       width: `${((photoWidthMm + marginMm) / photoWidthMm) * 100}%`, 
-                      height: `${((photoHeightMm + marginMm) / photoHeightMm) * 100}%` 
+                      height: `${((photoHeightMm + marginMm) / photoHeightMm) * 100}%`,
+                      zIndex: 10
                     }} 
                   />
                 )}
                 <img 
                   src={finalImageSrc} 
                   alt="Copy" 
-                  className="w-full h-full object-cover shadow-sm" 
-                  style={{ imageRendering: 'high-quality' }}
+                  className="shadow-sm absolute block" 
+                  style={{ 
+                    imageRendering: 'high-quality',
+                    width: isHorizontal ? `${(origPhotoWidthMm / photoWidthMm) * 100}%` : '100%',
+                    height: isHorizontal ? `${(origPhotoHeightMm / photoHeightMm) * 100}%` : '100%',
+                    top: '50%',
+                    left: '50%',
+                    transform: isHorizontal ? 'translate(-50%, -50%) rotate(90deg)' : 'translate(-50%, -50%)',
+                    objectFit: 'fill'
+                  }}
                 />
               </div>
             );
@@ -1310,6 +1343,17 @@ export default function PassportPhotoMaker() {
                         <span className="text-sm font-bold text-gray-700">Show Cut Lines</span>
                         <input type="checkbox" checked={hasCutLines} onChange={(e) => setHasCutLines(e.target.checked)} className="accent-[#e8501a] w-4 h-4" />
                       </label>
+                      <div className="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded-xl transition-colors">
+                        <span className="text-sm font-bold text-gray-700">Photo Orientation</span>
+                        <select 
+                          value={printOrientation} 
+                          onChange={(e) => setPrintOrientation(e.target.value as 'vertical' | 'horizontal')}
+                          className="bg-white border border-gray-300 text-gray-700 text-sm rounded-lg focus:ring-[#e8501a] focus:border-[#e8501a] block p-2"
+                        >
+                          <option value="vertical">Vertical</option>
+                          <option value="horizontal">Horizontal</option>
+                        </select>
+                      </div>
                     </div>
                   </div>
                 )}
