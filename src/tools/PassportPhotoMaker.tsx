@@ -563,7 +563,7 @@ export default function PassportPhotoMaker() {
         const tempCtx = tempCanvas.getContext('2d', { alpha: true });
         if (!tempCtx) return;
 
-        // Apply Filters to the subject
+        // Apply Filters to the subject (excluding blurs which are handled via skin-selective CPU bilateral filters)
         const b = appliedAdjustments.brightness;
         let c = appliedAdjustments.contrast;
         let s = appliedAdjustments.saturation;
@@ -575,18 +575,6 @@ export default function PassportPhotoMaker() {
         
         let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
         
-        if (appliedAdjustments.smoothness > 0) {
-          filterString += ` blur(${appliedAdjustments.smoothness / 100}px)`;
-        }
-
-        if (appliedAdjustments.beautyFace > 0) {
-          const beautyBlur = appliedAdjustments.beautyFace / 80;
-          const beautyBright = 100 + (appliedAdjustments.beautyFace / 15);
-          const beautyContrast = 100 - (appliedAdjustments.beautyFace / 20);
-          const beautySaturate = 100 + (appliedAdjustments.beautyFace / 20);
-          filterString += ` blur(${beautyBlur}px) brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
-        }
-
         if (appliedAdjustments.edgeSoftness > 0) {
           const edgeBlur = appliedAdjustments.edgeSoftness / 50;
           filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
@@ -598,14 +586,12 @@ export default function PassportPhotoMaker() {
         tempCtx.drawImage(img, 0, 0);
         tempCtx.filter = 'none';
 
-        // Apply Sharpness (Optimized) to the subject only
+        // Apply Advanced Skin-Selective Bilateral Smoothing, Beautification, and Sharpness
         const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
+        const smoothnessVal = appliedAdjustments.smoothness;
+        const beautyVal = appliedAdjustments.beautyFace;
         
-        if (finalSharpness > 0) {
-          const amount = finalSharpness / 100;
-          const a = amount;
-          const b_val = 1 + 4 * a;
-          
+        if (finalSharpness > 0 || smoothnessVal > 0 || beautyVal > 0) {
           const sw = tempCanvas.width;
           const sh = tempCanvas.height;
           const imageData = tempCtx.getImageData(0, 0, sw, sh);
@@ -613,50 +599,128 @@ export default function PassportPhotoMaker() {
           const output = tempCtx.createImageData(sw, sh);
           const dst = new Uint32Array(output.data.buffer);
 
-          for (let y = 1; y < sh - 1; y++) {
+          const isSkinColor = (r: number, g: number, b: number) => {
+            if (r < 60 || g < 40 || b < 20) return false;
+            if (r <= g || r <= b) return false;
+            if (r - g < 8) return false;
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            if (max - min < 15) return false;
+            return Math.abs(r - g) > 8;
+          };
+
+          const amount = finalSharpness / 100;
+          const a = amount;
+          const b_val = 1 + 4 * a;
+
+          for (let y = 0; y < sh; y++) {
             const offset = y * sw;
-            for (let x = 1; x < sw - 1; x++) {
+            for (let x = 0; x < sw; x++) {
               const i = offset + x;
               const p = pixels[i];
               const alpha = (p >> 24) & 0xff;
               
-              // Skip fully transparent pixels to avoid processing empty space
               if (alpha === 0) continue;
 
-              const iUp = i - sw;
-              const iDown = i + sw;
-              const iLeft = i - 1;
-              const iRight = i + 1;
+              if (x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
+                dst[i] = p;
+                continue;
+              }
 
-              const pUp = pixels[iUp];
-              const pDown = pixels[iDown];
-              const pLeft = pixels[iLeft];
-              const pRight = pixels[iRight];
+              let r_orig = p & 0xff;
+              let g_orig = (p >> 8) & 0xff;
+              let b_orig = (p >> 16) & 0xff;
 
-              // Alpha-aware neighbor sampling: if a neighbor is transparent, use the center pixel's color
-              // This prevents dark halos around the edges of the subject
-              const getR = (px: number) => ((px >> 24) & 0xff) === 0 ? (p & 0xff) : (px & 0xff);
-              const getG = (px: number) => ((px >> 24) & 0xff) === 0 ? ((p >> 8) & 0xff) : ((px >> 8) & 0xff);
-              const getB = (px: number) => ((px >> 24) & 0xff) === 0 ? ((p >> 16) & 0xff) : ((px >> 16) & 0xff);
+              let finalR = r_orig;
+              let finalG = g_orig;
+              let finalB = b_orig;
 
-              const r_orig = p & 0xff;
-              const g_orig = (p >> 8) & 0xff;
-              const b_orig = (p >> 16) & 0xff;
+              // 1. Smart Bilateral Skin Smoothing & Beautification
+              const isSkin = isSkinColor(r_orig, g_orig, b_orig);
+              if ((smoothnessVal > 0 || beautyVal > 0) && isSkin && x > 1 && x < sw - 2 && y > 1 && y < sh - 2) {
+                let sumR = 0, sumG = 0, sumB = 0, totalWeight = 0;
+                const maxStrength = Math.max(smoothnessVal, beautyVal);
+                const colorThreshold = 35 + (100 - maxStrength) * 0.45;
 
-              const r_val = (r_orig * b_val - (getR(pUp) + getR(pDown) + getR(pLeft) + getR(pRight)) * a);
-              const g_val = (g_orig * b_val - (getG(pUp) + getG(pDown) + getG(pLeft) + getG(pRight)) * a);
-              const b_comp = (b_orig * b_val - (getB(pUp) + getB(pDown) + getB(pLeft) + getB(pRight)) * a);
+                for (let dy = -2; dy <= 2; dy++) {
+                  const ny = y + dy;
+                  const rowOffset = ny * sw;
+                  for (let dx = -2; dx <= 2; dx++) {
+                    const nx = x + dx;
+                    const np = pixels[rowOffset + nx];
+                    const nAlpha = (np >> 24) & 0xff;
+                    if (nAlpha === 0) continue;
 
-              let finalR = r_val < 0 ? 0 : r_val > 255 ? 255 : (r_val | 0);
-              let finalG = g_val < 0 ? 0 : g_val > 255 ? 255 : (g_val | 0);
-              let finalB = b_comp < 0 ? 0 : b_comp > 255 ? 255 : (b_comp | 0);
+                    const nr = np & 0xff;
+                    const ng = (np >> 8) & 0xff;
+                    const nb = (np >> 16) & 0xff;
 
-              // Fade out sharpening on semi-transparent edges to prevent halos
+                    const dist = Math.abs(nr - r_orig) + Math.abs(ng - g_orig) + Math.abs(nb - b_orig);
+                    if (dist < colorThreshold) {
+                      const spatialDistSq = dy * dy + dx * dx;
+                      const weight = 1.0 / (1.0 + spatialDistSq * 0.25);
+                      sumR += nr * weight;
+                      sumG += ng * weight;
+                      sumB += nb * weight;
+                      totalWeight += weight;
+                    }
+                  }
+                }
+
+                if (totalWeight > 0) {
+                  const smoothedR = sumR / totalWeight;
+                  const smoothedG = sumG / totalWeight;
+                  const smoothedB = sumB / totalWeight;
+
+                  const blend = maxStrength / 100;
+                  finalR = (r_orig * (1 - blend) + smoothedR * blend) | 0;
+                  finalG = (g_orig * (1 - blend) + smoothedG * blend) | 0;
+                  finalB = (b_orig * (1 - blend) + smoothedB * blend) | 0;
+                }
+
+                if (beautyVal > 0) {
+                  const beautyFactor = beautyVal / 100;
+                  finalR = Math.min(255, finalR * (1.0 + 0.08 * beautyFactor)) | 0;
+                  finalG = Math.min(255, finalG * (1.0 + 0.05 * beautyFactor)) | 0;
+                  finalB = Math.min(255, finalB * (1.0 + 0.03 * beautyFactor)) | 0;
+                }
+              }
+
+              // 2. High-precision Laplacian Sharpening
+              if (finalSharpness > 0) {
+                const iUp = i - sw;
+                const iDown = i + sw;
+                const iLeft = i - 1;
+                const iRight = i + 1;
+
+                const pUp = pixels[iUp];
+                const pDown = pixels[iDown];
+                const pLeft = pixels[iLeft];
+                const pRight = pixels[iRight];
+
+                const getR = (px: number) => ((px >> 24) & 0xff) === 0 ? r_orig : (px & 0xff);
+                const getG = (px: number) => ((px >> 24) & 0xff) === 0 ? g_orig : ((px >> 8) & 0xff);
+                const getB = (px: number) => ((px >> 24) & 0xff) === 0 ? b_orig : ((px >> 16) & 0xff);
+
+                const r_sharp = (finalR * b_val - (getR(pUp) + getR(pDown) + getR(pLeft) + getR(pRight)) * a);
+                const g_sharp = (finalG * b_val - (getG(pUp) + getG(pDown) + getG(pLeft) + getG(pRight)) * a);
+                const b_sharp = (finalB * b_val - (getB(pUp) + getB(pDown) + getB(pLeft) + getB(pRight)) * a);
+
+                let fR = r_sharp < 0 ? 0 : r_sharp > 255 ? 255 : (r_sharp | 0);
+                let fG = g_sharp < 0 ? 0 : g_sharp > 255 ? 255 : (g_sharp | 0);
+                let fB = b_sharp < 0 ? 0 : b_sharp > 255 ? 255 : (b_sharp | 0);
+
+                const skinWeight = isSkin ? 0.15 : 1.0;
+                finalR = (finalR * (1 - skinWeight) + fR * skinWeight) | 0;
+                finalG = (finalG * (1 - skinWeight) + fG * skinWeight) | 0;
+                finalB = (finalB * (1 - skinWeight) + fB * skinWeight) | 0;
+              }
+
               if (alpha < 250) {
-                const blend = alpha / 250;
-                finalR = (finalR * blend + r_orig * (1 - blend)) | 0;
-                finalG = (finalG * blend + g_orig * (1 - blend)) | 0;
-                finalB = (finalB * blend + b_orig * (1 - blend)) | 0;
+                const edgeBlend = alpha / 250;
+                finalR = (finalR * edgeBlend + r_orig * (1 - edgeBlend)) | 0;
+                finalG = (finalG * edgeBlend + g_orig * (1 - edgeBlend)) | 0;
+                finalB = (finalB * edgeBlend + b_orig * (1 - edgeBlend)) | 0;
               }
 
               dst[i] = finalR | (finalG << 8) | (finalB << 16) | (alpha << 24);

@@ -704,7 +704,7 @@ export default function BackgroundRemover() {
     const tempCtx = tempCanvas.getContext('2d', { alpha: true });
     if (!tempCtx) return;
 
-    // Apply Filters to the subject
+    // Apply overall base adjustments to the subject (excluding blurs which are handled via skin-selective CPU bilateral filters)
     const b = appliedAdjustments.brightness;
     let c = appliedAdjustments.contrast;
     let s = appliedAdjustments.saturation;
@@ -715,18 +715,6 @@ export default function BackgroundRemover() {
     }
     
     let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
-    if (appliedAdjustments.smoothness > 0) {
-      // Skin smoothing: subtle blur
-      filterString += ` blur(${appliedAdjustments.smoothness / 100}px)`;
-    }
-    if (appliedAdjustments.beautyFace > 0) {
-      // Beauty face: subtle blur + brightness boost + contrast reduction + saturation boost
-      const beautyBlur = appliedAdjustments.beautyFace / 80;
-      const beautyBright = 100 + (appliedAdjustments.beautyFace / 15);
-      const beautyContrast = 100 - (appliedAdjustments.beautyFace / 20);
-      const beautySaturate = 100 + (appliedAdjustments.beautyFace / 20);
-      filterString += ` blur(${beautyBlur}px) brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
-    }
     if (appliedAdjustments.edgeSoftness > 0) {
       // Edge adjustment: drop-shadow + very subtle blur for feathering
       const edgeBlur = appliedAdjustments.edgeSoftness / 50;
@@ -737,12 +725,12 @@ export default function BackgroundRemover() {
     tempCtx.drawImage(img, 0, 0);
     tempCtx.filter = 'none';
 
-    // Apply Sharpness to the subject only
+    // Apply Advanced Skin-Selective Bilateral Smoothing, Beautification, and Sharpness
     const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
-    if (finalSharpness > 0) {
-      const amount = finalSharpness / 100; // More balanced sharpening
-      const a = amount;
-      const b_val = 1 + 4 * a;
+    const smoothnessVal = appliedAdjustments.smoothness;
+    const beautyVal = appliedAdjustments.beautyFace;
+
+    if (finalSharpness > 0 || smoothnessVal > 0 || beautyVal > 0) {
       const sw = tempCanvas.width;
       const sh = tempCanvas.height;
       const imageData = tempCtx.getImageData(0, 0, sw, sh);
@@ -750,27 +738,126 @@ export default function BackgroundRemover() {
       const output = tempCtx.createImageData(sw, sh);
       const dst = output.data;
 
-      for (let i = 0; i < pixels.length; i += 4) {
-        const x = (i / 4) % sw;
-        const y = Math.floor((i / 4) / sw);
-        const alpha = pixels[i + 3];
-        
-        if (alpha === 0 || x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
-          dst[i] = pixels[i]; dst[i+1] = pixels[i+1]; dst[i+2] = pixels[i+2]; dst[i+3] = pixels[i+3];
-          continue;
-        }
-        
-        const iUp = i - sw * 4; const iDown = i + sw * 4; const iLeft = i - 4; const iRight = i + 4;
-        
-        // Alpha-aware neighbor sampling
-        const getR = (idx: number) => pixels[idx + 3] === 0 ? pixels[i] : pixels[idx];
-        const getG = (idx: number) => pixels[idx + 3] === 0 ? pixels[i + 1] : pixels[idx + 1];
-        const getB = (idx: number) => pixels[idx + 3] === 0 ? pixels[i + 2] : pixels[idx + 2];
+      const isSkinColor = (r: number, g: number, b: number) => {
+        if (r < 60 || g < 40 || b < 20) return false;
+        if (r <= g || r <= b) return false;
+        if (r - g < 8) return false;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        if (max - min < 15) return false;
+        return Math.abs(r - g) > 8;
+      };
 
-        dst[i]     = pixels[i] * b_val - (getR(iUp) + getR(iDown) + getR(iLeft) + getR(iRight)) * a;
-        dst[i + 1] = pixels[i + 1] * b_val - (getG(iUp) + getG(iDown) + getG(iLeft) + getG(iRight)) * a;
-        dst[i + 2] = pixels[i + 2] * b_val - (getB(iUp) + getB(iDown) + getB(iLeft) + getB(iRight)) * a;
-        dst[i + 3] = alpha;
+      const amount = finalSharpness / 100;
+      const a = amount;
+      const b_val = 1 + 4 * a;
+
+      for (let y = 0; y < sh; y++) {
+        const offset = y * sw * 4;
+        for (let x = 0; x < sw; x++) {
+          const i = offset + x * 4;
+          const alpha = pixels[i + 3];
+
+          if (alpha === 0) continue;
+
+          if (x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
+            dst[i] = pixels[i]; dst[i + 1] = pixels[i + 1]; dst[i + 2] = pixels[i + 2]; dst[i + 3] = pixels[i + 3];
+            continue;
+          }
+
+          let r_orig = pixels[i];
+          let g_orig = pixels[i + 1];
+          let b_orig = pixels[i + 2];
+
+          let finalR = r_orig;
+          let finalG = g_orig;
+          let finalB = b_orig;
+
+          // 1. Smart Bilateral Skin Smoothing & Beautification
+          const isSkin = isSkinColor(r_orig, g_orig, b_orig);
+          if ((smoothnessVal > 0 || beautyVal > 0) && isSkin && x > 1 && x < sw - 2 && y > 1 && y < sh - 2) {
+            let sumR = 0, sumG = 0, sumB = 0, totalWeight = 0;
+            const maxStrength = Math.max(smoothnessVal, beautyVal);
+            const colorThreshold = 35 + (100 - maxStrength) * 0.45;
+
+            for (let dy = -2; dy <= 2; dy++) {
+              const ny = y + dy;
+              const rowIdx = ny * sw * 4;
+              for (let dx = -2; dx <= 2; dx++) {
+                const nx = x + dx;
+                const nIdx = rowIdx + nx * 4;
+                const nAlpha = pixels[nIdx + 3];
+                if (nAlpha === 0) continue;
+
+                const nr = pixels[nIdx];
+                const ng = pixels[nIdx + 1];
+                const nb = pixels[nIdx + 2];
+
+                const dist = Math.abs(nr - r_orig) + Math.abs(ng - g_orig) + Math.abs(nb - b_orig);
+                if (dist < colorThreshold) {
+                  const spatialDistSq = dy * dy + dx * dx;
+                  const weight = 1.0 / (1.0 + spatialDistSq * 0.25);
+                  sumR += nr * weight;
+                  sumG += ng * weight;
+                  sumB += nb * weight;
+                  totalWeight += weight;
+                }
+              }
+            }
+
+            if (totalWeight > 0) {
+              const smoothedR = sumR / totalWeight;
+              const smoothedG = sumG / totalWeight;
+              const smoothedB = sumB / totalWeight;
+
+              const blend = maxStrength / 100;
+              finalR = r_orig * (1 - blend) + smoothedR * blend;
+              finalG = g_orig * (1 - blend) + smoothedG * blend;
+              finalB = b_orig * (1 - blend) + smoothedB * blend;
+            }
+
+            if (beautyVal > 0) {
+              const beautyFactor = beautyVal / 100;
+              finalR = Math.min(255, finalR * (1.0 + 0.08 * beautyFactor));
+              finalG = Math.min(255, finalG * (1.0 + 0.05 * beautyFactor));
+              finalB = Math.min(255, finalB * (1.0 + 0.03 * beautyFactor));
+            }
+          }
+
+          // 2. High-precision Laplacian Sharpening
+          if (finalSharpness > 0) {
+            const iUp = i - sw * 4; const iDown = i + sw * 4; const iLeft = i - 4; const iRight = i + 4;
+            const getR = (idx: number) => pixels[idx + 3] === 0 ? r_orig : pixels[idx];
+            const getG = (idx: number) => pixels[idx + 3] === 0 ? g_orig : pixels[idx + 1];
+            const getB = (idx: number) => pixels[idx + 3] === 0 ? b_orig : pixels[idx + 2];
+
+            const r_sharp = finalR * b_val - (getR(iUp) + getR(iDown) + getR(iLeft) + getR(iRight)) * a;
+            const g_sharp = finalG * b_val - (getG(iUp) + getG(iDown) + getG(iLeft) + getG(iRight)) * a;
+            const b_sharp = finalB * b_val - (getB(iUp) + getB(iDown) + getB(iLeft) + getB(iRight)) * a;
+
+            let fR = Math.max(0, Math.min(255, r_sharp));
+            let fG = Math.max(0, Math.min(255, g_sharp));
+            let fB = Math.max(0, Math.min(255, b_sharp));
+
+            const skinWeight = isSkin ? 0.15 : 1.0;
+            finalR = finalR * (1 - skinWeight) + fR * skinWeight;
+            finalG = finalG * (1 - skinWeight) + fG * skinWeight;
+            finalB = finalB * (1 - skinWeight) + fB * skinWeight;
+          }
+
+          // Anti-aliased transition edge blending with background
+          if (alpha < 250) {
+            const edgeBlend = alpha / 250;
+            finalR = finalR * edgeBlend + r_orig * (1 - edgeBlend);
+            finalG = finalG * edgeBlend + g_orig * (1 - edgeBlend);
+            finalB = finalB * edgeBlend + b_orig * (1 - edgeBlend);
+          }
+
+          dst[i] = Math.round(finalR);
+          dst[i + 1] = Math.round(finalG);
+          dst[i + 2] = Math.round(finalB);
+          dst[i + 3] = alpha;
+        }
       }
       tempCtx.putImageData(output, 0, 0);
     }
