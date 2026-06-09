@@ -27,6 +27,18 @@ export default function SeoTools({ toolId }: { toolId: string }) {
       await new Promise(resolve => setTimeout(resolve, 1500));
       
       switch (toolId) {
+        case 'google-index-request':
+          if (!inputs.url) { res = 'Please enter a URL or Sitemap link.'; break; }
+          const encodedUrl = encodeURIComponent(inputs.url);
+          res = `Google Index Request Details:\n\n` +
+                `Because Google Search Console limit/errors often happen, you can ping Search Engines directly with Sitemaps!\n\n` +
+                `1. Google Ping URL: https://www.google.com/ping?sitemap=${encodedUrl}\n` +
+                `2. Bing Ping URL: https://www.bing.com/ping?sitemap=${encodedUrl}\n\n` +
+                `What to do:\n` +
+                `Copy the Google Ping URL above and paste it into your browser. If successful, you will see a text success message from Google. This forces Google to crawl your sitemap immediately without using Google Search Console.\n\n` +
+                `Note: This is specifically for Sitemaps. For individual pages, the best alternative is using the Google Indexing API, which requires setting up a Google Cloud Service Account.`;
+          break;
+
         case 'keyword-research-tool':
           if (!inputs.keyword) { res = 'Please enter a keyword.'; break; }
           res = `Keyword Research Report for: "${inputs.keyword}"\n\n` +
@@ -180,6 +192,7 @@ Sitemap: ${inputs.sitemap || 'https://example.com/sitemap.xml'}`;
             </div>
           </div>
         );
+      case 'google-index-request':
       case 'backlink-checker':
       case 'domain-authority-checker':
       case 'website-speed-test':

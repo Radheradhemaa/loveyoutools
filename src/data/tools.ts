@@ -64,6 +64,7 @@ export const tools = [
   { id: 'pdf-reader-online', c: 'pdf', n: 'PDF Reader Online', d: 'Read PDF files online.', i: '👁️', b: '#fef3c7' },
 
   // SEO TOOLS (bg: #d1fae5)
+  { id: 'google-index-request', c: 'seo', n: 'Google Index Request Tool', d: 'Alternative way to ping Google/Bing to index your URLs when Search Console fails.', i: '🚀', b: '#d1fae5', popular: true },
   { id: 'keyword-research-tool', c: 'seo', n: 'Keyword Research Tool', d: 'Find high-volume, low-competition keywords for your content.', i: '🔍', b: '#d1fae5', popular: true },
   { id: 'backlink-checker', c: 'seo', n: 'Backlink Checker', d: 'Analyze backlinks for any domain or URL.', i: '🔗', b: '#d1fae5' },
   { id: 'domain-authority-checker', c: 'seo', n: 'Domain Authority Checker', d: 'Check DA, PA, and Spam Score of any website.', i: '📈', b: '#d1fae5' },
