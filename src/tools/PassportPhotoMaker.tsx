@@ -780,59 +780,64 @@ export default function PassportPhotoMaker() {
     img.src = finalImageSrc;
   }, [finalImageSrc]);
 
+  const handleDownloadSinglePhoto = () => {
+    if (!finalImageSrc || !printImageElement) return;
+
+    if (selectedPreset.id === 'free') {
+      const link = document.createElement('a');
+      link.href = finalImageSrc;
+      link.download = `passport-photo-${Date.now()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      const photoWidth = Math.round((selectedPreset.width / 25.4) * dpi);
+      const photoHeight = Math.round((selectedPreset.height / 25.4) * dpi);
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = photoWidth;
+      canvas.height = photoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(printImageElement, 0, 0, photoWidth, photoHeight);
+      
+      const dataURLtoBlob = (dataurl: string) => {
+        if (!dataurl || typeof dataurl !== 'string') return new Blob();
+        const arr = dataurl.split(',');
+        if (arr.length < 2) return new Blob();
+        const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        return new Blob([u8arr], { type: mime });
+      };
+
+      const dataUrl = canvas.toDataURL('image/png', 1.0);
+      const blob = dataURLtoBlob(dataUrl);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `passport-photo-${Date.now()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  };
+
   // --- 5. Generate Print Layout ---
   const handleDownload = () => {
     if (!finalImageSrc || !printImageElement) return;
     
     if (paperSize.id === 'single') {
-      if (selectedPreset.id === 'free') {
-        const link = document.createElement('a');
-        link.href = finalImageSrc;
-        link.download = `passport-photo-${Date.now()}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        return;
-      } else {
-        const photoWidth = Math.round((selectedPreset.width / 25.4) * dpi);
-        const photoHeight = Math.round((selectedPreset.height / 25.4) * dpi);
-        
-        const canvas = document.createElement('canvas');
-        canvas.width = photoWidth;
-        canvas.height = photoHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(printImageElement, 0, 0, photoWidth, photoHeight);
-        
-        const dataURLtoBlob = (dataurl: string) => {
-          if (!dataurl || typeof dataurl !== 'string') return new Blob();
-          const arr = dataurl.split(',');
-          if (arr.length < 2) return new Blob();
-          const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
-          const bstr = atob(arr[1]);
-          let n = bstr.length;
-          const u8arr = new Uint8Array(n);
-          while (n--) {
-            u8arr[n] = bstr.charCodeAt(n);
-          }
-          return new Blob([u8arr], { type: mime });
-        };
-
-        const dataUrl = canvas.toDataURL('image/png', 1.0);
-        const blob = dataURLtoBlob(dataUrl);
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `passport-photo-${Date.now()}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        return;
-      }
+      handleDownloadSinglePhoto();
+      return;
     }
 
     // Generate A4/Grid
@@ -1446,21 +1451,41 @@ export default function PassportPhotoMaker() {
                   </button>
                 )}
                 {step === 'edit' && (
-                  <button 
-                    onClick={() => setStep('print')}
-                    disabled={isProcessing}
-                    className="px-6 py-2 bg-[#e8501a] text-white rounded-xl font-bold text-sm hover:bg-[#d04313] transition-colors flex items-center gap-2 disabled:opacity-50"
-                  >
-                    Next <ArrowRight className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={handleDownloadSinglePhoto}
+                      className="px-4 py-2 bg-gray-100 text-gray-800 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors flex items-center gap-2"
+                      title="Download single photo directly"
+                    >
+                      <Download className="w-4 h-4" /> Single Photo
+                    </button>
+                    <button 
+                      onClick={() => setStep('print')}
+                      disabled={isProcessing}
+                      className="px-6 py-2 bg-[#e8501a] text-white rounded-xl font-bold text-sm hover:bg-[#d04313] transition-colors flex items-center gap-2 disabled:opacity-50"
+                    >
+                      Next <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 )}
                 {step === 'print' && (
-                  <button 
-                    onClick={handleDownload}
-                    className="px-6 py-2 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-gray-800 transition-colors flex items-center gap-2 shadow-lg shadow-gray-900/20"
-                  >
-                    <Download className="w-4 h-4" /> Download
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {paperSize.id !== 'single' && (
+                      <button 
+                        onClick={handleDownloadSinglePhoto}
+                        className="px-4 py-2 bg-gray-100 text-gray-800 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors flex items-center gap-2"
+                        title="Download the single photo by itself"
+                      >
+                        <Download className="w-4 h-4" /> Single Photo
+                      </button>
+                    )}
+                    <button 
+                      onClick={handleDownload}
+                      className="px-6 py-2 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-gray-800 transition-colors flex items-center gap-2 shadow-lg shadow-gray-900/20"
+                    >
+                      <Download className="w-4 h-4" /> {paperSize.id === 'single' ? 'Download' : 'Download Layout'}
+                    </button>
+                  </div>
                 )}
               </div>
             </aside>
