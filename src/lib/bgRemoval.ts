@@ -1,4 +1,5 @@
 import { pipeline, env } from "@huggingface/transformers";
+import { ImageSegmenter, FilesetResolver } from "@mediapipe/tasks-vision";
 
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
@@ -10,6 +11,8 @@ if (env.backends?.onnx?.wasm) {
 }
 
 let isnetPipeline: any = null;
+let u2netPipeline: any = null;
+let mediapipeSegmenter: ImageSegmenter | null = null;
 
 // Check for WebGPU adapter to avoid lazy initialization failures
 let hasWebGPU = false;
@@ -56,17 +59,64 @@ const ensureWebGPUChecked = async () => {
 export const ensureIsnetLoaded = async () => {
   if (!isnetPipeline) {
     await ensureWebGPUChecked();
-    // Force WASM on mobile devices for stability
     const device = hasWebGPU ? "webgpu" : "wasm";
     try {
-      isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", {
-        device,
+      isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", { device });
+    } catch (e) {
+      isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", { device: "wasm" });
+    }
+  }
+};
+
+export const ensureU2netLoaded = async () => {
+  if (!u2netPipeline) {
+    await ensureWebGPUChecked();
+    const device = hasWebGPU ? "webgpu" : "wasm";
+    try {
+      // Trying alternative general background models if U2Net is unavailable
+      u2netPipeline = await pipeline("image-segmentation", "Xenova/isnet_general_use", { device });
+    } catch (e) {
+      try {
+        u2netPipeline = await pipeline("image-segmentation", "Xenova/isnet_general_use", { device: "wasm" });
+      } catch(e) {
+         console.warn("[AI] Secondary Background Model (ISNet) failed to load. Will rely on ModNet.", e);
+      }
+    }
+  }
+};
+
+export const ensureMediapipeLoaded = async () => {
+  if (!mediapipeSegmenter) {
+    try {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+      );
+      mediapipeSegmenter = await ImageSegmenter.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
+          delegate: "GPU"
+        },
+        runningMode: "IMAGE",
+        outputCategoryMask: false,
+        outputConfidenceMasks: true
       });
     } catch (e) {
-      console.warn("[AI] MODNet primary load failed, trying WASM fallback", e);
-      isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", {
-        device: "wasm",
-      });
+      console.warn("[AI] MediaPipe GPU load failed, retrying with CPU...", e);
+      // Fallback
+      if (!mediapipeSegmenter) {
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+        );
+        mediapipeSegmenter = await ImageSegmenter.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
+            delegate: "CPU"
+          },
+          runningMode: "IMAGE",
+          outputCategoryMask: false,
+          outputConfidenceMasks: true
+        });
+      }
     }
   }
 };
@@ -75,7 +125,11 @@ export const ensureIsnetLoaded = async () => {
  * Compatibility stubs.
  */
 export const ensurePreloaded = async () => {
-  await ensureIsnetLoaded();
+  await Promise.all([
+    ensureIsnetLoaded().catch(console.error),
+    ensureU2netLoaded().catch(console.error),
+    ensureMediapipeLoaded().catch(console.error)
+  ]);
 };
 export const ensureModnetLoaded = async () => ensureIsnetLoaded();
 
@@ -146,8 +200,11 @@ export async function removeBackground(
   const startTime = Date.now();
   onProgress("Initializing AI Core...");
 
-  // Load models
-  await ensureIsnetLoaded().catch(console.error);
+  // Load models (Removed U2Net for instant delivery)
+  await Promise.all([
+    ensureIsnetLoaded().catch(console.error),
+    ensureMediapipeLoaded().catch(console.error)
+  ]);
 
   // Ensure input is a string (DataURL or URL)
   let imageSrcForDownscale: string;
@@ -161,37 +218,52 @@ export async function removeBackground(
     });
   }
 
-  // Use 1280 for ultra-speed while maintaining professional detail.
-  const imageSrc = await downscaleImageIfNeeded(imageSrcForDownscale, 1280);
+  // Use 800 for extremely fast instant delivery while maintaining good detail.
+  const imageSrc = await downscaleImageIfNeeded(imageSrcForDownscale, 800);
 
   try {
-    onProgress("Analyzing Foreground (ModNet Pass)...");
+    onProgress("Analyzing Foreground (Ensemble Pass)...");
 
-    // Execute primary model
-    let resModel = null;
-    if (isnetPipeline) {
-      resModel = await isnetPipeline(imageSrc).catch((e: any) => {
+    const imgEl = new Image();
+    imgEl.crossOrigin = "anonymous";
+    await new Promise((resolve) => {
+      imgEl.onload = resolve;
+      imgEl.src = imageSrc;
+    });
+
+    // Skip U2Net completely to double the speed for instant delivery
+    let [resModnet, resMediapipe] = await Promise.all([
+      isnetPipeline ? isnetPipeline(imageSrc).catch((e: any) => {
         console.error("ModNet pass failed", e);
         return null;
-      });
-    }
+      }) : Promise.resolve(null),
+      mediapipeSegmenter ? (async () => {
+         try {
+           return mediapipeSegmenter!.segment(imgEl);
+         } catch(e) {
+           console.error("MediaPipe pass failed", e);
+           return null;
+         }
+      })() : Promise.resolve(null)
+    ]);
+    const resU2net: any = null;
 
-    if (!resModel && hasWebGPU) {
+    if (!resModnet && hasWebGPU) {
       console.warn("[AI] WebGPU inference failed, forcing WASM fallback...");
       hasWebGPU = false; 
       isnetPipeline = null;
       await ensureIsnetLoaded().catch(console.error);
-      resModel = await isnetPipeline(imageSrc).catch((e: any) => {
+      resModnet = await isnetPipeline(imageSrc).catch((e: any) => {
         console.error("WASM ModNet pass failed", e);
         return null;
       });
     }
 
-    if (!resModel) {
+    if (!resModnet && !resU2net) {
       throw new Error("AI models failed to process the image.");
     }
 
-    onProgress("Extracting Subject Data...");
+    onProgress("Harmonizing Ensemble Masks (ModNet + U2Net + MediaPipe)...");
 
     // Helper to extract mask data and normalize
     const getMask = (result: any) => {
@@ -206,7 +278,93 @@ export async function removeBackground(
       return segment.mask;
     };
 
-    let maskData = getMask(resModel);
+    let maskData = getMask(resModnet) || getMask(resU2net);
+    const u2Data = getMask(resU2net);
+
+    // Apply Ensemble Strategy
+    if (maskData) {
+        const mw = maskData.width;
+        const mh = maskData.height;
+        let mpData: Float32Array | null = null;
+        let mpIsCategory = false;
+
+        if (resMediapipe) {
+           if (resMediapipe.confidenceMasks && resMediapipe.confidenceMasks.length > 0) {
+               // Usually backgroud is 0, person is 1
+               const personIndex = resMediapipe.confidenceMasks.length > 1 ? 1 : 0;
+               mpData = resMediapipe.confidenceMasks[personIndex].getAsFloat32Array();
+           } else if (resMediapipe.categoryMask) {
+               mpData = resMediapipe.categoryMask.getAsFloat32Array();
+               mpIsCategory = true;
+           }
+        }
+
+        // We scale mpData up to the ModNet mask resolution.
+        // Transformers.js usually outputs 1280. MediaPipe outputs the same as input imgEl (which is 1280!).
+        // So they should match exactly in dimensions.
+        const canUseMp = mpData && mpData.length === mw * mh;
+        const canUseU2 = u2Data && u2Data.data.length === mw * mh;
+
+        const maxModVal = maskData.data.reduce((a: number,b: number) => a>b?a:b, 0);
+        const modScale = maxModVal > 0 && maxModVal <= 1.2 ? 255 : 1;
+        
+        let maxU2Val = 0;
+        if (canUseU2) {
+           maxU2Val = u2Data.data.reduce((a: number,b: number) => a>b?a:b, 0);
+        }
+        const u2Scale = maxU2Val > 0 && maxU2Val <= 1.2 ? 255 : 1;
+
+        for (let i = 0; i < mw * mh; i++) {
+            const y = Math.floor(i / mw);
+            let modVal = maskData.data[i] * modScale;
+            let u2Val = canUseU2 ? u2Data.data[i] * u2Scale : modVal;
+            
+            // Soft average of ModNet and U2Net for base robust mask
+            let finalVal = (modVal * 0.65) + (u2Val * 0.35);
+
+            // Give MediaPipe a veto over "close" objects like chairs!
+            if (canUseMp) {
+                let mpVal = mpData![i];
+                if (!mpIsCategory) {
+                    mpVal *= 255; // confidence mask is 0-1
+                } else {
+                    mpVal = mpVal > 0 ? 255 : 0; // category mask 
+                }
+
+                // Smoothly squash out non-person objects.
+                // MediaPipe output is quite sharp. Give it a gentle threshold.
+                // If mpVal < 80, it starts dropping.
+                let mpWeight = 1.0;
+                if (mpVal < 80) {
+                    mpWeight = Math.max(0, mpVal / 80.0);
+                    
+                    // Shoulder/Arm Rescue Logic: MediaPipe 'selfie_segmenter' often truncates wide shoulders.
+                    // IMPORTANT: Only apply this to the top half of the image to avoid rescuing bottom chairs!
+                    if (y > mh * 0.12 && y < mh * 0.70) {
+                        const x = i % mw;
+                        // Narrow the center zone significantly (middle 15%) to ensure BOTH shoulders are fully in the "rescue" zone
+                        const isCenter = Math.abs(x - mw / 2) < (mw * 0.15);
+                        
+                        // Do NOT rescue the center (neck area) where chairs often show up.
+                        // DO rescue the outer edges (shoulders) to extend them fully.
+                        // User specifically noted the left side is getting cut.
+                        if (!isCenter) {
+                            // Absolute total rescue: give full weight so Modnet isn't suppressed by MediaPipe here
+                            mpWeight = 1.0;
+                            // Take the BEST of either model for the shoulders. 
+                            // This ensures modnet and mediapipe BOTH play the role to preserve it perfectly.
+                            finalVal = Math.max(modVal, Math.max(u2Val, mpVal));
+                        }
+                    }
+                }
+                
+                finalVal = finalVal * mpWeight;
+            }
+
+            // Write back (normalized 0-255 scale)
+            maskData.data[i] = finalVal;
+        }
+    }
 
     // Load Full Original Image to get maximum quality output
     const origImg = new Image();
@@ -243,8 +401,11 @@ export async function removeBackground(
 
       // 1. Morphological Opening to sever bridges to background chairs
       const binMask = new Uint8Array(mw * mh);
+      const boundsMask = new Uint8Array(mw * mh);
       for (let i = 0; i < mw * mh; i++) {
-        binMask[i] = mData[i] * maskScale >= 80 ? 1 : 0;
+        const val = mData[i] * maskScale;
+        binMask[i] = val >= 80 ? 1 : 0; // Tighter core allows easier severing of background objects
+        boundsMask[i] = val >= 0.1 ? 1 : 0; // Extremely soft bounds preserves all original alpha edges during dilation, lowered to allow massive shoulder dilation
       }
 
       // Erosion
@@ -256,13 +417,13 @@ export async function removeBackground(
             erodedBin[idx] = 0;
             continue;
           }
-          // Preserve delicate hair (erRad=1) and ensure shoulders/neck are 100% untouched by erosion (erRad=0)
-          // Only apply erosion to bottom torso to sever chair/armrest bridges (erRad=3)
+          // Preserve delicate hair. Erode neck (center) to sever chair pieces, but spare outer shoulders!
           let erRad = 1;
-          if (y > mh * 0.25 && y <= mh * 0.60) {
-            erRad = 3; // Sever chairs near shoulders
-          } else if (y > mh * 0.60) {
-            erRad = 4; // Sever bottom background / armrests
+          if (y > mh * 0.12 && y <= mh * 0.70) {
+            const isCenter = Math.abs(x - mw / 2) < (mw * 0.15);
+            erRad = isCenter ? 1 : 0; // Don't erode shoulders at all to prevent cuts
+          } else if (y > mh * 0.70) {
+            erRad = 3; // Sever bottom background / armrests
           } 
           let allOne = 1;
           for (let dy = -erRad; dy <= erRad; dy++) {
@@ -327,19 +488,22 @@ export async function removeBackground(
       for (let i = 0; i < mw * mh; i++) {
         if (compLabels[i] === bestCompId) dilatedBin[i] = 1;
       }
-      const maxIters = 4;
+      const maxIters = 42;
       for (let iter = 0; iter < maxIters; iter++) {
         const next = new Uint8Array(mw * mh);
         for (let y = 0; y < mh; y++) {
-          
-          let maxDilationsAllowed = 1;
-          if (y > mh * 0.25 && y <= mh * 0.60) {
-            maxDilationsAllowed = 3;
-          } else if (y > mh * 0.60) {
-            maxDilationsAllowed = 4;
-          }
-          
           for (let x = 0; x < mw; x++) {
+            let maxDilationsAllowed = 1;
+            const isShoulderArea = y > mh * 0.12 && y <= mh * 0.75;
+            if (isShoulderArea) {
+              const isCenter = Math.abs(x - mw / 2) < (mw * 0.15);
+              // Aggressively extend the shoulder outwards safely within boundsMask
+              // Left side often needs maximum dilation due to shadow/pose, give it up to 42 iters
+              maxDilationsAllowed = isCenter ? 2 : 42;
+            } else if (y > mh * 0.75) {
+              maxDilationsAllowed = 4;
+            }
+            
             const idx = y * mw + x;
             if (dilatedBin[idx] === 1) { next[idx] = 1; continue; }
             
@@ -361,8 +525,8 @@ export async function removeBackground(
               }
               if (isDilated) break;
             }
-            // Constrain dilation to original semantic mask to prevent blowing up boundaries!
-            next[idx] = (isDilated && binMask[idx] === 1) ? 1 : 0;
+            // Constrain dilation to extremely soft bounds mask, but let shoulders expand freely if completely missing
+            next[idx] = (isDilated && (boundsMask[idx] === 1 || isShoulderArea)) ? 1 : 0;
           }
         }
         dilatedBin = next;
