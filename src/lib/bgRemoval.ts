@@ -342,8 +342,8 @@ export async function removeBackground(
                     // IMPORTANT: Only apply this to the top half of the image to avoid rescuing bottom chairs!
                     if (y > mh * 0.12 && y < mh * 0.70) {
                         const x = i % mw;
-                        // Narrow the center zone significantly (middle 15%) to ensure BOTH shoulders are fully in the "rescue" zone
-                        const isCenter = Math.abs(x - mw / 2) < (mw * 0.15);
+                        // Center zone (middle 20%) - this covers the neck/head area where chairs/thrones are often visible behind
+                        const isCenter = Math.abs(x - mw / 2) < (mw * 0.20);
                         
                         // Do NOT rescue the center (neck area) where chairs often show up.
                         // DO rescue the outer edges (shoulders) to extend them fully.
@@ -354,6 +354,13 @@ export async function removeBackground(
                             // Take the BEST of either model for the shoulders. 
                             // This ensures modnet and mediapipe BOTH play the role to preserve it perfectly.
                             finalVal = Math.max(modVal, Math.max(u2Val, mpVal));
+                        } else {
+                            // Aggressively suppress chairs directly behind the neck!
+                            // If MediaPipe is confident this is NOT a person (val < 40), squash it completely!
+                            if (mpVal < 40) {
+                                mpWeight = 0.0;
+                                finalVal = 0; 
+                            }
                         }
                     }
                 }
@@ -420,8 +427,8 @@ export async function removeBackground(
           // Preserve delicate hair. Erode neck (center) to sever chair pieces, but spare outer shoulders!
           let erRad = 1;
           if (y > mh * 0.12 && y <= mh * 0.70) {
-            const isCenter = Math.abs(x - mw / 2) < (mw * 0.15);
-            erRad = isCenter ? 1 : 0; // Don't erode shoulders at all to prevent cuts
+            const isCenter = Math.abs(x - mw / 2) < (mw * 0.20);
+            erRad = isCenter ? 3 : 0; // Agonize chairs directly behind neck by severely eroding, but spare outer shoulders to 0!
           } else if (y > mh * 0.70) {
             erRad = 3; // Sever bottom background / armrests
           } 
@@ -496,10 +503,10 @@ export async function removeBackground(
             let maxDilationsAllowed = 1;
             const isShoulderArea = y > mh * 0.12 && y <= mh * 0.75;
             if (isShoulderArea) {
-              const isCenter = Math.abs(x - mw / 2) < (mw * 0.15);
-              // Aggressively extend the shoulder outwards safely within boundsMask
-              // Left side often needs maximum dilation due to shadow/pose, give it up to 42 iters
-              maxDilationsAllowed = isCenter ? 2 : 42;
+              const isCenter = Math.abs(x - mw / 2) < (mw * 0.20);
+              // Give the center up to 4 dilations so we can perfectly restore the neck that got 3-eroded
+              // Give shoulders up to 42 dilations because we don't erode them at all and want them to expand out
+              maxDilationsAllowed = isCenter ? 4 : 42;
             } else if (y > mh * 0.75) {
               maxDilationsAllowed = 4;
             }
