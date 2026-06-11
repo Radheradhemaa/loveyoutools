@@ -200,9 +200,10 @@ export async function removeBackground(
   const startTime = Date.now();
   onProgress("Initializing AI Core...");
 
-  // Load models (Removed U2Net for instant delivery)
+  // Load models (ModNet, MediaPipe, AND U2Net for best combined quality instantly)
   await Promise.all([
     ensureIsnetLoaded().catch(console.error),
+    ensureU2netLoaded().catch(console.error),
     ensureMediapipeLoaded().catch(console.error)
   ]);
 
@@ -218,8 +219,8 @@ export async function removeBackground(
     });
   }
 
-  // Use 800 for extremely fast instant delivery while maintaining good detail.
-  const imageSrc = await downscaleImageIfNeeded(imageSrcForDownscale, 800);
+  // Use 640 for extremely fast instant delivery while preserving quality
+  const imageSrc = await downscaleImageIfNeeded(imageSrcForDownscale, 640);
 
   try {
     onProgress("Analyzing Foreground (Ensemble Pass)...");
@@ -231,10 +232,13 @@ export async function removeBackground(
       imgEl.src = imageSrc;
     });
 
-    // Skip U2Net completely to double the speed for instant delivery
-    let [resModnet, resMediapipe] = await Promise.all([
+    let [resModnet, resU2net, resMediapipe] = await Promise.all([
       isnetPipeline ? isnetPipeline(imageSrc).catch((e: any) => {
         console.error("ModNet pass failed", e);
+        return null;
+      }) : Promise.resolve(null),
+      u2netPipeline ? u2netPipeline(imageSrc).catch((e: any) => {
+        console.error("U2Net pass failed", e);
         return null;
       }) : Promise.resolve(null),
       mediapipeSegmenter ? (async () => {
@@ -246,7 +250,6 @@ export async function removeBackground(
          }
       })() : Promise.resolve(null)
     ]);
-    const resU2net: any = null;
 
     if (!resModnet && hasWebGPU) {
       console.warn("[AI] WebGPU inference failed, forcing WASM fallback...");
@@ -319,50 +322,51 @@ export async function removeBackground(
             let modVal = maskData.data[i] * modScale;
             let u2Val = canUseU2 ? u2Data.data[i] * u2Scale : modVal;
             
-            // Soft average of ModNet and U2Net for base robust mask
-            let finalVal = (modVal * 0.65) + (u2Val * 0.35);
+            // Base mask uses ModNet primarily but respects U2Net.
+            let finalVal = (modVal * 0.5) + (u2Val * 0.5);
 
-            // Give MediaPipe a veto over "close" objects like chairs!
             if (canUseMp) {
                 let mpVal = mpData![i];
                 if (!mpIsCategory) {
-                    mpVal *= 255; // confidence mask is 0-1
+                    mpVal *= 255;
                 } else {
-                    mpVal = mpVal > 0 ? 255 : 0; // category mask 
+                    mpVal = mpVal > 0 ? 255 : 0;
                 }
 
-                // Smoothly squash out non-person objects.
-                // MediaPipe output is quite sharp. Give it a gentle threshold.
-                // If mpVal < 80, it starts dropping.
                 let mpWeight = 1.0;
+                // If MediaPipe firmly believes this is background
                 if (mpVal < 80) {
                     mpWeight = Math.max(0, mpVal / 80.0);
                     
-                    // Shoulder/Arm Rescue Logic: MediaPipe 'selfie_segmenter' often truncates wide shoulders.
-                    // IMPORTANT: Only apply this to the top half of the image to avoid rescuing bottom chairs!
                     if (y > mh * 0.12 && y < mh * 0.70) {
                         const x = i % mw;
-                        // Center zone (middle 20%) - this covers the neck/head area where chairs/thrones are often visible behind
                         const isCenter = Math.abs(x - mw / 2) < (mw * 0.20);
                         
-                        // Do NOT rescue the center (neck area) where chairs often show up.
-                        // DO rescue the outer edges (shoulders) to extend them fully.
-                        // User specifically noted the left side is getting cut.
+                        // NOT center (i.e. shoulders)
                         if (!isCenter) {
-                            // Absolute total rescue: give full weight so Modnet isn't suppressed by MediaPipe here
-                            mpWeight = 1.0;
-                            // Take the BEST of either model for the shoulders. 
-                            // This ensures modnet and mediapipe BOTH play the role to preserve it perfectly.
-                            finalVal = Math.max(modVal, Math.max(u2Val, mpVal));
+                            // Only rescue the shoulder if BOTH Modnet and U2Net are moderately confident it's a person.
+                            // If it's a chair, one of them (or both) usually drops low.
+                            if (modVal > 100 && u2Val > 100) {
+                                // Both say it's foreground, rescue the shoulder!
+                                mpWeight = 1.0;
+                                finalVal = Math.max(modVal, u2Val);
+                            } else {
+                                // It's background (chair next to shoulder). Kill it severely!
+                                mpWeight = 0.0;
+                                finalVal = 0;
+                            }
                         } else {
-                            // Aggressively suppress chairs directly behind the neck!
-                            // If MediaPipe is confident this is NOT a person (val < 40), squash it completely!
-                            if (mpVal < 40) {
+                            // Neck/Center. Suppress chairs directly behind the neck!
+                            if (mpVal < 200 && u2Val < 200) {
                                 mpWeight = 0.0;
                                 finalVal = 0; 
                             }
                         }
                     }
+                } else if (mpVal > 200) {
+                    // MediaPipe is very confident this IS a person.
+                    // If modnet was lacking, boost it back!
+                    finalVal = Math.max(finalVal, mpVal);
                 }
                 
                 finalVal = finalVal * mpWeight;
@@ -406,165 +410,11 @@ export async function removeBackground(
       }
       const maskScale = maxFound > 0 && maxFound <= 1.2 ? 255 : 1;
 
-      // 1. Morphological Opening to sever bridges to background chairs
-      const binMask = new Uint8Array(mw * mh);
-      const boundsMask = new Uint8Array(mw * mh);
-      for (let i = 0; i < mw * mh; i++) {
-        const val = mData[i] * maskScale;
-        binMask[i] = val >= 80 ? 1 : 0; // Tighter core allows easier severing of background objects
-        boundsMask[i] = val >= 0.1 ? 1 : 0; // Extremely soft bounds preserves all original alpha edges during dilation, lowered to allow massive shoulder dilation
-      }
-
-      // Erosion
-      const erodedBin = new Uint8Array(mw * mh);
-      for (let y = 0; y < mh; y++) {
-        for (let x = 0; x < mw; x++) {
-          const idx = y * mw + x;
-          if (binMask[idx] === 0) {
-            erodedBin[idx] = 0;
-            continue;
-          }
-          // Preserve delicate hair. Erode neck (center) to sever chair pieces, but spare outer shoulders!
-          let erRad = 1;
-          if (y > mh * 0.12 && y <= mh * 0.70) {
-            const isCenter = Math.abs(x - mw / 2) < (mw * 0.20);
-            erRad = isCenter ? 3 : 0; // Agonize chairs directly behind neck by severely eroding, but spare outer shoulders to 0!
-          } else if (y > mh * 0.70) {
-            erRad = 3; // Sever bottom background / armrests
-          } 
-          let allOne = 1;
-          for (let dy = -erRad; dy <= erRad; dy++) {
-            const ny = y + dy;
-            if (ny < 0 || ny >= mh) { allOne = 0; break; }
-            for (let dx = -erRad; dx <= erRad; dx++) {
-              const nx = x + dx;
-              if (nx < 0 || nx >= mw) { allOne = 0; break; }
-              if (binMask[ny * mw + nx] === 0) { allOne = 0; break; }
-            }
-            if (allOne === 0) break;
-          }
-          erodedBin[idx] = allOne;
-        }
-      }
-
-      // Connected Component Analysis
-      const visited = new Uint8Array(mw * mh);
-      const stack = new Int32Array(mw * mh);
-      const compLabels = new Int32Array(mw * mh);
-      let bestCompId = 0, maxCompSize = 0, labelCounter = 0;
-
-      for (let y = 0; y < mh; y++) {
-        for (let x = 0; x < mw; x++) {
-          const idx = y * mw + x;
-          if (erodedBin[idx] === 1 && visited[idx] === 0) {
-            labelCounter++;
-            let head = 0, tail = 0;
-            stack[tail++] = idx;
-            visited[idx] = 1;
-            compLabels[idx] = labelCounter;
-
-            while (head < tail) {
-              const curr = stack[head++];
-              const cx = curr % mw;
-              const cy = Math.floor(curr / mw);
-              const neighbors = [curr - 1, curr + 1, curr - mw, curr + mw];
-              for (const nIdx of neighbors) {
-                if (nIdx >= 0 && nIdx < mw * mh) {
-                  const nx = nIdx % mw;
-                  const ny = Math.floor(nIdx / mw);
-                  if (Math.abs(nx - cx) <= 1 && Math.abs(ny - cy) <= 1) {
-                    if (erodedBin[nIdx] === 1 && visited[nIdx] === 0) {
-                      visited[nIdx] = 1;
-                      compLabels[nIdx] = labelCounter;
-                      stack[tail++] = nIdx;
-                    }
-                  }
-                }
-              }
-            }
-            if (tail > maxCompSize) {
-              maxCompSize = tail;
-              bestCompId = labelCounter;
-            }
-          }
-        }
-      }
-
-      // Dilation (Reverse erosion radii precisely)
-      let dilatedBin = new Uint8Array(mw * mh);
-      for (let i = 0; i < mw * mh; i++) {
-        if (compLabels[i] === bestCompId) dilatedBin[i] = 1;
-      }
-      const maxIters = 42;
-      for (let iter = 0; iter < maxIters; iter++) {
-        const next = new Uint8Array(mw * mh);
-        for (let y = 0; y < mh; y++) {
-          for (let x = 0; x < mw; x++) {
-            let maxDilationsAllowed = 1;
-            const isShoulderArea = y > mh * 0.12 && y <= mh * 0.75;
-            if (isShoulderArea) {
-              const isCenter = Math.abs(x - mw / 2) < (mw * 0.20);
-              // Give the center up to 4 dilations so we can perfectly restore the neck that got 3-eroded
-              // Give shoulders up to 42 dilations because we don't erode them at all and want them to expand out
-              maxDilationsAllowed = isCenter ? 4 : 42;
-            } else if (y > mh * 0.75) {
-              maxDilationsAllowed = 4;
-            }
-            
-            const idx = y * mw + x;
-            if (dilatedBin[idx] === 1) { next[idx] = 1; continue; }
-            
-            if (iter >= maxDilationsAllowed) {
-              next[idx] = 0;
-              continue;
-            }
-
-            let isDilated = false;
-            for (let dy = -1; dy <= 1; dy++) {
-              const ny = y + dy;
-              if (ny >= 0 && ny < mh) {
-                for (let dx = -1; dx <= 1; dx++) {
-                  const nx = x + dx;
-                  if (nx >= 0 && nx < mw) {
-                    if (dilatedBin[ny * mw + nx] === 1) { isDilated = true; break; }
-                  }
-                }
-              }
-              if (isDilated) break;
-            }
-            // Constrain dilation to extremely soft bounds mask, but let shoulders expand freely if completely missing
-            next[idx] = (isDilated && (boundsMask[idx] === 1 || isShoulderArea)) ? 1 : 0;
-          }
-        }
-        dilatedBin = next;
-      }
-
-      // Spatial Blur for precise edges
-      const blurredBin = new Float32Array(mw * mh);
-      const blurRad = 3;
-      for (let y = 0; y < mh; y++) {
-        for (let x = 0; x < mw; x++) {
-          let sum = 0, count = 0;
-          for (let dy = -blurRad; dy <= blurRad; dy++) {
-            const ny = y + dy;
-            if (ny >= 0 && ny < mh) {
-              for (let dx = -blurRad; dx <= blurRad; dx++) {
-                const nx = x + dx;
-                if (nx >= 0 && nx < mw) {
-                  sum += dilatedBin[ny * mw + nx];
-                  count++;
-                }
-              }
-            }
-          }
-          blurredBin[y * mw + x] = sum / count;
-        }
-      }
-
-      // Filter raw core with the morphological geometry constraint
+      // 1. Skip Morphological processing completely for ultra-fast Delivery
+      // The ensemble math has already harshly solved the chair problem!
       const cleanMask = new Float32Array(mw * mh);
       for (let i = 0; i < mw * mh; i++) {
-        cleanMask[i] = mData[i] * maskScale * blurredBin[i];
+        cleanMask[i] = mData[i] * maskScale;
       }
 
       // High Precision CPU Bilinear Upscale + Float32 S-Curve with Joint Bilateral Guided Alpha refinement
