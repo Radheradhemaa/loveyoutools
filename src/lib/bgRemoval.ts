@@ -1,5 +1,4 @@
 import { pipeline, env } from "@huggingface/transformers";
-import { ImageSegmenter, FilesetResolver } from "@mediapipe/tasks-vision";
 
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
@@ -12,7 +11,6 @@ if (env.backends?.onnx?.wasm) {
 
 let isnetPipeline: any = null;
 let u2netPipeline: any = null;
-let mediapipeSegmenter: ImageSegmenter | null = null;
 
 // Check for WebGPU adapter to avoid lazy initialization failures
 let hasWebGPU = false;
@@ -85,50 +83,13 @@ export const ensureU2netLoaded = async () => {
   }
 };
 
-export const ensureMediapipeLoaded = async () => {
-  if (!mediapipeSegmenter) {
-    try {
-      const vision = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
-      );
-      mediapipeSegmenter = await ImageSegmenter.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
-          delegate: "GPU"
-        },
-        runningMode: "IMAGE",
-        outputCategoryMask: false,
-        outputConfidenceMasks: true
-      });
-    } catch (e) {
-      console.warn("[AI] MediaPipe GPU load failed, retrying with CPU...", e);
-      // Fallback
-      if (!mediapipeSegmenter) {
-        const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
-        );
-        mediapipeSegmenter = await ImageSegmenter.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
-            delegate: "CPU"
-          },
-          runningMode: "IMAGE",
-          outputCategoryMask: false,
-          outputConfidenceMasks: true
-        });
-      }
-    }
-  }
-};
-
 /**
  * Compatibility stubs.
  */
 export const ensurePreloaded = async () => {
   await Promise.all([
     ensureIsnetLoaded().catch(console.error),
-    ensureU2netLoaded().catch(console.error),
-    ensureMediapipeLoaded().catch(console.error)
+    ensureU2netLoaded().catch(console.error)
   ]);
 };
 export const ensureModnetLoaded = async () => ensureIsnetLoaded();
@@ -200,11 +161,10 @@ export async function removeBackground(
   const startTime = Date.now();
   onProgress("Initializing AI Core...");
 
-  // Load models (ModNet, MediaPipe, AND U2Net for best combined quality instantly)
+  // Load models (ModNet AND U2Net for best combined quality instantly)
   await Promise.all([
     ensureIsnetLoaded().catch(console.error),
-    ensureU2netLoaded().catch(console.error),
-    ensureMediapipeLoaded().catch(console.error)
+    ensureU2netLoaded().catch(console.error)
   ]);
 
   // Ensure input is a string (DataURL or URL)
@@ -219,8 +179,8 @@ export async function removeBackground(
     });
   }
 
-  // Use 640 for extremely fast instant delivery while preserving quality
-  const imageSrc = await downscaleImageIfNeeded(imageSrcForDownscale, 640);
+  // Use 512 for instant mask generation speed (< 3s)
+  const imageSrc = await downscaleImageIfNeeded(imageSrcForDownscale, 512);
 
   try {
     onProgress("Analyzing Foreground (Ensemble Pass)...");
@@ -232,7 +192,7 @@ export async function removeBackground(
       imgEl.src = imageSrc;
     });
 
-    let [resModnet, resU2net, resMediapipe] = await Promise.all([
+    let [resModnet, resU2net] = await Promise.all([
       isnetPipeline ? isnetPipeline(imageSrc).catch((e: any) => {
         console.error("ModNet pass failed", e);
         return null;
@@ -240,15 +200,7 @@ export async function removeBackground(
       u2netPipeline ? u2netPipeline(imageSrc).catch((e: any) => {
         console.error("U2Net pass failed", e);
         return null;
-      }) : Promise.resolve(null),
-      mediapipeSegmenter ? (async () => {
-         try {
-           return mediapipeSegmenter!.segment(imgEl);
-         } catch(e) {
-           console.error("MediaPipe pass failed", e);
-           return null;
-         }
-      })() : Promise.resolve(null)
+      }) : Promise.resolve(null)
     ]);
 
     if (!resModnet && hasWebGPU) {
@@ -266,7 +218,7 @@ export async function removeBackground(
       throw new Error("AI models failed to process the image.");
     }
 
-    onProgress("Harmonizing Ensemble Masks (ModNet + U2Net + MediaPipe)...");
+    onProgress("Harmonizing Ensemble Masks (ModNet + U2Net)...");
 
     // Helper to extract mask data and normalize
     const getMask = (result: any) => {
@@ -288,24 +240,6 @@ export async function removeBackground(
     if (maskData) {
         const mw = maskData.width;
         const mh = maskData.height;
-        let mpData: Float32Array | null = null;
-        let mpIsCategory = false;
-
-        if (resMediapipe) {
-           if (resMediapipe.confidenceMasks && resMediapipe.confidenceMasks.length > 0) {
-               // Usually backgroud is 0, person is 1
-               const personIndex = resMediapipe.confidenceMasks.length > 1 ? 1 : 0;
-               mpData = resMediapipe.confidenceMasks[personIndex].getAsFloat32Array();
-           } else if (resMediapipe.categoryMask) {
-               mpData = resMediapipe.categoryMask.getAsFloat32Array();
-               mpIsCategory = true;
-           }
-        }
-
-        // We scale mpData up to the ModNet mask resolution.
-        // Transformers.js usually outputs 1280. MediaPipe outputs the same as input imgEl (which is 1280!).
-        // So they should match exactly in dimensions.
-        const canUseMp = mpData && mpData.length === mw * mh;
         const canUseU2 = u2Data && u2Data.data.length === mw * mh;
 
         const maxModVal = maskData.data.reduce((a: number,b: number) => a>b?a:b, 0);
@@ -318,58 +252,20 @@ export async function removeBackground(
         const u2Scale = maxU2Val > 0 && maxU2Val <= 1.2 ? 255 : 1;
 
         for (let i = 0; i < mw * mh; i++) {
-            const y = Math.floor(i / mw);
             let modVal = maskData.data[i] * modScale;
             let u2Val = canUseU2 ? u2Data.data[i] * u2Scale : modVal;
             
             // Base mask uses ModNet primarily but respects U2Net.
-            let finalVal = (modVal * 0.5) + (u2Val * 0.5);
-
-            if (canUseMp) {
-                let mpVal = mpData![i];
-                if (!mpIsCategory) {
-                    mpVal *= 255;
-                } else {
-                    mpVal = mpVal > 0 ? 255 : 0;
-                }
-
-                let mpWeight = 1.0;
-                // If MediaPipe firmly believes this is background
-                if (mpVal < 80) {
-                    mpWeight = Math.max(0, mpVal / 80.0);
-                    
-                    if (y > mh * 0.12 && y < mh * 0.70) {
-                        const x = i % mw;
-                        const isCenter = Math.abs(x - mw / 2) < (mw * 0.20);
-                        
-                        // NOT center (i.e. shoulders)
-                        if (!isCenter) {
-                            // Only rescue the shoulder if BOTH Modnet and U2Net are moderately confident it's a person.
-                            // If it's a chair, one of them (or both) usually drops low.
-                            if (modVal > 100 && u2Val > 100) {
-                                // Both say it's foreground, rescue the shoulder!
-                                mpWeight = 1.0;
-                                finalVal = Math.max(modVal, u2Val);
-                            } else {
-                                // It's background (chair next to shoulder). Kill it severely!
-                                mpWeight = 0.0;
-                                finalVal = 0;
-                            }
-                        } else {
-                            // Neck/Center. Suppress chairs directly behind the neck!
-                            if (mpVal < 200 && u2Val < 200) {
-                                mpWeight = 0.0;
-                                finalVal = 0; 
-                            }
-                        }
-                    }
-                } else if (mpVal > 200) {
-                    // MediaPipe is very confident this IS a person.
-                    // If modnet was lacking, boost it back!
-                    finalVal = Math.max(finalVal, mpVal);
-                }
-                
-                finalVal = finalVal * mpWeight;
+            // If both fail or differ wildly, taking max or sum/2 helps smooth it, but here we just average them.
+            // Because U2Net doesn't drop chairs as well, we slightly favor Modnet for object elimination.
+            let finalVal = 0;
+            if (modVal > 220 && u2Val > 220) {
+                finalVal = Math.max(modVal, u2Val);
+            } else if (modVal < 80 || u2Val < 80) {
+                // If one model heavily doubts it, we lean towards the skeptical one to kill chairs.
+                finalVal = Math.min(modVal, u2Val);
+            } else {
+                finalVal = (modVal * 0.6) + (u2Val * 0.4);
             }
 
             // Write back (normalized 0-255 scale)
@@ -420,8 +316,9 @@ export async function removeBackground(
       // High Precision CPU Bilinear Upscale + Float32 S-Curve with Joint Bilateral Guided Alpha refinement
       // Pre-calculates upscaled raw alphas to run a guided 3x3 bilateral edge filtering pass.
       const rawAlphas = new Float32Array(w * h);
-      const floor = 10;
-      const ceil = 255;
+      // Aggressive floor to cut out small halos, but still preserve enough structure
+      const floor = 80;
+      const ceil = 220;
 
       for (let y = 0; y < h; y++) {
         const srcY = Math.max(
@@ -522,24 +419,20 @@ export async function removeBackground(
               a = sumAlpha / sumW;
             }
 
-            if (lum > 0.82) {
-              if (isShoulderRegion) {
-                // DON'T erode alpha on bright shoulders, otherwise the edge gets lost in the lighting!
-                // Instead, keep the boundary solid if it's already mostly solid.
-                if (a > 60) a = Math.min(255, a * 1.15);
-              } else {
-                a *= 0.72; // Dim alpha to smoothly erode the bright halo on head/hair
-              }
-            } else if (lum < 0.22) {
-              a = Math.min(255, a * 1.05); // retain intricate dark edge details
-            } else if (isShoulderRegion && a > 80) {
-              // Firm up the shoulder edge that is NOT bright white lighting
-              a = Math.min(255, a * 1.1);
+            // High contrast snap for crystal clear edges without jagged clipping
+            if (a < 50) {
+                a = 0; // Cut off noise and completely obliterate halos
+            } else if (a > 200) {
+                a = 255; // Snap the inside to solid early
+            } else {
+                // Sharpen intermediate values for a crisp but anti-aliased edge
+                const t = (a - 50) / 150;
+                a = Math.round((t * t * (3 - 2 * t)) * 255);
             }
           }
 
-          if (a < 4) a = 0;
-          if (a > 251) a = 255;
+          if (a < 2) a = 0;
+          if (a > 253) a = 255;
 
           pixels[idx + 3] = Math.round(a);
         }
@@ -677,34 +570,9 @@ async function polishCutoutEdges(blob: Blob): Promise<Blob> {
           }
 
           const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-
-          // Fix lighting bleed/white halos around the edges WITHOUT turning them black
-          if (lum > 175) {
-             const isShoulderRegion = Math.floor(i / w) > h * 0.42;
-             
-             let maxDim = 0.08;
-             if (isShoulderRegion) {
-                 maxDim = 0.15; // Mild dimming so shoulder separates from background but doesn't look black
-             }
-
-             const dimFactor = 1.0 - Math.min(maxDim, (lum - 175) / 200); // very gentle
-             data[idx] = Math.max(0, Math.min(255, Math.round(r * dimFactor)));
-             data[idx + 1] = Math.max(0, Math.min(255, Math.round(g * dimFactor)));
-             data[idx + 2] = Math.max(0, Math.min(255, Math.round(b * dimFactor)));
-             
-             // Alpha erosion to clip bright white borders
-             if (!isShoulderRegion) {
-                 if (edgeState === 1 && lum > 190) {
-                    finalAlpha = Math.round(finalAlpha * 0.90);
-                 } else if (edgeState === 2 && lum > 210) {
-                    finalAlpha = Math.round(finalAlpha * 0.95);
-                 }
-             } else if (lum > 240) {
-                 // Slightly clip pure white highlight on shoulder to avoid bleeding into white background
-                 finalAlpha = Math.round(finalAlpha * 0.98);
-             }
-             data[idx + 3] = finalAlpha;
-          }
+          
+          // No edge dimming to avoid black lines on the boundary.
+          data[idx + 3] = finalAlpha;
         }
       }
 
