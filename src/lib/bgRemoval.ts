@@ -255,17 +255,55 @@ export async function removeBackground(
             let modVal = maskData.data[i] * modScale;
             let u2Val = canUseU2 ? u2Data.data[i] * u2Scale : modVal;
             
-            // Base mask uses ModNet primarily but respects U2Net.
-            // If both fail or differ wildly, taking max or sum/2 helps smooth it, but here we just average them.
-            // Because U2Net doesn't drop chairs as well, we slightly favor Modnet for object elimination.
-            let finalVal = 0;
-            if (modVal > 220 && u2Val > 220) {
-                finalVal = Math.max(modVal, u2Val);
-            } else if (modVal < 80 || u2Val < 80) {
-                // If one model heavily doubts it, we lean towards the skeptical one to kill chairs.
-                finalVal = Math.min(modVal, u2Val);
-            } else {
-                finalVal = (modVal * 0.6) + (u2Val * 0.4);
+            // "Any chair, furniture, or background object touching the subject or close to subject must be treated as background and removed completely, while preserving the original shape of the subject's shoulders, neck, hair, and clothing."
+            // U2Net hallucinates chairs. ModNet typically scores chairs exactly 0-10. 
+            // ModNet can be weak (e.g. 25-60) on white clothing matching the background.
+            // We use ModNet as a strict semantic gate: if ModNet is < 20, mathematically block U2Net to erase chairs absolutely. 
+            // If ModNet is > 20, let U2Net reinforce the shape to perfectly rescue white clothing.
+            
+            const x = i % mw;
+            const y = Math.floor(i / mw);
+            const distFromCenterX = Math.abs(x - mw / 2);
+            
+            // Keep threshold low enough to not kill white shirts (ModNet scores them ~30-80 when matching bg)
+            // But high enough to kill chairs (ModNet scores chairs 0-25 typically)
+            let gateThreshold = 15; // Base threshold to clear pure background everywhere
+            
+            // Neck and shoulders usually appear below the top 15% of the image
+            if (y > mh * 0.15) {
+                // Progressively increase suppression as we move away from the absolute center spine
+                if (distFromCenterX > (mw * 0.10)) {
+                    gateThreshold = 40; // Firm block right next to the neck
+                }
+                if (distFromCenterX > (mw * 0.20)) {
+                    gateThreshold = 55; // Harder block on the shoulder drop-off
+                }
+                if (distFromCenterX > (mw * 0.30)) {
+                    gateThreshold = 70; // Maximum block for outer background objects
+                }
+            }
+            
+            let u2Weight = 0;
+            if (modVal > gateThreshold) {
+                // Smoothly ease in U2Net over a confidence window to prevent jagged edges on clothing.
+                u2Weight = Math.min(1.0, (modVal - gateThreshold) / 25.0);
+            }
+            
+            // CRITICAL FIX FOR CHAIRS NEAR NECK/SHOULDERS:
+            // In the upper body region (head, neck, upper shoulders), ModNet is extremely accurate.
+            // If ModNet is weak (< 120), it's just boundary blur or background.
+            // We must STOP U2Net from artificially boosting this blur into a solid object (chair).
+            if (y < mh * 0.6 && distFromCenterX > (mw * 0.12)) {
+                if (modVal < 120) {
+                    u2Weight = 0; // Completely block U2Net. Rely purely on ModNet's natural edge.
+                }
+            }
+            
+            let finalVal = Math.max(modVal, u2Val * u2Weight);
+            
+            // Extra safety: completely obliterate U2Net hallucinations if ModNet is super confident it's background
+            if (distFromCenterX > (mw * 0.15) && modVal < 20 && u2Val > 150) {
+                 finalVal = 0; 
             }
 
             // Write back (normalized 0-255 scale)
@@ -316,9 +354,9 @@ export async function removeBackground(
       // High Precision CPU Bilinear Upscale + Float32 S-Curve with Joint Bilateral Guided Alpha refinement
       // Pre-calculates upscaled raw alphas to run a guided 3x3 bilateral edge filtering pass.
       const rawAlphas = new Float32Array(w * h);
-      // Aggressive floor to cut out small halos, but still preserve enough structure
-      const floor = 80;
-      const ceil = 220;
+      // Floor suppresses faint background/furniture objects 
+      const floor = 25;
+      const ceil = 240;
 
       for (let y = 0; y < h; y++) {
         const srcY = Math.max(
@@ -420,13 +458,13 @@ export async function removeBackground(
             }
 
             // High contrast snap for crystal clear edges without jagged clipping
-            if (a < 50) {
-                a = 0; // Cut off noise and completely obliterate halos
-            } else if (a > 200) {
+            if (a < 35) {
+                a = 0; // Cut off noise, chairs, and faint background artifacts
+            } else if (a > 235) {
                 a = 255; // Snap the inside to solid early
             } else {
                 // Sharpen intermediate values for a crisp but anti-aliased edge
-                const t = (a - 50) / 150;
+                const t = (a - 35) / 200;
                 a = Math.round((t * t * (3 - 2 * t)) * 255);
             }
           }
