@@ -265,44 +265,49 @@ export async function removeBackground(
             const y = Math.floor(i / mw);
             const distFromCenterX = Math.abs(x - mw / 2);
             
-            // Keep threshold low enough to not kill white shirts (ModNet scores them ~30-80 when matching bg)
-            // But high enough to kill chairs (ModNet scores chairs 0-25 typically)
-            let gateThreshold = 15; // Base threshold to clear pure background everywhere
+            let finalVal = 0;
             
-            // Neck and shoulders usually appear below the top 15% of the image
-            if (y > mh * 0.15) {
-                // Progressively increase suppression as we move away from the absolute center spine
-                if (distFromCenterX > (mw * 0.10)) {
-                    gateThreshold = 40; // Firm block right next to the neck
+            // STRICT PORTRAIT GATING
+            // ModNet (person segmentation) is the absolute authority on "is this a person".
+            // IS-Net (general salient object) is only used to sharpen edges of what ModNet already approved.
+            
+            if (modVal < 35) {
+                // Absolute threshold. Anything below 35 in ModNet is forcefully rejected as background/chair.
+                // This completely kills chairs even if they are touching the neck.
+                finalVal = 0;
+            } else if (modVal < 90) {
+                // Ambiguous zone (35 - 90). Could be a fuzzy edge of a white shirt, or a high-scoring chair edge.
+                // We only allow IS-Net to help if it's extremely confident.
+                // And we heavily penalize it if it's in the outer/upper background regions.
+                let allowISNet = true;
+                
+                // If we are in the upper 60% of the image (head/neck area), and outside the immediate face center,
+                // ModNet is extremely accurate for skin/hair. Any weakness here is a chair or background.
+                if (y < mh * 0.6 && distFromCenterX > (mw * 0.12)) {
+                    allowISNet = false;
                 }
+                
+                // If it's further out on the sides, always reject weak ModNet signals to kill side-chairs.
                 if (distFromCenterX > (mw * 0.20)) {
-                    gateThreshold = 55; // Harder block on the shoulder drop-off
+                    allowISNet = false;
                 }
-                if (distFromCenterX > (mw * 0.30)) {
-                    gateThreshold = 70; // Maximum block for outer background objects
+
+                if (allowISNet) {
+                    // Smooth ease-in for IS-Net to rescue white shirts in the lower body
+                    let u2Weight = (modVal - 35) / 55.0; // 0.0 to 1.0
+                    finalVal = Math.max(modVal, u2Val * u2Weight);
+                } else {
+                    finalVal = 0; // Crush it
                 }
+            } else {
+                // ModNet is confident (> 90). This is definitely the person.
+                // Let IS-Net sharpen the edges fully.
+                finalVal = Math.max(modVal, u2Val);
             }
             
-            let u2Weight = 0;
-            if (modVal > gateThreshold) {
-                // Smoothly ease in U2Net over a confidence window to prevent jagged edges on clothing.
-                u2Weight = Math.min(1.0, (modVal - gateThreshold) / 25.0);
-            }
-            
-            // CRITICAL FIX FOR CHAIRS NEAR NECK/SHOULDERS:
-            // In the upper body region (head, neck, upper shoulders), ModNet is extremely accurate.
-            // If ModNet is weak (< 120), it's just boundary blur or background.
-            // We must STOP U2Net from artificially boosting this blur into a solid object (chair).
-            if (y < mh * 0.6 && distFromCenterX > (mw * 0.12)) {
-                if (modVal < 120) {
-                    u2Weight = 0; // Completely block U2Net. Rely purely on ModNet's natural edge.
-                }
-            }
-            
-            let finalVal = Math.max(modVal, u2Val * u2Weight);
-            
-            // Extra safety: completely obliterate U2Net hallucinations if ModNet is super confident it's background
-            if (distFromCenterX > (mw * 0.15) && modVal < 20 && u2Val > 150) {
+            // Extreme fail-safe: If ModNet says background (<45) but IS-Net says foreground (>150),
+            // it's a 100% confirmed hallucinated background object (like a chair). Kill it.
+            if (modVal < 45 && u2Val > 150) {
                  finalVal = 0; 
             }
 
@@ -355,7 +360,7 @@ export async function removeBackground(
       // Pre-calculates upscaled raw alphas to run a guided 3x3 bilateral edge filtering pass.
       const rawAlphas = new Float32Array(w * h);
       // Floor suppresses faint background/furniture objects 
-      const floor = 25;
+      const floor = 45;
       const ceil = 240;
 
       for (let y = 0; y < h; y++) {
@@ -458,13 +463,13 @@ export async function removeBackground(
             }
 
             // High contrast snap for crystal clear edges without jagged clipping
-            if (a < 35) {
+            if (a < 50) {
                 a = 0; // Cut off noise, chairs, and faint background artifacts
-            } else if (a > 235) {
+            } else if (a > 230) {
                 a = 255; // Snap the inside to solid early
             } else {
                 // Sharpen intermediate values for a crisp but anti-aliased edge
-                const t = (a - 35) / 200;
+                const t = (a - 50) / 180;
                 a = Math.round((t * t * (3 - 2 * t)) * 255);
             }
           }
