@@ -251,59 +251,66 @@ export async function removeBackground(
         }
         const u2Scale = maxU2Val > 0 && maxU2Val <= 1.2 ? 255 : 1;
 
+        // Pass 1: Find Center of Mass of the subject (ModNet > 128)
+        let sumX = 0, sumY = 0, count = 0;
+        let minX = mw, maxX = 0;
+        for (let i = 0; i < mw * mh; i++) {
+            if (maskData.data[i] * modScale > 128) {
+                const x = i % mw;
+                const y = Math.floor(i / mw);
+                sumX += x;
+                sumY += y;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                count++;
+            }
+        }
+        const centerX = count > 0 ? sumX / count : mw / 2;
+        const subjectWidth = count > 0 ? (maxX - minX) : mw * 0.5;
+
+        // Pass 2: Combine and filter
         for (let i = 0; i < mw * mh; i++) {
             let modVal = maskData.data[i] * modScale;
             let u2Val = canUseU2 ? u2Data.data[i] * u2Scale : modVal;
             
-            // "Any chair, furniture, or background object touching the subject or close to subject must be treated as background and removed completely, while preserving the original shape of the subject's shoulders, neck, hair, and clothing."
-            // U2Net hallucinates chairs. ModNet typically scores chairs exactly 0-10. 
-            // ModNet can be weak (e.g. 25-60) on white clothing matching the background.
-            // We use ModNet as a strict semantic gate: if ModNet is < 20, mathematically block U2Net to erase chairs absolutely. 
-            // If ModNet is > 20, let U2Net reinforce the shape to perfectly rescue white clothing.
-            
             const x = i % mw;
             const y = Math.floor(i / mw);
-            const distFromCenterX = Math.abs(x - mw / 2);
             
-            // Keep threshold low enough to not kill white shirts (ModNet scores them ~30-80 when matching bg)
-            // But high enough to kill chairs (ModNet scores chairs 0-25 typically)
-            let gateThreshold = 15; // Base threshold to clear pure background everywhere
+            const distFromCenterX = Math.abs(x - centerX);
             
-            // Neck and shoulders usually appear below the top 15% of the image
-            if (y > mh * 0.15) {
-                // Progressively increase suppression as we move away from the absolute center spine
-                if (distFromCenterX > (mw * 0.10)) {
-                    gateThreshold = 40; // Firm block right next to the neck
+            let finalVal = modVal;
+
+            // In the "Danger Zone" (outer edges near shoulders/neck, away from subject center), 
+            // ModNet often gives chairs 20-80, and U2Net gives them 255.
+            // We must be EXTREMELY strict in the danger zone to kill chairs.
+            
+            const isDangerZone = distFromCenterX > (subjectWidth * 0.35) && y < (mh * 0.7);
+
+            if (isDangerZone) {
+                // Danger Zone: Outer edges (chairs, backgrounds)
+                if (modVal < 90) {
+                    // It's definitely a chair or background. Kill it completely.
+                    finalVal = 0;
+                } else {
+                    // Only let U2Net reinforce if ModNet is incredibly confident (> 90)
+                    let u2Weight = Math.min(1.0, (modVal - 90) / 40.0);
+                    finalVal = Math.max(modVal, u2Val * u2Weight);
                 }
-                if (distFromCenterX > (mw * 0.20)) {
-                    gateThreshold = 55; // Harder block on the shoulder drop-off
-                }
-                if (distFromCenterX > (mw * 0.30)) {
-                    gateThreshold = 70; // Maximum block for outer background objects
-                }
-            }
-            
-            let u2Weight = 0;
-            if (modVal > gateThreshold) {
-                // Smoothly ease in U2Net over a confidence window to prevent jagged edges on clothing.
-                u2Weight = Math.min(1.0, (modVal - gateThreshold) / 25.0);
-            }
-            
-            // CRITICAL FIX FOR CHAIRS NEAR NECK/SHOULDERS:
-            // In the upper body region (head, neck, upper shoulders), ModNet is extremely accurate.
-            // If ModNet is weak (< 120), it's just boundary blur or background.
-            // We must STOP U2Net from artificially boosting this blur into a solid object (chair).
-            if (y < mh * 0.6 && distFromCenterX > (mw * 0.12)) {
-                if (modVal < 120) {
-                    u2Weight = 0; // Completely block U2Net. Rely purely on ModNet's natural edge.
+            } else {
+                // Safe Zone: Inner core (torso, white shirts)
+                if (modVal > 15) {
+                    // Let U2Net rescue white shirts very early
+                    let u2Weight = Math.min(1.0, (modVal - 15) / 35.0);
+                    finalVal = Math.max(modVal, u2Val * u2Weight);
+                } else {
+                    // Keep ModNet's natural soft edge
+                    finalVal = modVal;
                 }
             }
             
-            let finalVal = Math.max(modVal, u2Val * u2Weight);
-            
-            // Extra safety: completely obliterate U2Net hallucinations if ModNet is super confident it's background
-            if (distFromCenterX > (mw * 0.15) && modVal < 20 && u2Val > 150) {
-                 finalVal = 0; 
+            // Absolute safety kill everywhere for faint noise
+            if (finalVal < 10) {
+                finalVal = 0;
             }
 
             // Write back (normalized 0-255 scale)

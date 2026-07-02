@@ -71,9 +71,15 @@ export default function ToolPage() {
     }
 
     if (tool) {
-      const recent = JSON.parse(localStorage.getItem('recent-tools') || '[]');
-      const updated = [tool.id, ...recent.filter((id: string) => id !== tool.id)].slice(0, 8);
-      localStorage.setItem('recent-tools', JSON.stringify(updated));
+      try {
+        const parsed = JSON.parse(localStorage.getItem('recent-tools') || '[]');
+        const recent = Array.isArray(parsed) ? parsed : [];
+        const updated = [tool.id, ...recent.filter((id: string) => id !== tool.id)].slice(0, 8);
+        localStorage.setItem('recent-tools', JSON.stringify(updated));
+      } catch (e) {
+        console.error("Error updating recent tools", e);
+        localStorage.setItem('recent-tools', JSON.stringify([tool.id]));
+      }
     }
   }, [id, tool]);
 

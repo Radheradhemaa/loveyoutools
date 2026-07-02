@@ -33,8 +33,17 @@ export default function Home() {
     };
     window.addEventListener('filter-category', handleFilter as EventListener);
 
-    const recent = JSON.parse(localStorage.getItem('recent-tools') || '[]');
-    setRecentToolIds(recent);
+    try {
+      const recent = JSON.parse(localStorage.getItem('recent-tools') || '[]');
+      if (Array.isArray(recent)) {
+        setRecentToolIds(recent);
+      } else {
+        setRecentToolIds([]);
+      }
+    } catch (e) {
+      console.error("Error parsing recent tools", e);
+      setRecentToolIds([]);
+    }
 
     return () => window.removeEventListener('filter-category', handleFilter as EventListener);
   }, [setSearchParams]);

@@ -11,8 +11,9 @@ export default function AdSlot({ className = '', adSlot = '1234567890', adFormat
   useEffect(() => {
     try {
       // Push the ad to AdSense on mount
-      // @ts-expect-error
-      (window.adsbygoogle = window.adsbygoogle || []).push({});
+      const win = window as any;
+      win.adsbygoogle = win.adsbygoogle || [];
+      win.adsbygoogle.push({});
     } catch (e) {
       console.error('AdSense push error:', e);
     }
