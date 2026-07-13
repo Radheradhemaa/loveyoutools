@@ -12,34 +12,12 @@ export default defineConfig(({mode}) => {
     plugins: [tailwindcss(), react()],
     build: {
       sourcemap: false,
-      minify: false,
+      chunkSizeWarningLimit: 5000,
       rollupOptions: {
-        output: {
-          manualChunks: (id) => {
-            if (id.includes('node_modules')) {
-              if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
-                return 'vendor-react';
-              }
-              if (id.includes('lucide-react') || id.includes('framer-motion') || id.includes('motion') || id.includes('canvas-confetti')) {
-                return 'vendor-utils';
-              }
-              if (id.includes('pdfjs-dist') || id.includes('pdf-lib')) {
-                return 'vendor-pdf';
-              }
-              if (id.includes('fabric')) {
-                return 'vendor-canvas';
-              }
-              if (id.includes('tesseract.js') || id.includes('onnxruntime-web') || id.includes('opencv-js')) {
-                return 'vendor-ml';
-              }
-              if (id.includes('jszip')) {
-                return 'vendor-zip';
-              }
-            }
-          }
-        }
+        cache: false,
+        maxParallelFileOps: 1,
+        treeshake: false,
       },
-      chunkSizeWarningLimit: 1000,
     },
     resolve: {
       alias: {

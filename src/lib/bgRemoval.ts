@@ -227,23 +227,23 @@ export async function removeBackground(
 
     let maskData = getMask(resModnet);
 
-    // Apply scaling and suppression
+    // Normalize and scale mask values without artificial anatomical cropping, fully preserving the subject.
     if (maskData) {
-        const mw = maskData.width;
-        const mh = maskData.height;
+      const mw = maskData.width;
+      const mh = maskData.height;
 
-        const maxModVal = maskData.data.reduce((a: number,b: number) => a>b?a:b, 0);
-        const modScale = maxModVal > 0 && maxModVal <= 1.2 ? 255 : 1;
+      const maxModVal = maskData.data.reduce((a: number, b: number) => a > b ? a : b, 0);
+      const modScale = maxModVal > 0 && maxModVal <= 1.2 ? 255 : 1;
+
+      for (let i = 0; i < mw * mh; i++) {
+        let modVal = maskData.data[i] * modScale;
         
-        for (let i = 0; i < mw * mh; i++) {
-            let modVal = maskData.data[i] * modScale;
-            
-            // Floor to kill faint noise
-            if (modVal < 30) {
-                modVal = 0;
-            }
-            maskData.data[i] = modVal;
+        // Minor floor to clear out faint background noise while fully preserving subject features
+        if (modVal < 15) {
+          modVal = 0;
         }
+        maskData.data[i] = modVal;
+      }
     }
 
     // Load Full Original Image to get maximum quality output
