@@ -88,8 +88,7 @@ export const ensureU2netLoaded = async () => {
  */
 export const ensurePreloaded = async () => {
   await Promise.all([
-    ensureIsnetLoaded().catch(console.error),
-    ensureU2netLoaded().catch(console.error)
+    ensureIsnetLoaded().catch(console.error)
   ]);
 };
 export const ensureModnetLoaded = async () => ensureIsnetLoaded();
@@ -161,10 +160,9 @@ export async function removeBackground(
   const startTime = Date.now();
   onProgress("Initializing AI Core...");
 
-  // Load models (ModNet AND U2Net for best combined quality instantly)
+  // Load models
   await Promise.all([
-    ensureIsnetLoaded().catch(console.error),
-    ensureU2netLoaded().catch(console.error)
+    ensureIsnetLoaded().catch(console.error)
   ]);
 
   // Ensure input is a string (DataURL or URL)
@@ -192,16 +190,10 @@ export async function removeBackground(
       imgEl.src = imageSrc;
     });
 
-    let [resModnet, resU2net] = await Promise.all([
-      isnetPipeline ? isnetPipeline(imageSrc).catch((e: any) => {
-        console.error("ModNet pass failed", e);
+    let resModnet = await (isnetPipeline ? isnetPipeline(imageSrc).catch((e: any) => {
+        console.error("RMBG-1.4 pass failed", e);
         return null;
-      }) : Promise.resolve(null),
-      u2netPipeline ? u2netPipeline(imageSrc).catch((e: any) => {
-        console.error("U2Net pass failed", e);
-        return null;
-      }) : Promise.resolve(null)
-    ]);
+      }) : Promise.resolve(null));
 
     if (!resModnet && hasWebGPU) {
       console.warn("[AI] WebGPU inference failed, forcing WASM fallback...");
@@ -209,16 +201,16 @@ export async function removeBackground(
       isnetPipeline = null;
       await ensureIsnetLoaded().catch(console.error);
       resModnet = await isnetPipeline(imageSrc).catch((e: any) => {
-        console.error("WASM ModNet pass failed", e);
+        console.error("WASM RMBG pass failed", e);
         return null;
       });
     }
 
-    if (!resModnet && !resU2net) {
+    if (!resModnet) {
       throw new Error("AI models failed to process the image.");
     }
 
-    onProgress("Harmonizing Ensemble Masks (ModNet + U2Net)...");
+    onProgress("Processing Mask...");
 
     // Helper to extract mask data and normalize
     const getMask = (result: any) => {
@@ -233,88 +225,24 @@ export async function removeBackground(
       return segment.mask;
     };
 
-    let maskData = getMask(resModnet) || getMask(resU2net);
-    const u2Data = getMask(resU2net);
+    let maskData = getMask(resModnet);
 
-    // Apply Ensemble Strategy
+    // Apply scaling and suppression
     if (maskData) {
         const mw = maskData.width;
         const mh = maskData.height;
-        const canUseU2 = u2Data && u2Data.data.length === mw * mh;
 
         const maxModVal = maskData.data.reduce((a: number,b: number) => a>b?a:b, 0);
         const modScale = maxModVal > 0 && maxModVal <= 1.2 ? 255 : 1;
         
-        let maxU2Val = 0;
-        if (canUseU2) {
-           maxU2Val = u2Data.data.reduce((a: number,b: number) => a>b?a:b, 0);
-        }
-        const u2Scale = maxU2Val > 0 && maxU2Val <= 1.2 ? 255 : 1;
-
-        // Pass 1: Find Center of Mass of the subject (ModNet > 128)
-        let sumX = 0, sumY = 0, count = 0;
-        let minX = mw, maxX = 0;
-        for (let i = 0; i < mw * mh; i++) {
-            if (maskData.data[i] * modScale > 128) {
-                const x = i % mw;
-                const y = Math.floor(i / mw);
-                sumX += x;
-                sumY += y;
-                if (x < minX) minX = x;
-                if (x > maxX) maxX = x;
-                count++;
-            }
-        }
-        const centerX = count > 0 ? sumX / count : mw / 2;
-        const subjectWidth = count > 0 ? (maxX - minX) : mw * 0.5;
-
-        // Pass 2: Combine and filter
         for (let i = 0; i < mw * mh; i++) {
             let modVal = maskData.data[i] * modScale;
-            let u2Val = canUseU2 ? u2Data.data[i] * u2Scale : modVal;
             
-            const x = i % mw;
-            const y = Math.floor(i / mw);
-            
-            const distFromCenterX = Math.abs(x - centerX);
-            
-            let finalVal = modVal;
-
-            // In the "Danger Zone" (outer edges near shoulders/neck, away from subject center), 
-            // ModNet often gives chairs 20-80, and U2Net gives them 255.
-            // We must be EXTREMELY strict in the danger zone to kill chairs.
-            
-            const isDangerZone = distFromCenterX > (subjectWidth * 0.35) && y < (mh * 0.7);
-
-            if (isDangerZone) {
-                // Danger Zone: Outer edges (chairs, backgrounds)
-                if (modVal < 90) {
-                    // It's definitely a chair or background. Kill it completely.
-                    finalVal = 0;
-                } else {
-                    // Only let U2Net reinforce if ModNet is incredibly confident (> 90)
-                    let u2Weight = Math.min(1.0, (modVal - 90) / 40.0);
-                    finalVal = Math.max(modVal, u2Val * u2Weight);
-                }
-            } else {
-                // Safe Zone: Inner core (torso, white shirts)
-                if (modVal > 15) {
-                    // Let U2Net rescue white shirts very early
-                    let u2Weight = Math.min(1.0, (modVal - 15) / 35.0);
-                    finalVal = Math.max(modVal, u2Val * u2Weight);
-                } else {
-                    // Keep ModNet's natural soft edge
-                    finalVal = modVal;
-                }
+            // Floor to kill faint noise
+            if (modVal < 30) {
+                modVal = 0;
             }
-            
-            // Absolute safety kill everywhere for faint noise
-            if (finalVal < 10) {
-                finalVal = 0;
-            }
-
-            // Write back (normalized 0-255 scale)
-            maskData.data[i] = finalVal;
+            maskData.data[i] = modVal;
         }
     }
 
@@ -351,8 +279,6 @@ export async function removeBackground(
       }
       const maskScale = maxFound > 0 && maxFound <= 1.2 ? 255 : 1;
 
-      // 1. Skip Morphological processing completely for ultra-fast Delivery
-      // The ensemble math has already harshly solved the chair problem!
       const cleanMask = new Float32Array(mw * mh);
       for (let i = 0; i < mw * mh; i++) {
         cleanMask[i] = mData[i] * maskScale;
@@ -361,9 +287,9 @@ export async function removeBackground(
       // High Precision CPU Bilinear Upscale + Float32 S-Curve with Joint Bilateral Guided Alpha refinement
       // Pre-calculates upscaled raw alphas to run a guided 3x3 bilateral edge filtering pass.
       const rawAlphas = new Float32Array(w * h);
-      // Floor suppresses faint background/furniture objects 
-      const floor = 25;
-      const ceil = 240;
+      // Relaxed floor and ceil to preserve natural anti-aliased edges from the AI model
+      const floor = 10;
+      const ceil = 245;
 
       for (let y = 0; y < h; y++) {
         const srcY = Math.max(
@@ -465,13 +391,13 @@ export async function removeBackground(
             }
 
             // High contrast snap for crystal clear edges without jagged clipping
-            if (a < 35) {
+            if (a < 15) {
                 a = 0; // Cut off noise, chairs, and faint background artifacts
-            } else if (a > 235) {
+            } else if (a > 245) {
                 a = 255; // Snap the inside to solid early
             } else {
                 // Sharpen intermediate values for a crisp but anti-aliased edge
-                const t = (a - 35) / 200;
+                const t = (a - 15) / 230;
                 a = Math.round((t * t * (3 - 2 * t)) * 255);
             }
           }
