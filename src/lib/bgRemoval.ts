@@ -59,9 +59,13 @@ export const ensureIsnetLoaded = async () => {
     await ensureWebGPUChecked();
     const device = hasWebGPU ? "webgpu" : "wasm";
     try {
-      isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", { device });
+      isnetPipeline = await pipeline("image-segmentation", "briaai/RMBG-1.4", { device });
     } catch (e) {
-      isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", { device: "wasm" });
+      try {
+        isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", { device });
+      } catch (e2) {
+        isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", { device: "wasm" });
+      }
     }
   }
 };
@@ -382,23 +386,19 @@ export async function removeBackground(
               }
             }
 
-            // Alpha suppression / boost based on edge brightness (suppress halo leaks)
-            const isShoulderRegion = y > h * 0.42;
-            const lum = (0.299 * r_center + 0.587 * g_center + 0.114 * b_center) / 255;
-            
             if (sumW > 0) {
               a = sumAlpha / sumW;
             }
 
             // High contrast snap for crystal clear edges without jagged clipping
             if (a < 15) {
-                a = 0; // Cut off noise, chairs, and faint background artifacts
+              a = 0; // Cut off noise, chairs, and faint background artifacts
             } else if (a > 245) {
-                a = 255; // Snap the inside to solid early
+              a = 255; // Snap the inside to solid early
             } else {
-                // Sharpen intermediate values for a crisp but anti-aliased edge
-                const t = (a - 15) / 230;
-                a = Math.round((t * t * (3 - 2 * t)) * 255);
+              // Sharpen intermediate values for a crisp but anti-aliased edge
+              const t = (a - 15) / 230;
+              a = Math.round((t * t * (3 - 2 * t)) * 255);
             }
           }
 
