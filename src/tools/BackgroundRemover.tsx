@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
+import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut, Target, Layers, ShieldCheck, MousePointerClick } from 'lucide-react';
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded, magicEraseObjectAtPoint, BgRemovalOptions } from '../lib/bgRemoval';
 
 const reconstructLeftShoulder = (
   originalSrc: string,
@@ -188,10 +188,18 @@ export default function BackgroundRemover() {
   const [customColor, setCustomColor] = useState('#ffffff');
   const [blurAmount, setBlurAmount] = useState(10);
   
-  // Manual Touchup State
+  // AI Subject Focus & Close Object Removal Options
+  const [selectedEngine, setSelectedEngine] = useState<'strict_subject' | 'modnet' | 'rmbg' | 'isnet'>('strict_subject');
+  const [isolateMainSubject, setIsolateMainSubject] = useState(true);
+  const [objectStrictness, setObjectStrictness] = useState(75); // 0 = preserve objects, 75 = strict subject, 100 = ultra clean
+  const [severTouchingObjects, setSeverTouchingObjects] = useState(true);
+  const [removeBackgroundNoise, setRemoveBackgroundNoise] = useState(true);
+
+  // Manual Touchup & Magic Eraser State
   const [isManualMode, setIsManualMode] = useState(false);
-  const [brushMode, setBrushMode] = useState<'erase' | 'restore'>('erase');
+  const [brushMode, setBrushMode] = useState<'erase' | 'restore' | 'magic'>('erase');
   const [brushSize, setBrushSize] = useState(25);
+  const [magicEraserTolerance, setMagicEraserTolerance] = useState(35);
   const [zoom, setZoom] = useState(0.3);
   const handleZoomIn = useCallback(() => setZoom(prev => Math.min(prev + 0.1, 4)), []);
   const handleZoomOut = useCallback(() => setZoom(prev => Math.max(prev - 0.1, 0.1)), []);
@@ -517,7 +525,7 @@ export default function BackgroundRemover() {
     });
   };
 
-  const removeBackground = async (src?: string | React.MouseEvent) => {
+  const removeBackground = async (src?: string | React.MouseEvent, customOptions?: BgRemovalOptions) => {
     const targetSrc = typeof src === 'string' ? src : imageSrc;
     if (!targetSrc) return;
     setIsProcessing(true);
@@ -528,9 +536,18 @@ export default function BackgroundRemover() {
     const startTime = Date.now();
     
     try {
+      const options: BgRemovalOptions = {
+        engine: selectedEngine,
+        isolateMainSubject,
+        objectStrictness,
+        severTouchingObjects,
+        removeBackgroundNoise,
+        ...customOptions
+      };
+
       const rawBlob = await runBgRemoval(targetSrc, (status) => {
         setStatusText(status);
-      }, false);
+      }, false, false, options);
 
       const url = URL.createObjectURL(rawBlob);
       setResultImage(url);
@@ -558,6 +575,34 @@ export default function BackgroundRemover() {
     } finally {
       setIsProcessing(false);
       setStatusText(''); // Clear status text on completion or error
+    }
+  };
+
+  const handleAutoCleanBackground = () => {
+    if (!imageSrc) return;
+    removeBackground(imageSrc, {
+      engine: 'strict_subject',
+      isolateMainSubject: true,
+      objectStrictness: Math.max(80, objectStrictness),
+      severTouchingObjects: true,
+      removeBackgroundNoise: true,
+    });
+  };
+
+  const handleMagicEraserClick = async (e: React.MouseEvent<HTMLImageElement | HTMLCanvasElement>) => {
+    if (brushMode !== 'magic' || !resultImage) return;
+
+    const target = e.currentTarget;
+    const rect = target.getBoundingClientRect();
+    const clickX = ((e.clientX - rect.left) / rect.width) * (target instanceof HTMLImageElement ? target.naturalWidth : target.width);
+    const clickY = ((e.clientY - rect.top) / rect.height) * (target instanceof HTMLImageElement ? target.naturalHeight : target.height);
+
+    try {
+      const updatedUrl = await magicEraseObjectAtPoint(resultImage, clickX, clickY, magicEraserTolerance);
+      setResultImage(updatedUrl);
+      addToHistory(updatedUrl);
+    } catch (err) {
+      console.error("Magic eraser failed:", err);
     }
   };
 
@@ -1151,41 +1196,67 @@ export default function BackgroundRemover() {
                         <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
                           <div className="flex items-center justify-between">
                             <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
-                              <Eraser className="w-5 h-5 text-accent" /> Touchup
+                              <Eraser className="w-5 h-5 text-accent" /> Touchup & Eraser
                             </h3>
                             <button onClick={() => setIsManualMode(false)} className="p-1 hover:bg-bg-secondary rounded-full transition-colors">
                               <X className="w-5 h-5 text-text-muted" />
                             </button>
                           </div>
 
-                          <div className="flex bg-bg-secondary rounded-xl p-1">
+                          <div className="grid grid-cols-3 bg-bg-secondary rounded-xl p-1 gap-1">
+                            <button 
+                              onClick={() => setBrushMode('magic')}
+                              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all ${brushMode === 'magic' ? 'bg-accent text-white shadow-md' : 'text-text-muted hover:text-text-primary'}`}
+                              title="Click on any unwanted background object to remove it instantly"
+                            >
+                              <Wand2 className="w-3.5 h-3.5" /> Magic Eraser
+                            </button>
                             <button 
                               onClick={() => setBrushMode('erase')}
-                              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-bold transition-all ${brushMode === 'erase' ? 'bg-accent text-white shadow-md' : 'text-text-muted hover:text-text-primary'}`}
+                              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all ${brushMode === 'erase' ? 'bg-accent text-white shadow-md' : 'text-text-muted hover:text-text-primary'}`}
                             >
-                              <Eraser className="w-4 h-4" /> Erase
+                              <Eraser className="w-3.5 h-3.5" /> Erase
                             </button>
                             <button 
                               onClick={() => setBrushMode('restore')}
-                              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-bold transition-all ${brushMode === 'restore' ? 'bg-accent text-white shadow-md' : 'text-text-muted hover:text-text-primary'}`}
+                              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all ${brushMode === 'restore' ? 'bg-accent text-white shadow-md' : 'text-text-muted hover:text-text-primary'}`}
                             >
-                              <Paintbrush className="w-4 h-4" /> Restore
+                              <Paintbrush className="w-3.5 h-3.5" /> Restore
                             </button>
                           </div>
 
-                          <div className="space-y-3">
-                            <div className="flex justify-between text-sm font-bold text-text-primary">
-                              <span>Brush Size</span>
-                              <span className="text-accent">{brushSize}px</span>
+                          {brushMode === 'magic' ? (
+                            <div className="space-y-3 p-3.5 bg-accent/5 border border-accent/20 rounded-xl">
+                              <div className="flex justify-between text-xs font-bold text-accent">
+                                <span className="flex items-center gap-1.5"><MousePointerClick className="w-3.5 h-3.5" /> 1-Click Magic Object Eraser</span>
+                                <span>{magicEraserTolerance} tol</span>
+                              </div>
+                              <p className="text-[10px] text-text-muted leading-relaxed">
+                                Simply click or tap on any remaining chair, table, shadow, or background object in the preview to erase it completely!
+                              </p>
+                              <input 
+                                type="range" 
+                                min="10" max="80" 
+                                value={magicEraserTolerance} 
+                                onChange={(e) => setMagicEraserTolerance(parseInt(e.target.value))}
+                                className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                              />
                             </div>
-                            <input 
-                              type="range" 
-                              min="5" max="100" 
-                              value={brushSize} 
-                              onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                              className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
-                            />
-                          </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <div className="flex justify-between text-sm font-bold text-text-primary">
+                                <span>Brush Size</span>
+                                <span className="text-accent">{brushSize}px</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="5" max="100" 
+                                value={brushSize} 
+                                onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                                className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                              />
+                            </div>
+                          )}
 
                           <div className="grid grid-cols-2 gap-3">
                             <button onClick={undo} disabled={historyIndex < 0} className="btn bs2 py-3 rounded-xl gap-2 disabled:opacity-50 text-xs">
@@ -1198,6 +1269,87 @@ export default function BackgroundRemover() {
                         </div>
                       ) : (
                         <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                          {/* Subject Focus & Object Removal Controls */}
+                          <div className="p-3.5 bg-accent/5 border border-accent/20 rounded-2xl space-y-4">
+                            <div className="flex items-center justify-between">
+                              <h4 className="font-bold text-sm text-text-primary flex items-center gap-1.5">
+                                <Target className="w-4 h-4 text-accent" /> Subject & Object Isolation
+                              </h4>
+                              <span className="text-[10px] bg-accent/10 text-accent font-bold px-2 py-0.5 rounded-full">
+                                AI Smart
+                              </span>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">AI Segmentation Engine</label>
+                              <div className="grid grid-cols-3 gap-1.5">
+                                {[
+                                  { id: 'strict_subject', label: 'Strict Subject', icon: ShieldCheck, desc: 'Removes chairs & nearby items' },
+                                  { id: 'modnet', label: 'Portrait Matting', icon: Sparkles, desc: 'Optimized for human portraits' },
+                                  { id: 'rmbg', label: 'Universal', icon: Layers, desc: 'General items & products' },
+                                ].map((eng) => (
+                                  <button
+                                    key={eng.id}
+                                    onClick={() => {
+                                      setSelectedEngine(eng.id as any);
+                                      if (imageSrc) {
+                                        removeBackground(imageSrc, { engine: eng.id as any });
+                                      }
+                                    }}
+                                    className={`p-2 rounded-xl border text-center transition-all flex flex-col items-center justify-center gap-1 ${selectedEngine === eng.id ? 'bg-accent border-accent text-white shadow-sm' : 'bg-surface border-border text-text-muted hover:border-accent'}`}
+                                  >
+                                    <eng.icon className="w-3.5 h-3.5" />
+                                    <span className="text-[9px] font-bold leading-tight">{eng.label}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-xs font-bold text-text-primary">
+                                <span>Background Object Removal</span>
+                                <span className="text-accent">{objectStrictness}%</span>
+                              </div>
+                              <input 
+                                type="range" 
+                                min="0" max="100" 
+                                value={objectStrictness} 
+                                onChange={(e) => setObjectStrictness(parseInt(e.target.value))}
+                                onMouseUp={() => imageSrc && removeBackground(imageSrc, { objectStrictness })}
+                                onTouchEnd={() => imageSrc && removeBackground(imageSrc, { objectStrictness })}
+                                className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                              />
+                              <div className="flex justify-between text-[8px] text-text-muted font-bold">
+                                <span>Keep All</span>
+                                <span>Balanced</span>
+                                <span className="text-accent font-extrabold">Clean Studio</span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-1">
+                              <label className="text-[10px] font-bold text-text-muted flex items-center gap-1 cursor-pointer">
+                                <input 
+                                  type="checkbox" 
+                                  checked={severTouchingObjects} 
+                                  onChange={(e) => {
+                                    setSeverTouchingObjects(e.target.checked);
+                                    if (imageSrc) removeBackground(imageSrc, { severTouchingObjects: e.target.checked });
+                                  }}
+                                  className="accent-accent w-3.5 h-3.5 rounded"
+                                />
+                                Sever Touching Objects (Chairs, Desks)
+                              </label>
+                            </div>
+
+                            <button
+                              onClick={handleAutoCleanBackground}
+                              disabled={isProcessing}
+                              className="w-full py-2 bg-accent/10 hover:bg-accent text-accent hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border border-accent/20"
+                            >
+                              <Wand2 className="w-3.5 h-3.5" /> Auto-Clean Lingering Objects
+                            </button>
+                          </div>
+
                           <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">
                             <ImageIcon className="w-5 h-5 text-accent" /> Background
                           </h3>
@@ -1585,7 +1737,8 @@ export default function BackgroundRemover() {
                           onTouchStart={startDrawing}
                           onTouchMove={draw}
                           onTouchEnd={stopDrawing}
-                          className="max-w-full max-h-full cursor-crosshair shadow-2xl rounded-lg transition-all duration-200"
+                          onClick={handleMagicEraserClick}
+                          className={`max-w-full max-h-full ${brushMode === 'magic' ? 'cursor-pointer' : 'cursor-crosshair'} shadow-2xl rounded-lg transition-all duration-200`}
                           style={{
                             zoom: zoom,
                             backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
@@ -1603,6 +1756,7 @@ export default function BackgroundRemover() {
                           src={resultImage || imageSrc} 
                           alt="Preview" 
                           referrerPolicy="no-referrer"
+                          onClick={handleMagicEraserClick}
                           onError={(e) => {
                             console.error("Preview image failed to load:", resultImage);
                             // Fallback to original if result fails
@@ -1610,7 +1764,7 @@ export default function BackgroundRemover() {
                               setResultImage(null);
                             }
                           }}
-                          className="max-w-full max-h-full shadow-2xl rounded-lg transition-all duration-200"
+                          className={`max-w-full max-h-full shadow-2xl rounded-lg transition-all duration-200 ${brushMode === 'magic' ? 'cursor-pointer hover:ring-2 hover:ring-accent' : ''}`}
                           style={{ 
                             zoom: zoom,
                             filter: resultImage && !isManualMode ? getFilterStyle() : 'none',

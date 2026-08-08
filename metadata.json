@@ -1,5 +1,8 @@
 {
   "name": "LoveYouTools",
-  "description": "A fully functional, professional, and production-ready multi-tools hub. Free online tools for images, PDFs, SEO, and more with real-time previews.",
-  "requestFramePermissions": []
+  "description": "A high-quality, fast, and secure online multi-tools hub offering client-side tools for images, PDFs, SEO, text, calculators, and developers with zero sign-up.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
