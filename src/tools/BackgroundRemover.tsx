@@ -1,155 +1,14 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut, Target, Layers, ShieldCheck, MousePointerClick } from 'lucide-react';
+import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut, Target, Layers, MousePointerClick, Scissors } from 'lucide-react';
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded, magicEraseObjectAtPoint, BgRemovalOptions } from '../lib/bgRemoval';
-
-const reconstructLeftShoulder = (
-  originalSrc: string,
-  extendAmount: number,
-  shoulderStartRatio: number,
-  clothingSlope: number = 0.20,
-  shoulderCurve: number = 0.45
-): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const W = img.width;
-      const H = img.height;
-      
-      const canvas = document.createElement('canvas');
-      const W_new = W + extendAmount;
-      canvas.width = W_new;
-      canvas.height = H;
-      
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) {
-        resolve(originalSrc);
-        return;
-      }
-      
-      // Clear canvas
-      ctx.clearRect(0, 0, W_new, H);
-      
-      // Draw the original image shifted by `extendAmount` to the right to make space
-      ctx.drawImage(img, extendAmount, 0);
-      
-      // Get the column of pixels at the original image's left border to reconstruct the background
-      const originalLeftCol = ctx.getImageData(extendAmount, 0, 1, H);
-      const colData = originalLeftCol.data;
-      
-      // Get the full image data of the new padded canvas
-      const fullData = ctx.getImageData(0, 0, W_new, H);
-      const pixels = fullData.data;
-      
-      // Calculate start of the left shoulder (viewer's left)
-      const y_start = Math.floor(H * shoulderStartRatio);
-      
-      // Build an organic shoulder mask path on a helper canvas to ensure flawless anti-aliased edge calculation
-      const pathCanvas = document.createElement('canvas');
-      pathCanvas.width = W_new;
-      pathCanvas.height = H;
-      const pctx = pathCanvas.getContext('2d');
-      if (pctx) {
-        pctx.fillStyle = '#000000';
-        pctx.fillRect(0, 0, W_new, H);
-        
-        pctx.fillStyle = '#ffffff';
-        pctx.beginPath();
-        // Start from bottom-left corner of original image (new coordinate: x=extendAmount)
-        pctx.moveTo(extendAmount, H);
-        // Cover everything to the right in the body
-        pctx.lineTo(W_new, H);
-        // Go all the way up to where shoulder starts vertically
-        pctx.lineTo(W_new, y_start);
-        // Go left to upper body attachment
-        pctx.lineTo(extendAmount, y_start);
-        
-        // Curve downwards to the new bottom-left corner (x=0, y=H)
-        // Control points:
-        // cp1: smooth horizontal departure from body
-        const cp1x = extendAmount * 0.55;
-        const cp1y = y_start;
-        // cp2: shoulder tip curvature pulling outwards to the left frame edge
-        const cp2x = 0;
-        const cp2y = y_start + (H - y_start) * shoulderCurve;
-        
-        pctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, 0, H);
-        pctx.closePath();
-        pctx.fill();
-      }
-      
-      const maskData = pctx ? pctx.getImageData(0, 0, W_new, H).data : null;
-      
-      // Step-by-step Pixel Reconstruction Pipeline
-      for (let y = 0; y < H; y++) {
-        // Safe background color sampling at current Y to avoid grabbing clothing pixels
-        // (y < y_start are guaranteed background; we lock the lower portion to y_start - 1 to preserve background color)
-        const bgY = y < y_start ? y : Math.max(0, y_start - 1);
-        const bgR = colData[bgY * 4];
-        const bgG = colData[bgY * 4 + 1];
-        const bgB = colData[bgY * 4 + 2];
-        const bgA = colData[bgY * 4 + 3];
-        
-        for (let x = 0; x < extendAmount; x++) {
-          const idx = (y * W_new + x) * 4;
-          const maskVal = maskData ? maskData[idx] : 0;
-          const alpha = maskVal / 255; // Sub-pixel anti-aliased weight from native canvas path
-          
-          if (alpha > 0) {
-            // Reconstruct clothing texture inside the shoulder mask area
-            const distFromEdge = extendAmount - x;
-            
-            // Warp texture elegantly to model organic fabric folds
-            const srcY = Math.min(H - 1, Math.max(0, y - Math.floor(distFromEdge * clothingSlope)));
-            const srcX = Math.min(W_new - 1, extendAmount + Math.floor(distFromEdge * 0.75));
-            const srcIdx = (srcY * W_new + srcX) * 4;
-            
-            const texR = pixels[srcIdx];
-            const texG = pixels[srcIdx + 1];
-            const texB = pixels[srcIdx + 2];
-            const texA = pixels[srcIdx + 3];
-            
-            // Subtle lighting gradient to blend with surrounding shadows naturally
-            const lightingFactor = 1.0 - (distFromEdge / extendAmount) * 0.05;
-            const finalTexR = Math.max(0, Math.min(255, texR * lightingFactor));
-            const finalTexG = Math.max(0, Math.min(255, texG * lightingFactor));
-            const finalTexB = Math.max(0, Math.min(255, texB * lightingFactor));
-            
-            // Perform high-fidelity alpha-blending for perfect anti-aliased edge smoothness with no jagged lines
-            pixels[idx]     = Math.round(finalTexR * alpha + bgR * (1 - alpha));
-            pixels[idx + 1] = Math.round(finalTexG * alpha + bgG * (1 - alpha));
-            pixels[idx + 2] = Math.round(finalTexB * alpha + bgB * (1 - alpha));
-            pixels[idx + 3] = Math.round(texA * alpha + bgA * (1 - alpha));
-          } else {
-            // Outside the shoulder: pure natural background
-            pixels[idx]     = bgR;
-            pixels[idx + 1] = bgG;
-            pixels[idx + 2] = bgB;
-            pixels[idx + 3] = bgA;
-          }
-        }
-      }
-      
-      ctx.putImageData(fullData, 0, 0);
-      resolve(canvas.toDataURL('image/png'));
-    };
-    img.onerror = (e) => reject(e);
-    img.src = originalSrc;
-  });
-};
+import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded, magicEraseObjectAtPoint, removeChairFromImage, BgRemovalOptions } from '../lib/bgRemoval';
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [originalUploadedSrc, setOriginalUploadedSrc] = useState<string | null>(null);
-  const [extendAmount, setExtendAmount] = useState<number>(60);
-  const [shoulderHeightRatio, setShoulderHeightRatio] = useState<number>(0.52);
-  const [clothingSlope, setClothingSlope] = useState<number>(0.20);
-  const [shoulderCurve, setShoulderCurve] = useState<number>(0.45);
-  const [isExtendingShoulder, setIsExtendingShoulder] = useState<boolean>(false);
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
@@ -581,12 +440,30 @@ export default function BackgroundRemover() {
   const handleAutoCleanBackground = () => {
     if (!imageSrc) return;
     removeBackground(imageSrc, {
-      engine: 'rmbg',
+      engine: 'strict_subject',
       isolateMainSubject: true,
-      objectStrictness: 75,
-      severTouchingObjects: false,
+      objectStrictness: 80,
+      severTouchingObjects: true,
       removeBackgroundNoise: true,
+      decontaminateHalos: true,
     });
+  };
+
+  const handleRemoveChairBackrest = async () => {
+    const targetSrc = resultImage || imageSrc;
+    if (!targetSrc) return;
+    try {
+      setIsProcessing(true);
+      setStatusText('Removing Chair & Backrest Objects...');
+      const cleaned = await removeChairFromImage(targetSrc, { objectStrictness: 80, severTouchingObjects: true });
+      setResultImage(cleaned);
+      addToHistory(cleaned);
+    } catch (err) {
+      console.error("Chair removal failed:", err);
+    } finally {
+      setIsProcessing(false);
+      setStatusText('');
+    }
   };
 
   const handleMagicEraserClick = async (e: React.MouseEvent<HTMLImageElement | HTMLCanvasElement>) => {
@@ -1343,13 +1220,15 @@ export default function BackgroundRemover() {
                               </label>
                             </div>
 
-                            <button
-                              onClick={handleAutoCleanBackground}
-                              disabled={isProcessing}
-                              className="w-full py-2 bg-accent/10 hover:bg-accent text-accent hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border border-accent/20"
-                            >
-                              <Wand2 className="w-3.5 h-3.5" /> Auto-Clean Lingering Objects
-                            </button>
+                            <div className="pt-1">
+                              <button
+                                onClick={handleRemoveChairBackrest}
+                                disabled={isProcessing}
+                                className="w-full py-2.5 px-2 bg-gradient-to-r from-red-500/15 to-orange-500/10 hover:from-red-500 hover:to-orange-500 text-red-600 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 border border-red-500/30 shadow-sm"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" /> Erase Chair & Backrest
+                              </button>
+                            </div>
                           </div>
 
                           <h3 className="font-bold text-lg flex items-center gap-2 text-text-primary">

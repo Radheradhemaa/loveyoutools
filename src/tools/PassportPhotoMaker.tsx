@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw } from 'lucide-react';
+import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw, Trash2 } from 'lucide-react';
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded, removeChairFromImage } from '../lib/bgRemoval';
 
 // --- Configuration ---
 const PRESETS = [
@@ -534,6 +534,26 @@ export default function PassportPhotoMaker() {
   const removeBackground = async () => {
     if (!croppedImageSrc) return;
     await removeBackgroundFromSrc(croppedImageSrc);
+  };
+
+  const handleEraseChairAndBackrest = async () => {
+    const targetSrc = bgRemovedImageSrc || croppedImageSrc;
+    if (!targetSrc) return;
+    try {
+      setIsProcessing(true);
+      const cleaned = await removeChairFromImage(targetSrc, { objectStrictness: 85, severTouchingObjects: true });
+      if (bgRemovedImageSrc) {
+        setBgRemovedImageSrc(cleaned);
+      } else {
+        setCroppedImageSrc(cleaned);
+      }
+      addToHistory(cleaned);
+      updateCanvasFromSrc(cleaned);
+    } catch (err) {
+      console.error("Chair removal failed:", err);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   // --- 4. Apply Adjustments & Background Color ---
@@ -1206,7 +1226,7 @@ export default function PassportPhotoMaker() {
                         </div>
                       </div>
                       
-                      <div className="flex gap-2 mb-4">
+                      <div className="flex gap-2 mb-2">
                         <button
                           onClick={removeBackground}
                           disabled={isProcessing}
@@ -1225,6 +1245,16 @@ export default function PassportPhotoMaker() {
                           {isManualMode ? 'Done Touchup' : 'Manual Touchup'}
                         </button>
                       </div>
+
+                      {/* 1-Click Chair & Backrest Erase Button */}
+                      <button
+                        onClick={handleEraseChairAndBackrest}
+                        disabled={isProcessing}
+                        className="w-full mb-3 py-2 px-3 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                        Erase Chair & Backrest Near Neck
+                      </button>
 
                       {isManualMode && (
                         <div className="p-3 bg-gray-50 rounded-xl mb-4 space-y-3 border border-gray-200 animate-in fade-in slide-in-from-top-2">
