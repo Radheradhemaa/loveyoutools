@@ -38,6 +38,8 @@ const COLORS = [
 
 type Step = 'crop' | 'edit' | 'print';
 
+
+
 export default function PassportPhotoMaker() {
   const [step, setStep] = useState<Step>('crop');
   
@@ -71,7 +73,7 @@ export default function PassportPhotoMaker() {
   const [customColor, setCustomColor] = useState('#ffffff');
   const [dpi, setDpi] = useState(300);
   
-  // Adjustments
+  // Adjustments & Shoulder Extensions
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
   const [saturation, setSaturation] = useState(100);
@@ -80,6 +82,9 @@ export default function PassportPhotoMaker() {
   const [edgeSoftness, setEdgeSoftness] = useState(0);
   const [beautyFace, setBeautyFace] = useState(0);
   const [isUltraHD, setIsUltraHD] = useState(false);
+  
+  // Frame Border Controls
+  const [borderThickness, setBorderThickness] = useState(2); // Standard 2px thin border
   
   // Debounced Adjustments for Performance
   const [appliedAdjustments, setAppliedAdjustments] = useState({
@@ -90,7 +95,8 @@ export default function PassportPhotoMaker() {
     smoothness: 0,
     edgeSoftness: 0,
     beautyFace: 0,
-    isUltraHD: false
+    isUltraHD: false,
+    borderThickness: 2,
   });
 
   useEffect(() => {
@@ -103,11 +109,12 @@ export default function PassportPhotoMaker() {
         smoothness,
         edgeSoftness,
         beautyFace,
-        isUltraHD
+        isUltraHD,
+        borderThickness,
       });
     }, 150); // 150ms debounce
     return () => clearTimeout(timer);
-  }, [brightness, contrast, saturation, sharpness, smoothness, edgeSoftness, beautyFace, isUltraHD]);
+  }, [brightness, contrast, saturation, sharpness, smoothness, edgeSoftness, beautyFace, isUltraHD, borderThickness]);
   
   // History for Undo/Redo
   const [history, setHistory] = useState<string[]>([]);
@@ -716,14 +723,17 @@ export default function PassportPhotoMaker() {
                 finalB = (finalB * (1 - skinWeight) + fB * skinWeight) | 0;
               }
 
-              if (alpha < 250) {
-                const edgeBlend = alpha / 250;
-                finalR = (finalR * edgeBlend + r_orig * (1 - edgeBlend)) | 0;
-                finalG = (finalG * edgeBlend + g_orig * (1 - edgeBlend)) | 0;
-                finalB = (finalB * edgeBlend + b_orig * (1 - edgeBlend)) | 0;
+              // Clean edge preservation with 100% solid core for subject & clothing
+              let finalAlpha = alpha;
+              if (alpha > 180) {
+                finalAlpha = 255;
+              } else if (alpha <= 12) {
+                finalAlpha = 0;
+              } else {
+                finalAlpha = alpha;
               }
 
-              dst[i] = finalR | (finalG << 8) | (finalB << 16) | (alpha << 24);
+              dst[i] = finalR | (finalG << 8) | (finalB << 16) | (finalAlpha << 24);
             }
           }
           tempCtx.putImageData(output, 0, 0);
@@ -739,10 +749,10 @@ export default function PassportPhotoMaker() {
         // 2. Draw the processed subject
         ctx.drawImage(tempCanvas, 0, 0);
 
-        // 3. Add Border if requested
+        // 3. Add Border if requested (Standard Thin Border)
         if (hasBorder) {
           ctx.strokeStyle = '#000000';
-          const thickness = Math.max(4, Math.round(canvas.width / 60));
+          const thickness = Math.max(1, Math.round((appliedAdjustments.borderThickness / 2) * Math.max(1, canvas.width / 350)));
           ctx.lineWidth = thickness;
           // Draw rect slightly inside so the stroke isn't clipped
           ctx.strokeRect(thickness / 2, thickness / 2, canvas.width - thickness, canvas.height - thickness);
@@ -1294,12 +1304,30 @@ export default function PassportPhotoMaker() {
                           setEdgeSoftness(0);
                           setBeautyFace(0);
                           setIsUltraHD(false); 
+                          setBorderThickness(2);
                         }} className="text-[10px] text-[#e8501a] font-bold hover:underline">Reset</button>
                       </div>
                       
+                      {/* 1-Click Auto Clarity & Edge Cleaner */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsUltraHD(true);
+                          setSharpness(40);
+                          setContrast(108);
+                          setSaturation(108);
+                          setBrightness(102);
+                          setEdgeSoftness(0);
+                          setBeautyFace(10);
+                        }}
+                        className="w-full py-2.5 px-3 mb-3 bg-gradient-to-r from-[#e8501a]/15 to-[#e8501a]/5 hover:from-[#e8501a]/25 hover:to-[#e8501a]/10 border border-[#e8501a]/30 rounded-xl text-xs font-bold text-[#e8501a] flex items-center justify-center gap-2 transition-all shadow-sm"
+                      >
+                        <Sparkles className="w-4 h-4 animate-pulse" /> Auto HD Clarity & De-Halo (1-Click)
+                      </button>
+
                       <label className="flex items-center gap-2 p-3 bg-[#e8501a]/5 border border-[#e8501a]/20 rounded-xl cursor-pointer mb-4 hover:bg-[#e8501a]/10 transition-colors">
                         <input type="checkbox" checked={isUltraHD} onChange={(e) => setIsUltraHD(e.target.checked)} className="accent-[#e8501a] w-4 h-4" />
-                        <span className="text-sm font-bold text-[#e8501a] flex items-center gap-1"><Sparkles className="w-4 h-4" /> Ultra HD Enhance</span>
+                        <span className="text-sm font-bold text-[#e8501a] flex items-center gap-1"><Sparkles className="w-4 h-4" /> Ultra HD Studio Clarity</span>
                       </label>
 
                       <div className="space-y-4">
@@ -1307,10 +1335,10 @@ export default function PassportPhotoMaker() {
                           { label: 'Brightness', val: brightness, set: setBrightness, min: 50, max: 150, unit: '%' },
                           { label: 'Contrast', val: contrast, set: setContrast, min: 50, max: 150, unit: '%' },
                           { label: 'Saturation', val: saturation, set: setSaturation, min: 0, max: 200, unit: '%' },
-                          { label: 'Sharpness', val: sharpness, set: setSharpness, min: 0, max: 100, unit: '' },
+                          { label: 'Photo Sharpness & Clarity', val: sharpness, set: setSharpness, min: 0, max: 100, unit: '' },
                           { label: 'Skin Smoothing', val: smoothness, set: setSmoothness, min: 0, max: 100, unit: '' },
-                          { label: 'Edge Adjustment', val: edgeSoftness, set: setEdgeSoftness, min: 0, max: 100, unit: '' },
-                          { label: 'Beauty Face', val: beautyFace, set: setBeautyFace, min: 0, max: 100, unit: '' }
+                          { label: 'Edge Softness', val: edgeSoftness, set: setEdgeSoftness, min: 0, max: 100, unit: '' },
+                          { label: 'Beauty Face & Glow', val: beautyFace, set: setBeautyFace, min: 0, max: 100, unit: '' }
                         ].map(adj => (
                           <div key={adj.label}>
                             <div className="flex justify-between text-xs font-bold text-gray-700 mb-1">
@@ -1404,10 +1432,42 @@ export default function PassportPhotoMaker() {
                         </div>
                       </div>
 
-                      <label className="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors">
-                        <span className="text-sm font-bold text-gray-700">Add Photo Border</span>
-                        <input type="checkbox" checked={hasBorder} onChange={(e) => setHasBorder(e.target.checked)} className="accent-[#e8501a] w-4 h-4" />
-                      </label>
+                      <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+                        <label className="flex items-center justify-between cursor-pointer">
+                          <span className="text-sm font-bold text-gray-700">Add Photo Border</span>
+                          <input type="checkbox" checked={hasBorder} onChange={(e) => setHasBorder(e.target.checked)} className="accent-[#e8501a] w-4 h-4" />
+                        </label>
+                        
+                        {hasBorder && (
+                          <div className="pt-2 border-t border-gray-200 space-y-2">
+                            <div className="flex justify-between text-xs font-bold text-gray-700">
+                              <span>Border Thickness</span>
+                              <span className="text-[#e8501a] font-bold">{borderThickness}px ({borderThickness === 2 ? 'Standard' : borderThickness === 1 ? 'Thin' : 'Custom'})</span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-1.5">
+                              {[
+                                { label: 'Thin 1px', val: 1 },
+                                { label: 'Std 2px', val: 2 },
+                                { label: 'Med 3px', val: 3 },
+                                { label: 'Thick 4px', val: 4 },
+                              ].map((item) => (
+                                <button
+                                  key={item.val}
+                                  type="button"
+                                  onClick={() => setBorderThickness(item.val)}
+                                  className={`py-1 px-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                                    borderThickness === item.val
+                                      ? 'bg-[#e8501a] text-white border-[#e8501a] shadow-xs'
+                                      : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
+                                  }`}
+                                >
+                                  {item.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                       <label className="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors">
                         <span className="text-sm font-bold text-gray-700">Show Cut Lines</span>
                         <input type="checkbox" checked={hasCutLines} onChange={(e) => setHasCutLines(e.target.checked)} className="accent-[#e8501a] w-4 h-4" />

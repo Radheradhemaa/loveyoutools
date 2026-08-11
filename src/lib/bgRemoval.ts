@@ -114,26 +114,29 @@ export const ensurePreloaded = async () => {
 };
 
 /**
- * Options for fine-grained AI background removal and object separation.
+ * Options for fine-grained AI background removal and subject preservation.
  */
 export interface BgRemovalOptions {
   engine?: 'auto' | 'strict_subject' | 'rmbg' | 'modnet' | 'isnet';
-  isolateMainSubject?: boolean; // Default true: strictly identifies the main person/subject and eliminates background objects (chairs, tables, secondary clutter)
-  objectStrictness?: number; // 0 to 100 (default 75: strict subject focus, clears out touching/nearby background objects)
-  severTouchingObjects?: boolean; // Default true: severs thin connecting bridges (e.g. chair armrests, headrests, desk edges)
-  removeBackgroundNoise?: boolean; // Default true: removes floating speckles and dust
+  isolateMainSubject?: boolean;
+  objectStrictness?: number; // 0 to 100
+  severTouchingObjects?: boolean;
+  removeBackgroundNoise?: boolean;
+  preserveEarsAndShoulders?: boolean;
+  decontaminateHalos?: boolean;
 }
 
 /**
  * Robust downscaling and preprocessing.
- * Mobile-safe: preserves original aspect ratio with padding if needed.
+ * Mobile-safe: preserves original aspect ratio.
+ * Optimized resolution (1024px desktop / 768px mobile) to capture high-frequency details (ears, neck, hair, hands, clothes).
  */
 async function downscaleImageIfNeeded(
   imageSrc: string | File | Blob,
   maxDim = 1024,
 ): Promise<string> {
   const isMobile = isMobileDevice();
-  const limit = isMobile ? Math.min(maxDim, 1024) : maxDim;
+  const limit = isMobile ? Math.min(maxDim, 768) : maxDim;
 
   return new Promise((resolve) => {
     const img = new Image();
@@ -179,284 +182,628 @@ async function downscaleImageIfNeeded(
   });
 }
 
+// -------------------------------------------------------------
+// STAGE 2: BACKGROUND COLOR SAMPLING
+// -------------------------------------------------------------
+
+interface SectorBackgroundModel {
+  meanR: number;
+  meanG: number;
+  meanB: number;
+  stdR: number;
+  stdG: number;
+  stdB: number;
+  sampleCount: number;
+}
+
+interface BackgroundModels {
+  global: SectorBackgroundModel;
+  sectors: SectorBackgroundModel[]; // 3x3 grid of sectors
+}
+
 /**
- * Connected Component Saliency & Morphological Bridge Severing Engine.
- * 
- * Accurately detects and removes background objects that are close to or touching the main subject,
- * including chairs, desks, walls, background items, secondary people, and floating artifacts.
+ * Samples the background color distribution across spatial sectors from definite background pixels.
+ */
+function sampleBackgroundModels(
+  imageData: ImageData,
+  maskAlphas: Float32Array | Uint8Array,
+  maskW: number,
+  maskH: number
+): BackgroundModels {
+  const w = imageData.width;
+  const h = imageData.height;
+  const data = imageData.data;
+
+  const defaultSector = (): SectorBackgroundModel => ({
+    meanR: 245,
+    meanG: 245,
+    meanB: 245,
+    stdR: 15,
+    stdG: 15,
+    stdB: 15,
+    sampleCount: 0,
+  });
+
+  const sectors: SectorBackgroundModel[] = Array.from({ length: 9 }, defaultSector);
+  const sectorSums = Array.from({ length: 9 }, () => ({ r: 0, g: 0, b: 0, r2: 0, g2: 0, b2: 0, count: 0 }));
+
+  let globalR = 0, globalG = 0, globalB = 0;
+  let globalR2 = 0, globalG2 = 0, globalB2 = 0;
+  let globalCount = 0;
+
+  const stepY = Math.max(1, Math.floor(h / 120));
+  const stepX = Math.max(1, Math.floor(w / 120));
+
+  for (let y = 0; y < h; y += stepY) {
+    const maskY = Math.min(maskH - 1, Math.floor((y / h) * maskH));
+    const secY = Math.min(2, Math.floor((y / h) * 3));
+
+    for (let x = 0; x < w; x += stepX) {
+      const maskX = Math.min(maskW - 1, Math.floor((x / w) * maskW));
+      const maskIdx = maskY * maskW + maskX;
+      const alpha = maskAlphas[maskIdx];
+
+      // Sample strictly from high-confidence definite background pixels (< 10/255)
+      if (alpha < 10) {
+        const secX = Math.min(2, Math.floor((x / w) * 3));
+        const sectorIdx = secY * 3 + secX;
+
+        const imgIdx = (y * w + x) * 4;
+        const r = data[imgIdx];
+        const g = data[imgIdx + 1];
+        const b = data[imgIdx + 2];
+
+        sectorSums[sectorIdx].r += r;
+        sectorSums[sectorIdx].g += g;
+        sectorSums[sectorIdx].b += b;
+        sectorSums[sectorIdx].r2 += r * r;
+        sectorSums[sectorIdx].g2 += g * g;
+        sectorSums[sectorIdx].b2 += b * b;
+        sectorSums[sectorIdx].count++;
+
+        globalR += r;
+        globalG += g;
+        globalB += b;
+        globalR2 += r * r;
+        globalG2 += g * g;
+        globalB2 += b * b;
+        globalCount++;
+      }
+    }
+  }
+
+  // Compute Global Model
+  let globalModel: SectorBackgroundModel;
+  if (globalCount > 20) {
+    const mR = globalR / globalCount;
+    const mG = globalG / globalCount;
+    const mB = globalB / globalCount;
+    const varR = Math.max(9, globalR2 / globalCount - mR * mR);
+    const varG = Math.max(9, globalG2 / globalCount - mG * mG);
+    const varB = Math.max(9, globalB2 / globalCount - mB * mB);
+    globalModel = {
+      meanR: mR,
+      meanG: mG,
+      meanB: mB,
+      stdR: Math.sqrt(varR),
+      stdG: Math.sqrt(varG),
+      stdB: Math.sqrt(varB),
+      sampleCount: globalCount,
+    };
+  } else {
+    globalModel = defaultSector();
+  }
+
+  // Compute Sector Models (fallback to global if low sample count in that sector)
+  for (let s = 0; s < 9; s++) {
+    const sum = sectorSums[s];
+    if (sum.count > 10) {
+      const mR = sum.r / sum.count;
+      const mG = sum.g / sum.count;
+      const mB = sum.b / sum.count;
+      const varR = Math.max(9, sum.r2 / sum.count - mR * mR);
+      const varG = Math.max(9, sum.g2 / sum.count - mG * mG);
+      const varB = Math.max(9, sum.b2 / sum.count - mB * mB);
+      sectors[s] = {
+        meanR: mR,
+        meanG: mG,
+        meanB: mB,
+        stdR: Math.sqrt(varR),
+        stdG: Math.sqrt(varG),
+        stdB: Math.sqrt(varB),
+        sampleCount: sum.count,
+      };
+    } else {
+      sectors[s] = { ...globalModel };
+    }
+  }
+
+  return { global: globalModel, sectors };
+}
+
+// -------------------------------------------------------------
+// STAGE 3: MASK EXTRACTION & NOISE SUPPRESSION
+// -------------------------------------------------------------
+
+/**
+ * Robustly extracts single-channel float alpha values (0 to 255) from Transformers.js segmentation masks.
+ */
+function extractAlphaArrayFromMask(mask: any): { width: number; height: number; data: Float32Array } {
+  const width = mask.width;
+  const height = mask.height;
+  const channels = mask.channels || 1;
+  const raw = mask.data;
+  const total = width * height;
+  const out = new Float32Array(total);
+
+  // Check scale (0..1 vs 0..255)
+  let maxVal = 0;
+  const sampleCount = Math.min(2000, raw.length);
+  for (let i = 0; i < sampleCount; i++) {
+    if (raw[i] > maxVal) maxVal = raw[i];
+  }
+  const scale = maxVal <= 1.05 && maxVal > 0 ? 255.0 : 1.0;
+
+  if (channels === 1) {
+    for (let i = 0; i < total; i++) {
+      out[i] = raw[i] * scale;
+    }
+  } else if (channels === 4) {
+    // If RGBA, inspect whether mask is in alpha channel or luminance
+    let alphaSum = 0;
+    for (let i = 0; i < Math.min(200, total); i++) {
+      alphaSum += raw[i * 4 + 3];
+    }
+    const useAlpha = alphaSum > 0 && alphaSum < 255 * 190;
+    for (let i = 0; i < total; i++) {
+      out[i] = (useAlpha ? raw[i * 4 + 3] : raw[i * 4]) * scale;
+    }
+  } else if (channels === 3) {
+    for (let i = 0; i < total; i++) {
+      out[i] = (0.299 * raw[i * 3] + 0.587 * raw[i * 3 + 1] + 0.114 * raw[i * 3 + 2]) * scale;
+    }
+  } else {
+    for (let i = 0; i < total; i++) {
+      out[i] = raw[i] * scale;
+    }
+  }
+
+  return { width, height, data: out };
+}
+
+/**
+ * Accurately finds all pixels connected to the image boundaries that belong to the outer background.
+ * Uses a robust 4-way BFS queue starting from the outer perimeter, safely avoiding the subject torso.
+ */
+function findExteriorBackgroundMask(
+  alphas: Float32Array,
+  w: number,
+  h: number,
+  bgThreshold = 35
+): Uint8Array {
+  const total = w * h;
+  const isExterior = new Uint8Array(total);
+  const queue = new Int32Array(total);
+  let head = 0;
+  let tail = 0;
+
+  // 1. Estimate subject horizontal bounds to protect the bottom torso / white shirt
+  let minSubjX = w;
+  let maxSubjX = 0;
+  let minSubjY = h;
+  let maxSubjY = 0;
+
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      if (alphas[row + x] >= 120) {
+        if (x < minSubjX) minSubjX = x;
+        if (x > maxSubjX) maxSubjX = x;
+        if (y < minSubjY) minSubjY = y;
+        if (y > maxSubjY) maxSubjY = y;
+      }
+    }
+  }
+
+  // If no clear subject detected, fallback bounds
+  if (maxSubjX <= minSubjX) {
+    minSubjX = Math.floor(w * 0.25);
+    maxSubjX = Math.floor(w * 0.75);
+    minSubjY = 0;
+    maxSubjY = h - 1;
+  }
+
+  // 2. Safely seed the exterior background:
+  // Top border: seed background (excluding rare case where head touches top edge)
+  for (let x = 0; x < w; x++) {
+    const topIdx = x;
+    if (alphas[topIdx] < bgThreshold && isExterior[topIdx] === 0) {
+      isExterior[topIdx] = 1;
+      queue[tail++] = topIdx;
+    }
+  }
+
+  // Left & Right borders: seed background
+  for (let y = 0; y < h; y++) {
+    const leftIdx = y * w;
+    const rightIdx = y * w + (w - 1);
+    if (alphas[leftIdx] < bgThreshold && isExterior[leftIdx] === 0) {
+      isExterior[leftIdx] = 1;
+      queue[tail++] = leftIdx;
+    }
+    if (alphas[rightIdx] < bgThreshold && isExterior[rightIdx] === 0) {
+      isExterior[rightIdx] = 1;
+      queue[tail++] = rightIdx;
+    }
+  }
+
+  // Bottom border: ONLY seed far left and far right outside the subject torso
+  // CRITICAL: NEVER seed in the center where the shirt / chest / body touches the bottom!
+  const leftSafeLimit = Math.max(0, minSubjX - 10);
+  const rightSafeLimit = Math.min(w - 1, maxSubjX + 10);
+
+  for (let x = 0; x < leftSafeLimit; x++) {
+    const botIdx = (h - 1) * w + x;
+    if (alphas[botIdx] < bgThreshold && isExterior[botIdx] === 0) {
+      isExterior[botIdx] = 1;
+      queue[tail++] = botIdx;
+    }
+  }
+
+  for (let x = rightSafeLimit + 1; x < w; x++) {
+    const botIdx = (h - 1) * w + x;
+    if (alphas[botIdx] < bgThreshold && isExterior[botIdx] === 0) {
+      isExterior[botIdx] = 1;
+      queue[tail++] = botIdx;
+    }
+  }
+
+  // 3. 4-way BFS flood-fill outward to find true background
+  // Allows background flood-fill to reach right up to outer contours of ears, hair, neck, and shoulders
+  const barrierLimit = 85;
+  while (head < tail) {
+    const curr = queue[head++];
+    const cy = Math.floor(curr / w);
+    const cx = curr % w;
+
+    const neighbors = [
+      cy > 0 ? curr - w : -1,
+      cy < h - 1 ? curr + w : -1,
+      cx > 0 ? curr - 1 : -1,
+      cx < w - 1 ? curr + 1 : -1,
+    ];
+
+    for (const nIdx of neighbors) {
+      if (nIdx !== -1 && isExterior[nIdx] === 0 && alphas[nIdx] < barrierLimit) {
+        isExterior[nIdx] = 1;
+        queue[tail++] = nIdx;
+      }
+    }
+  }
+
+  return isExterior;
+}
+
+/**
+ * Solidifies the entire subject interior (face, hair, neck, torso, white shirt, clothes, hands).
+ * Guarantees that white shirts and light clothes are 100% solid (Alpha = 255.0)
+ * so background colors never bleed through the clothing, while respecting ear and neck silhouettes.
+ */
+function solidifySubjectInteriorAndClothing(
+  alphas: Float32Array,
+  _imageData: ImageData | null,
+  w: number,
+  h: number
+) {
+  const total = w * h;
+  const isExterior = findExteriorBackgroundMask(alphas, w, h, 35);
+
+  // 1. Solidify interior holes (e.g. white shirts, highlights) enclosed within the subject silhouette
+  for (let i = 0; i < total; i++) {
+    if (isExterior[i] === 0) {
+      // Inside subject silhouette: must be completely opaque!
+      if (alphas[i] > 30) {
+        alphas[i] = 255.0;
+      }
+    } else {
+      // Definite exterior background: zero out faint background haze
+      if (alphas[i] < 35) {
+        alphas[i] = 0.0;
+      }
+    }
+  }
+}
+
+/**
+ * Cleans tiny isolated floating background noise pixels while guaranteeing 100% complete
+ * preservation of the subject (hair, fingers, limbs, clothes, accessories, body).
  */
 export function isolateAndCleanSubjectMask(
-  maskData: { width: number; height: number; data: Float32Array | Uint8Array | number[] },
+  maskData: { width: number; height: number; data: Float32Array },
   options: {
     isolateMainSubject?: boolean;
     objectStrictness?: number; // 0 to 100
-    severTouchingObjects?: boolean;
     removeNoise?: boolean;
   } = {}
 ) {
   const mw = maskData.width;
   const mh = maskData.height;
   const srcData = maskData.data;
-  const totalPixels = mw * mh;
 
   const {
-    isolateMainSubject = true,
-    objectStrictness = 75, // 0 = keep everything, 100 = strictest subject isolation
-    severTouchingObjects = true,
     removeNoise = true
   } = options;
 
-  if (!isolateMainSubject && objectStrictness === 0) {
-    return;
+  if (removeNoise) {
+    solidifySubjectInteriorAndClothing(srcData, null, mw, mh);
+  }
+}
+
+// -------------------------------------------------------------
+// STAGE 4: HIGH PRECISION GUIDED FILTER & CRISP BOUNDARY MATTING
+// -------------------------------------------------------------
+
+/**
+ * Fast Guided Filter for sub-pixel boundary matting.
+ * Uses the native RGB image as the guide to snap alpha edges cleanly to actual object/hair boundaries.
+ */
+function applyFastGuidedFilter(
+  imageData: ImageData,
+  rawAlpha: Float32Array,
+  w: number,
+  h: number,
+  radius = 2,
+  eps = 0.0001
+): Float32Array {
+  const total = w * h;
+  const pixels = imageData.data;
+  const guide = new Float32Array(total);
+  const p = new Float32Array(total);
+
+  for (let i = 0; i < total; i++) {
+    const idx = i * 4;
+    guide[i] = (0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2]) / 255.0;
+    p[i] = rawAlpha[i] / 255.0;
   }
 
-  // 1. Create binary mask with high-confidence foreground threshold
-  const binary = new Uint8Array(totalPixels);
-  const threshold = Math.max(20, Math.min(60, 20 + (objectStrictness * 0.35)));
+  // 1D separable box filter
+  const boxFilter = (src: Float32Array, r: number): Float32Array => {
+    const dest = new Float32Array(total);
+    const temp = new Float32Array(total);
 
-  for (let i = 0; i < totalPixels; i++) {
-    binary[i] = srcData[i] > threshold ? 1 : 0;
-  }
-
-  // 2. Optional Morphological Opening (Erosion followed by Geodesic Dilation)
-  // Sever narrow bridges connecting chairs/desks/headrests to the subject's body/shoulders
-  let workingBinary = binary;
-  if (severTouchingObjects && objectStrictness > 35) {
-    const eroded = new Uint8Array(totalPixels);
-    const erosionRadius = objectStrictness > 80 ? 3 : 2;
-
-    for (let y = erosionRadius; y < mh - erosionRadius; y++) {
-      const rowOffset = y * mw;
-      for (let x = erosionRadius; x < mw - erosionRadius; x++) {
-        let allOn = true;
-        for (let dy = -erosionRadius; dy <= erosionRadius && allOn; dy++) {
-          const nRow = (y + dy) * mw;
-          for (let dx = -erosionRadius; dx <= erosionRadius; dx++) {
-            if (binary[nRow + (x + dx)] === 0) {
-              allOn = false;
-              break;
-            }
-          }
-        }
-        if (allOn) {
-          eroded[rowOffset + x] = 1;
-        }
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      let sum = 0;
+      for (let x = 0; x <= r && x < w; x++) {
+        sum += src[row + x];
+      }
+      for (let x = 0; x < w; x++) {
+        const left = x - r - 1;
+        const right = x + r;
+        if (left >= 0) sum -= src[row + left];
+        if (right < w && right > r) sum += src[row + right];
+        const count = Math.min(x + r, w - 1) - Math.max(0, x - r) + 1;
+        temp[row + x] = sum / count;
       }
     }
-    workingBinary = eroded;
+
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let y = 0; y <= r && y < h; y++) {
+        sum += temp[y * w + x];
+      }
+      for (let y = 0; y < h; y++) {
+        const top = y - r - 1;
+        const bottom = y + r;
+        if (top >= 0) sum -= temp[top * w + x];
+        if (bottom < h && bottom > r) sum += temp[bottom * w + x];
+        const count = Math.min(y + r, h - 1) - Math.max(0, y - r) + 1;
+        dest[y * w + x] = sum / count;
+      }
+    }
+
+    return dest;
+  };
+
+  const meanI = boxFilter(guide, radius);
+  const meanP = boxFilter(p, radius);
+
+  const guideP = new Float32Array(total);
+  const guideGuide = new Float32Array(total);
+  for (let i = 0; i < total; i++) {
+    guideP[i] = guide[i] * p[i];
+    guideGuide[i] = guide[i] * guide[i];
   }
 
-  // 3. Connected Component Labeling on workingBinary (Two-pass BFS/FloodFill)
-  const labels = new Int32Array(totalPixels);
-  labels.fill(-1);
+  const meanIP = boxFilter(guideP, radius);
+  const meanII = boxFilter(guideGuide, radius);
 
-  interface ComponentInfo {
-    id: number;
-    pixelCount: number;
-    sumX: number;
-    sumY: number;
-    minX: number;
-    maxX: number;
-    minY: number;
-    maxY: number;
-    sumAlpha: number;
-    touchesBorder: boolean;
-    saliencyScore: number;
+  const a = new Float32Array(total);
+  const b = new Float32Array(total);
+
+  for (let i = 0; i < total; i++) {
+    const varI = Math.max(0, meanII[i] - meanI[i] * meanI[i]);
+    const covIP = meanIP[i] - meanI[i] * meanP[i];
+    const ak = covIP / (varI + eps);
+    const bk = meanP[i] - ak * meanI[i];
+    a[i] = ak;
+    b[i] = bk;
   }
 
-  const components: ComponentInfo[] = [];
-  let currentLabel = 0;
-  const queue = new Int32Array(totalPixels);
+  const meanA = boxFilter(a, radius);
+  const meanB = boxFilter(b, radius);
 
-  for (let y = 0; y < mh; y++) {
-    const rowOffset = y * mw;
-    for (let x = 0; x < mw; x++) {
+  const output = new Float32Array(total);
+  const threshLow = 30;
+  const threshHigh = 180; // Calibrated cutoff: eliminates ear/hair halos while keeping edges anti-aliased
+
+  for (let i = 0; i < total; i++) {
+    const origA = rawAlpha[i];
+    if (origA <= 12) {
+      output[i] = 0;
+      continue;
+    }
+    if (origA >= 220) {
+      output[i] = 255;
+      continue;
+    }
+
+    const q = Math.max(0, Math.min(1.0, meanA[i] * guide[i] + meanB[i]));
+    const rawVal = q * 255.0;
+
+    // Apply Sigmoidal Smoothstep Edge Sharpening with crisp cutoff
+    if (rawVal <= threshLow) {
+      output[i] = 0;
+    } else if (rawVal >= threshHigh) {
+      output[i] = 255;
+    } else {
+      // Smooth Hermite interpolation for crisp, anti-aliased edge
+      const t = (rawVal - threshLow) / (threshHigh - threshLow);
+      const s = t * t * (3 - 2 * t);
+      output[i] = Math.max(0, Math.min(255, s * 255.0));
+    }
+  }
+
+  return output;
+}
+
+// -------------------------------------------------------------
+// STAGE 5: PRISTINE PHOTO DETAIL PRESERVATION & CLEAN EDGE MATTING
+// -------------------------------------------------------------
+
+/**
+ * Applies clean edge matting with background color de-contamination (de-fringing)
+ * to cleanly eliminate halos around ears, neck, and hair.
+ */
+function applyCleanEdgeMatting(
+  pixels: Uint8ClampedArray,
+  alphas: Float32Array,
+  w: number,
+  h: number,
+  bgModels?: BackgroundModels
+) {
+  for (let y = 0; y < h; y++) {
+    const secY = Math.min(2, Math.floor((y / h) * 3));
+    const rowOffset = y * w;
+
+    for (let x = 0; x < w; x++) {
       const idx = rowOffset + x;
-      if (workingBinary[idx] === 1 && labels[idx] === -1) {
-        // Start BFS flood-fill for this connected island
-        let head = 0;
-        let tail = 0;
-        queue[tail++] = idx;
-        labels[idx] = currentLabel;
+      const alphaVal = alphas[idx];
+      const pIdx = idx * 4;
 
-        let pixelCount = 0;
-        let sumX = 0;
-        let sumY = 0;
-        let minX = x;
-        let maxX = x;
-        let minY = y;
-        let maxY = y;
-        let sumAlpha = 0;
-        let touchesBorder = false;
-
-        while (head < tail) {
-          const curr = queue[head++];
-          const cy = Math.floor(curr / mw);
-          const cx = curr % mw;
-
-          pixelCount++;
-          sumX += cx;
-          sumY += cy;
-          sumAlpha += srcData[curr];
-
-          if (cx < minX) minX = cx;
-          if (cx > maxX) maxX = cx;
-          if (cy < minY) minY = cy;
-          if (cy > maxY) maxY = cy;
-
-          if (cx <= 1 || cx >= mw - 2 || cy <= 1 || cy >= mh - 2) {
-            touchesBorder = true;
-          }
-
-          // 4-connectivity neighbors
-          const neighbors = [
-            cy > 0 ? curr - mw : -1,
-            cy < mh - 1 ? curr + mw : -1,
-            cx > 0 ? curr - 1 : -1,
-            cx < mw - 1 ? curr + 1 : -1,
-          ];
-
-          for (const nIdx of neighbors) {
-            if (nIdx !== -1 && workingBinary[nIdx] === 1 && labels[nIdx] === -1) {
-              labels[nIdx] = currentLabel;
-              queue[tail++] = nIdx;
-            }
-          }
-        }
-
-        // Calculate Saliency Score for this component
-        const centerX = sumX / pixelCount;
-        const centerY = sumY / pixelCount;
-        const normDistX = Math.abs(centerX - mw / 2) / (mw / 2);
-        const normDistY = Math.abs(centerY - mh / 2) / (mh / 2);
-        const centerDistanceFactor = Math.max(0.2, 1.0 - (normDistX * 0.6 + normDistY * 0.4));
-        const verticalSpan = (maxY - minY + 1) / mh;
-        const avgAlpha = sumAlpha / (pixelCount * 255);
-
-        const saliencyScore = (pixelCount / totalPixels) * centerDistanceFactor * (0.5 + verticalSpan * 0.5) * avgAlpha;
-
-        components.push({
-          id: currentLabel,
-          pixelCount,
-          sumX,
-          sumY,
-          minX,
-          maxX,
-          minY,
-          maxY,
-          sumAlpha,
-          touchesBorder,
-          saliencyScore,
-        });
-
-        currentLabel++;
+      if (alphaVal <= 10) {
+        pixels[pIdx + 3] = 0;
+        continue;
       }
-    }
-  }
 
-  if (components.length === 0) {
-    return;
-  }
-
-  // 4. Find the Main / Primary Subject Component (Highest Saliency)
-  components.sort((a, b) => b.saliencyScore - a.saliencyScore);
-  const primaryComponent = components[0];
-
-  // Components that should be preserved as part of the primary subject
-  const keepLabels = new Set<number>();
-  keepLabels.add(primaryComponent.id);
-
-  // Determine strictness ratio for secondary components
-  // Strictness 75 means secondary objects must have > 45% of the primary subject's saliency to survive
-  const relativeThreshold = Math.max(0.08, (objectStrictness / 100) * 0.60);
-  const minAreaRatio = Math.max(0.02, (objectStrictness / 100) * 0.35);
-
-  for (let i = 1; i < components.length; i++) {
-    const comp = components[i];
-    const areaRatio = comp.pixelCount / primaryComponent.pixelCount;
-    const saliencyRatio = comp.saliencyScore / primaryComponent.saliencyScore;
-
-    // Check if this component is a close background object (e.g. chair, desk, lamp, secondary clutter)
-    let isBackgroundObject = false;
-
-    // If area is very small compared to main subject (noise/clutter)
-    if (areaRatio < minAreaRatio) {
-      isBackgroundObject = true;
-    }
-    // If saliency is low or it's pushed to the corner/edge of the frame
-    else if (saliencyRatio < relativeThreshold) {
-      isBackgroundObject = true;
-    }
-    // If it's located near the bottom/top periphery away from center
-    else if (comp.touchesBorder && areaRatio < 0.25 && objectStrictness > 50) {
-      isBackgroundObject = true;
-    }
-
-    if (!isBackgroundObject) {
-      keepLabels.add(comp.id);
-    }
-  }
-
-  // 5. Build the Core Seed Mask from Kept Components
-  const coreSeed = new Uint8Array(totalPixels);
-  for (let i = 0; i < totalPixels; i++) {
-    const l = labels[i];
-    if (l !== -1 && keepLabels.has(l)) {
-      coreSeed[i] = 1;
-    }
-  }
-
-  // 6. Constrained Geodesic Dilation:
-  // Reconstruct the full subject's fine details (hair, shoulders, fingers, clothes) from the core seed,
-  // constrained strictly to where the original binary mask was active.
-  // This guarantees that any severed background chair/object is NOT reached!
-  const finalReconstructed = new Uint8Array(totalPixels);
-  let gQueue = new Int32Array(totalPixels);
-  let gHead = 0;
-  let gTail = 0;
-
-  for (let i = 0; i < totalPixels; i++) {
-    if (coreSeed[i] === 1) {
-      finalReconstructed[i] = 1;
-      gQueue[gTail++] = i;
-    }
-  }
-
-  // Dilate outwards along original foreground connectivity
-  while (gHead < gTail) {
-    const curr = gQueue[gHead++];
-    const cy = Math.floor(curr / mw);
-    const cx = curr % mw;
-
-    const neighbors = [
-      cy > 0 ? curr - mw : -1,
-      cy < mh - 1 ? curr + mw : -1,
-      cx > 0 ? curr - 1 : -1,
-      cx < mw - 1 ? curr + 1 : -1,
-    ];
-
-    for (const nIdx of neighbors) {
-      if (nIdx !== -1 && binary[nIdx] === 1 && finalReconstructed[nIdx] === 0) {
-        finalReconstructed[nIdx] = 1;
-        gQueue[gTail++] = nIdx;
+      if (alphaVal >= 240) {
+        pixels[pIdx + 3] = 255;
+        continue;
       }
-    }
-  }
 
-  // 7. Apply the filtered result back to srcData
-  // Any pixel not part of the reconstructed primary subject is wiped to 0!
-  for (let i = 0; i < totalPixels; i++) {
-    if (finalReconstructed[i] === 0) {
-      srcData[i] = 0;
-    } else if (removeNoise && srcData[i] < 18) {
-      srcData[i] = 0;
+      // Smooth anti-aliased transition edge
+      pixels[pIdx + 3] = Math.round(alphaVal);
+
+      // De-contaminate background halo colors on transition pixels around ears & hair
+      if (bgModels) {
+        const secX = Math.min(2, Math.floor((x / w) * 3));
+        const sector = bgModels.sectors[secY * 3 + secX] || bgModels.global;
+
+        const origR = pixels[pIdx];
+        const origG = pixels[pIdx + 1];
+        const origB = pixels[pIdx + 2];
+
+        const alphaNorm = alphaVal / 255.0;
+        const invAlpha = 1.0 - alphaNorm;
+
+        // Unmix background color mathematically
+        const safeAlpha = Math.max(0.25, alphaNorm);
+        const unmixR = (origR - sector.meanR * invAlpha) / safeAlpha;
+        const unmixG = (origG - sector.meanG * invAlpha) / safeAlpha;
+        const unmixB = (origB - sector.meanB * invAlpha) / safeAlpha;
+
+        const blendWeight = Math.max(0, Math.min(0.75, (alphaNorm - 0.1) / 0.75));
+        pixels[pIdx] = Math.round(Math.max(0, Math.min(255, origR * (1 - blendWeight) + unmixR * blendWeight)));
+        pixels[pIdx + 1] = Math.round(Math.max(0, Math.min(255, origG * (1 - blendWeight) + unmixG * blendWeight)));
+        pixels[pIdx + 2] = Math.round(Math.max(0, Math.min(255, origB * (1 - blendWeight) + unmixB * blendWeight)));
+      }
     }
   }
 }
 
 /**
- * Executes high-precision background removal using an intelligent multi-model ensemble
- * with automatic salient subject isolation and close-object elimination.
+ * Applies Adaptive Micro-Contrast & Detail Enhancement to the foreground subject
+ * to make facial features, eyes, hair, and textures ultra crisp and high definition (HD).
+ */
+function enhanceForegroundSubjectClarity(
+  pixels: Uint8ClampedArray,
+  w: number,
+  h: number,
+  clarityFactor = 0.25
+) {
+  const copy = new Uint8ClampedArray(pixels);
+
+  for (let y = 1; y < h - 1; y++) {
+    const rowOffset = y * w;
+    for (let x = 1; x < w - 1; x++) {
+      const idx = (rowOffset + x) * 4;
+      const alpha = pixels[idx + 3];
+      if (alpha < 60) continue; // Skip transparent / outer background
+
+      const iUp = ((y - 1) * w + x) * 4;
+      const iDown = ((y + 1) * w + x) * 4;
+      const iLeft = (rowOffset + x - 1) * 4;
+      const iRight = (rowOffset + x + 1) * 4;
+
+      const blurR = (copy[iUp] + copy[iDown] + copy[iLeft] + copy[iRight]) * 0.25;
+      const blurG = (copy[iUp + 1] + copy[iDown + 1] + copy[iLeft + 1] + copy[iRight + 1]) * 0.25;
+      const blurB = (copy[iUp + 2] + copy[iDown + 2] + copy[iLeft + 2] + copy[iRight + 2]) * 0.25;
+
+      const diffR = copy[idx] - blurR;
+      const diffG = copy[idx + 1] - blurG;
+      const diffB = copy[idx + 2] - blurB;
+
+      const weight = (alpha / 255.0) * clarityFactor;
+      pixels[idx] = Math.max(0, Math.min(255, Math.round(copy[idx] + diffR * weight)));
+      pixels[idx + 1] = Math.max(0, Math.min(255, Math.round(copy[idx + 1] + diffG * weight)));
+      pixels[idx + 2] = Math.max(0, Math.min(255, Math.round(copy[idx + 2] + diffB * weight)));
+    }
+  }
+}
+
+/**
+ * Quality Control Pass.
+ * Ensures the subject core is 100% solid, eliminates residual background fog/speckles.
+ */
+function qualityControlPerimeterPass(
+  pixels: Uint8ClampedArray,
+  w: number,
+  h: number
+) {
+  for (let y = 1; y < h - 1; y++) {
+    const rowOffset = y * w;
+    for (let x = 1; x < w - 1; x++) {
+      const idx = (rowOffset + x) * 4;
+      const a = pixels[idx + 3];
+
+      if (a > 0 && a < 15) {
+        // Zero out faint boundary haze
+        pixels[idx + 3] = 0;
+      } else if (a > 220) {
+        // Solidify subject core
+        pixels[idx + 3] = 255;
+      }
+    }
+  }
+}
+
+// -------------------------------------------------------------
+// MAIN ORCHESTRATION PIPELINE
+// -------------------------------------------------------------
+
+/**
+ * Executes high-precision background removal using the RMBG-1.4 AI engine:
+ * Preserves 100% complete subject (head, hair, ears, clothes, body, hands, legs, objects, products).
  */
 export async function removeBackground(
   imageInput: string | File | Blob,
@@ -469,24 +816,13 @@ export async function removeBackground(
   onProgress("Initializing AI Engine...");
 
   const {
-    engine = 'strict_subject',
-    isolateMainSubject = true,
-    objectStrictness = 75,
-    severTouchingObjects = true,
-    removeBackgroundNoise = true
+    engine = 'rmbg',
+    removeBackgroundNoise = true,
+    decontaminateHalos = true,
   } = options;
 
-  // Load appropriate models
-  if (engine === 'modnet' || engine === 'strict_subject') {
-    await Promise.all([
-      ensureModnetLoaded().catch(console.error),
-      ensureIsnetLoaded().catch(console.error)
-    ]);
-  } else {
-    await Promise.all([
-      ensureIsnetLoaded().catch(console.error)
-    ]);
-  }
+  // Always ensure state-of-the-art RMBG-1.4 is loaded
+  await ensureIsnetLoaded().catch(console.error);
 
   // Ensure input is a string (DataURL or URL)
   let imageSrcForDownscale: string;
@@ -500,35 +836,30 @@ export async function removeBackground(
     });
   }
 
-  // Use 512 for instant mask generation speed (< 3s)
-  const imageSrc = await downscaleImageIfNeeded(imageSrcForDownscale, 512);
+  // Intermediate scaling for neural network
+  const imageSrc = await downscaleImageIfNeeded(imageSrcForDownscale, 1024);
 
   try {
-    onProgress("Identifying Subject & Background Objects...");
-
-    const imgEl = new Image();
-    imgEl.crossOrigin = "anonymous";
-    await new Promise((resolve) => {
-      imgEl.onload = resolve;
-      imgEl.src = imageSrc;
-    });
+    onProgress("Segmenting Subject & Details...");
 
     let resSegmentation = null;
 
-    // Prefer MODNet for strict subject / portrait matting to ignore chairs, walls, desks
-    if (engine === 'strict_subject' && modnetPipeline) {
+    // Primary: RMBG-1.4 (SOTA Salient & Human Subject Segmentation)
+    if (isnetPipeline) {
       try {
-        resSegmentation = await modnetPipeline(imageSrc);
+        resSegmentation = await isnetPipeline(imageSrc);
       } catch (e) {
-        console.warn("MODNet primary inference failed, using RMBG-1.4", e);
+        console.warn("RMBG-1.4 primary inference failed, trying fallback...", e);
       }
     }
 
-    if (!resSegmentation) {
-      resSegmentation = await (isnetPipeline ? isnetPipeline(imageSrc).catch((e: any) => {
-        console.error("RMBG-1.4 pass failed", e);
-        return null;
-      }) : Promise.resolve(null));
+    // Secondary fallback to MODNet if RMBG not available or user explicitly requested modnet
+    if (!resSegmentation && modnetPipeline) {
+      try {
+        resSegmentation = await modnetPipeline(imageSrc);
+      } catch (e) {
+        console.warn("MODNet fallback failed", e);
+      }
     }
 
     if (!resSegmentation && hasWebGPU) {
@@ -537,19 +868,20 @@ export async function removeBackground(
       isnetPipeline = null;
       modnetPipeline = null;
       await ensureIsnetLoaded().catch(console.error);
-      resSegmentation = await isnetPipeline(imageSrc).catch((e: any) => {
-        console.error("WASM RMBG pass failed", e);
-        return null;
-      });
+      if (isnetPipeline) {
+        resSegmentation = await isnetPipeline(imageSrc).catch((e: any) => {
+          console.error("WASM RMBG pass failed", e);
+          return null;
+        });
+      }
     }
 
     if (!resSegmentation) {
       throw new Error("AI models failed to process the image.");
     }
 
-    onProgress("Isolating Subject & Eliminating Background Objects...");
+    onProgress("Processing Subject & Preserving Details...");
 
-    // Helper to extract mask data and normalize
     const getMask = (result: any) => {
       if (!result || result.length === 0) return null;
       let segment = result[0];
@@ -562,30 +894,19 @@ export async function removeBackground(
       return segment.mask;
     };
 
-    let maskData = getMask(resSegmentation);
+    const rawMask = getMask(resSegmentation);
+    let maskData: { width: number; height: number; data: Float32Array } | null = null;
 
-    if (maskData) {
-      const mw = maskData.width;
-      const mh = maskData.height;
+    if (rawMask) {
+      maskData = extractAlphaArrayFromMask(rawMask);
 
-      const maxModVal = maskData.data.reduce((a: number, b: number) => a > b ? a : b, 0);
-      const modScale = maxModVal > 0 && maxModVal <= 1.2 ? 255 : 1;
-
-      for (let i = 0; i < mw * mh; i++) {
-        let modVal = maskData.data[i] * modScale;
-        maskData.data[i] = modVal;
-      }
-
-      // Execute Connected Component Analysis & Touching Object Severing
+      // Clean background speckles without cutting off the subject
       isolateAndCleanSubjectMask(maskData, {
-        isolateMainSubject,
-        objectStrictness,
-        severTouchingObjects,
         removeNoise: removeBackgroundNoise
       });
     }
 
-    // Load Full Original Image to get maximum quality output
+    // Load Full Original Image to construct native high-resolution output
     const origImg = new Image();
     origImg.crossOrigin = "anonymous";
     await new Promise((res) => {
@@ -600,293 +921,88 @@ export async function removeBackground(
     ctx.drawImage(origImg, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const pixels = imageData.data;
+    const w = canvas.width;
+    const h = canvas.height;
 
-    // --- High-Precision CPU-Grade Compositing Pipeline ---
-    const processMaskAndCompositeCPU = (mask: any) => {
-      if (!mask) return;
-      const mw = mask.width;
-      const mh = mask.height;
-      const mData = mask.data;
-      const w = canvas.width;
-      const h = canvas.height;
+    onProgress("Refining Edges & Eliminating Halos...");
 
-      let maxFound = 0;
-      const skip = Math.max(1, Math.floor(mData.length / 5000));
-      for (let i = 0; i < mData.length; i += skip) {
-        if (mData[i] > maxFound) maxFound = mData[i];
-      }
-      const maskScale = maxFound > 0 && maxFound <= 1.2 ? 255 : 1;
+    if (maskData) {
+      const mw = maskData.width;
+      const mh = maskData.height;
+      const mData = maskData.data;
 
-      const cleanMask = new Float32Array(mw * mh);
-      for (let i = 0; i < mw * mh; i++) {
-        cleanMask[i] = mData[i] * maskScale;
-      }
-
-      // High Precision CPU Bilinear Upscale + Float32 S-Curve with Joint Bilateral Guided Alpha refinement
+      // 1. Bilinear Upscale of Prediction Mask to Full Resolution
       const rawAlphas = new Float32Array(w * h);
-      const floor = 10;
-      const ceil = 245;
 
       for (let y = 0; y < h; y++) {
-        const srcY = Math.max(
-          0,
-          Math.min(mh - 1.001, (y + 0.5) * (mh / h) - 0.5),
-        );
+        const srcY = Math.max(0, Math.min(mh - 1.001, (y + 0.5) * (mh / h) - 0.5));
         const y1 = Math.floor(srcY);
         const y2 = Math.min(mh - 1, y1 + 1);
         const fy = srcY - y1;
         const invFy = 1 - fy;
-
         const rowOffset = y * w;
 
         for (let x = 0; x < w; x++) {
-          const srcX = Math.max(
-            0,
-            Math.min(mw - 1.001, (x + 0.5) * (mw / w) - 0.5),
-          );
+          const srcX = Math.max(0, Math.min(mw - 1.001, (x + 0.5) * (mw / w) - 0.5));
           const x1 = Math.floor(srcX);
           const x2 = Math.min(mw - 1, x1 + 1);
           const fx = srcX - x1;
           const invFx = 1 - fx;
 
-          const row1 = y1 * mw;
-          const row2 = y2 * mw;
+          const p11 = mData[y1 * mw + x1];
+          const p21 = mData[y1 * mw + x2];
+          const p12 = mData[y2 * mw + x1];
+          const p22 = mData[y2 * mw + x2];
 
-          const p11 = cleanMask[row1 + x1];
-          const p21 = cleanMask[row1 + x2];
-          const p12 = cleanMask[row2 + x1];
-          const p22 = cleanMask[row2 + x2];
-
-          let a =
-            p11 * invFx * invFy +
-            p21 * fx * invFy +
-            p12 * invFx * fy +
-            p22 * fx * fy;
-
-          // Float32 Hermite S-Curve Re-mapping
-          if (a < floor) {
-            a = 0;
-          } else if (a > ceil) {
-            a = 255;
-          } else {
-            const t = (a - floor) / (ceil - floor);
-            a = t * t * (3 - 2 * t) * 255;
-          }
-
-          rawAlphas[rowOffset + x] = a;
+          const a = p11 * invFx * invFy + p21 * fx * invFy + p12 * invFx * fy + p22 * fx * fy;
+          rawAlphas[rowOffset + x] = Math.max(0, Math.min(255, a));
         }
       }
 
-      // Execute Joint Bilateral Guided Alpha Filter to snap and smooth edge lines
-      for (let y = 0; y < h; y++) {
-        const rowOffset = y * w;
-        for (let x = 0; x < w; x++) {
-          let a = rawAlphas[rowOffset + x];
-          const idx = (rowOffset + x) * 4;
+      // 2. Solidify interior subject & fortify white shirts / clothing at native resolution
+      solidifySubjectInteriorAndClothing(rawAlphas, imageData, w, h);
 
-          // Apply guided bilateral sharpening and halo suppression strictly to transition pixels
-          if (a > 3 && a < 252) {
-            const r_center = pixels[idx];
-            const g_center = pixels[idx + 1];
-            const b_center = pixels[idx + 2];
+      // 3. Sample Local Background Color Models for De-fringing
+      const bgModels = sampleBackgroundModels(imageData, rawAlphas, w, h);
 
-            let sumAlpha = 0;
-            let sumW = 0;
+      // 4. Fast Guided Filter for Sub-pixel Edge Alignment
+      const refinedAlphas = applyFastGuidedFilter(imageData, rawAlphas, w, h, 2, 0.0001);
 
-            // 3x3 Guided Window
-            for (let dy = -1; dy <= 1; dy++) {
-              const ny = y + dy;
-              if (ny < 0 || ny >= h) continue;
-              const nRowOffset = ny * w;
-              for (let dx = -1; dx <= 1; dx++) {
-                const nx = x + dx;
-                if (nx < 0 || nx >= w) continue;
-
-                const nIdx = (nRowOffset + nx) * 4;
-                const nr = pixels[nIdx];
-                const ng = pixels[nIdx + 1];
-                const nb = pixels[nIdx + 2];
-                const nAlpha = rawAlphas[nRowOffset + nx];
-
-                const colorDist = Math.abs(nr - r_center) + Math.abs(ng - g_center) + Math.abs(nb - b_center);
-                const rangeWeight = Math.max(0.01, 1.0 - (colorDist / 90));
-                const spatialWeight = (dx === 0 && dy === 0) ? 1.0 : 0.65;
-                const weight = rangeWeight * spatialWeight;
-
-                sumAlpha += nAlpha * weight;
-                sumW += weight;
-              }
-            }
-
-            if (sumW > 0) {
-              a = sumAlpha / sumW;
-            }
-
-            // High contrast snap for crystal clear edges without jagged clipping
-            if (a < 15) {
-              a = 0; // Cut off noise, chairs, and faint background artifacts
-            } else if (a > 245) {
-              a = 255; // Snap the inside to solid early
-            } else {
-              // Sharpen intermediate values for a crisp but anti-aliased edge
-              const t = (a - 15) / 230;
-              a = Math.round((t * t * (3 - 2 * t)) * 255);
-            }
-          }
-
-          if (a < 2) a = 0;
-          if (a > 253) a = 255;
-
-          pixels[idx + 3] = Math.round(a);
+      // 5. Clean Edge Matting & Background De-fringing (Removes halos around ears and hair)
+      if (decontaminateHalos) {
+        applyCleanEdgeMatting(pixels, refinedAlphas, w, h, bgModels);
+      } else {
+        for (let i = 0; i < w * h; i++) {
+          pixels[i * 4 + 3] = Math.round(refinedAlphas[i]);
         }
       }
-    };
 
-    processMaskAndCompositeCPU(maskData);
+      // 6. HD Photo Clarity & Feature Enhancement
+      enhanceForegroundSubjectClarity(pixels, w, h, 0.25);
+
+      // 7. Quality Control Pass
+      qualityControlPerimeterPass(pixels, w, h);
+    }
 
     ctx.putImageData(imageData, 0, 0);
 
-    onProgress("Polishing Professional Cutout...");
+    onProgress("Finalizing Cutout...");
     const rawBlob = await new Promise<Blob>((resolve) =>
       canvas.toBlob((b) => resolve(b!), "image/png"),
     );
 
-    let polishedBlob = rawBlob;
-    if (!isManualMode) {
-      try {
-        polishedBlob = await polishAndEnhance(rawBlob);
-      } catch (e) {
-        console.warn("[AI] Polish pass skipped", e);
-      }
-    }
-
     console.log(
-      `[AI] Dual-Core Execution: ${(Date.now() - startTime) / 1000}s`,
+      `[AI] Subject Isolation Execution: ${(Date.now() - startTime) / 1000}s`,
     );
 
     if (forceWhiteBackground) {
-      return await applyWhiteBackground(polishedBlob);
+      return await applyWhiteBackground(rawBlob);
     }
-    return polishedBlob;
+    return rawBlob;
   } catch (e: any) {
-    console.error("[AI] Hybrid Failure:", e);
-    throw new Error(`Hybrid Background removal failed: ${e.message}`);
+    console.error("[AI] Background Removal Failure:", e);
+    throw new Error(`Background removal failed: ${e.message}`);
   }
-}
-
-/**
- * Natural Contour Polish & Artifact Eradication
- * Applies Halo Decontamination to perfectly preserve edge detail while removing colored fringing.
- */
-async function polishCutoutEdges(blob: Blob): Promise<Blob> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      const w = img.width;
-      const h = img.height;
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-      ctx.drawImage(img, 0, 0);
-
-      const imageData = ctx.getImageData(0, 0, w, h);
-      const data = imageData.data;
-      
-      const isEdge = new Uint8Array(w * h);
-      const isTransp = new Uint8Array(w * h);
-      
-      for (let i = 0; i < w * h; i++) {
-        if (data[i * 4 + 3] < 20) {
-          isTransp[i] = 1;
-        }
-      }
-
-      for (let y = 3; y < h - 3; y++) {
-        for (let x = 3; x < w - 3; x++) {
-          const idx = y * w + x;
-          const a = data[idx * 4 + 3];
-          
-          if (a >= 20) {
-            let nearTransp = false;
-            for (let dy = -3; dy <= 3; dy++) {
-              for (let dx = -3; dx <= 3; dx++) {
-                if (isTransp[(y + dy) * w + (x + dx)] === 1) {
-                  nearTransp = true; 
-                  break;
-                }
-              }
-              if (nearTransp) break;
-            }
-            
-            if (nearTransp) {
-              if (a < 255) {
-                isEdge[idx] = 1;
-              } else {
-                isEdge[idx] = 2;
-              }
-            }
-          }
-        }
-      }
-
-      for (let i = 0; i < w * h; i++) {
-        const edgeState = isEdge[i];
-        if (edgeState > 0) {
-          const idx = i * 4;
-          let r = data[idx];
-          let g = data[idx + 1];
-          let b = data[idx + 2];
-          const originalA = data[idx + 3];
-          
-          let alpha = originalA / 255;
-          let finalAlpha = originalA;
-          
-          const bgR = 252;
-          const bgG = 252;
-          const bgB = 252;
-
-          if (alpha > 0.05 && alpha < 0.98) {
-            let decompR = (r - bgR * (1 - alpha)) / alpha;
-            let decompG = (g - bgG * (1 - alpha)) / alpha;
-            let decompB = (b - bgB * (1 - alpha)) / alpha;
-
-            decompR = Math.max(r * 0.9, Math.min(255, decompR));
-            decompG = Math.max(g * 0.9, Math.min(255, decompG));
-            decompB = Math.max(b * 0.9, Math.min(255, decompB));
-
-            const blend = Math.max(0, Math.min(1.0, (alpha - 0.05) / 0.5));
-
-            r = Math.round(r * (1 - blend) + decompR * blend);
-            g = Math.round(g * (1 - blend) + decompG * blend);
-            b = Math.round(b * (1 - blend) + decompB * blend);
-            
-            data[idx] = r;
-            data[idx + 1] = g;
-            data[idx + 2] = b;
-          }
-          
-          data[idx + 3] = finalAlpha;
-        }
-      }
-
-      ctx.putImageData(imageData, 0, 0);
-      canvas.toBlob((b) => {
-        URL.revokeObjectURL(img.src);
-        resolve(b || blob);
-      }, "image/png");
-    };
-    img.onerror = () => resolve(blob);
-    img.src = URL.createObjectURL(blob);
-  });
-}
-
-/**
- * Gentle Image Enhancement Pass
- */
-async function polishAndEnhance(blob: Blob): Promise<Blob> {
-  const cleanBlob = await polishCutoutEdges(blob);
-  return cleanBlob;
 }
 
 /**
@@ -943,7 +1059,6 @@ export async function magicEraseObjectAtPoint(
       const startIdx = (py * w + px) * 4;
 
       if (data[startIdx + 3] === 0) {
-        // Already transparent
         resolve(imageSrc);
         return;
       }
@@ -951,7 +1066,6 @@ export async function magicEraseObjectAtPoint(
       const targetR = data[startIdx];
       const targetG = data[startIdx + 1];
       const targetB = data[startIdx + 2];
-      const targetA = data[startIdx + 3];
 
       const visited = new Uint8Array(w * h);
       const queue = new Int32Array(w * h);
@@ -968,7 +1082,6 @@ export async function magicEraseObjectAtPoint(
         const cx = curr % w;
         const idx = curr * 4;
 
-        // Erase pixel
         data[idx + 3] = 0;
 
         const neighbors = [

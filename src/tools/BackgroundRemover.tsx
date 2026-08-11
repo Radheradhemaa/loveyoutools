@@ -188,11 +188,11 @@ export default function BackgroundRemover() {
   const [customColor, setCustomColor] = useState('#ffffff');
   const [blurAmount, setBlurAmount] = useState(10);
   
-  // AI Subject Focus & Close Object Removal Options
-  const [selectedEngine, setSelectedEngine] = useState<'strict_subject' | 'modnet' | 'rmbg' | 'isnet'>('strict_subject');
+  // AI Subject Focus & Precision Engine Options
+  const [selectedEngine, setSelectedEngine] = useState<'strict_subject' | 'modnet' | 'rmbg' | 'isnet'>('rmbg');
   const [isolateMainSubject, setIsolateMainSubject] = useState(true);
-  const [objectStrictness, setObjectStrictness] = useState(75); // 0 = preserve objects, 75 = strict subject, 100 = ultra clean
-  const [severTouchingObjects, setSeverTouchingObjects] = useState(true);
+  const [objectStrictness, setObjectStrictness] = useState(75);
+  const [severTouchingObjects, setSeverTouchingObjects] = useState(false);
   const [removeBackgroundNoise, setRemoveBackgroundNoise] = useState(true);
 
   // Manual Touchup & Magic Eraser State
@@ -581,10 +581,10 @@ export default function BackgroundRemover() {
   const handleAutoCleanBackground = () => {
     if (!imageSrc) return;
     removeBackground(imageSrc, {
-      engine: 'strict_subject',
+      engine: 'rmbg',
       isolateMainSubject: true,
-      objectStrictness: Math.max(80, objectStrictness),
-      severTouchingObjects: true,
+      objectStrictness: 75,
+      severTouchingObjects: false,
       removeBackgroundNoise: true,
     });
   };
@@ -890,18 +890,20 @@ export default function BackgroundRemover() {
             finalB = finalB * (1 - skinWeight) + fB * skinWeight;
           }
 
-          // Anti-aliased transition edge blending with background
-          if (alpha < 250) {
-            const edgeBlend = alpha / 250;
-            finalR = finalR * edgeBlend + r_orig * (1 - edgeBlend);
-            finalG = finalG * edgeBlend + g_orig * (1 - edgeBlend);
-            finalB = finalB * edgeBlend + b_orig * (1 - edgeBlend);
+          // Clean edge preservation with 100% solid core for subject & clothing
+          let finalAlpha = alpha;
+          if (alpha > 180) {
+            finalAlpha = 255;
+          } else if (alpha <= 12) {
+            finalAlpha = 0;
+          } else {
+            finalAlpha = alpha;
           }
 
           dst[i] = Math.round(finalR);
           dst[i + 1] = Math.round(finalG);
           dst[i + 2] = Math.round(finalB);
-          dst[i + 3] = alpha;
+          dst[i + 3] = finalAlpha;
         }
       }
       tempCtx.putImageData(output, 0, 0);
@@ -1432,9 +1434,26 @@ export default function BackgroundRemover() {
                               }} className="text-xs text-accent font-bold hover:underline">Reset</button>
                             </div>
 
+                            {/* 1-Click Auto Clarity & Edge Cleaner */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsUltraHD(true);
+                                setSharpness(40);
+                                setContrast(108);
+                                setSaturation(108);
+                                setBrightness(102);
+                                setEdgeSoftness(0);
+                                setBeautyFace(10);
+                              }}
+                              className="w-full py-2.5 px-3 bg-gradient-to-r from-accent/15 to-accent/5 hover:from-accent/25 hover:to-accent/10 border border-accent/30 rounded-xl text-xs font-bold text-accent flex items-center justify-center gap-2 transition-all shadow-sm"
+                            >
+                              <Sparkles className="w-4 h-4 animate-pulse" /> Auto HD Clarity & De-Halo (1-Click)
+                            </button>
+
                             <label className="flex items-center gap-2 p-3 bg-accent/5 border border-accent/20 rounded-xl cursor-pointer hover:bg-accent/10 transition-colors">
                               <input type="checkbox" checked={isUltraHD} onChange={(e) => setIsUltraHD(e.target.checked)} className="accent-accent w-4 h-4" />
-                              <span className="text-sm font-bold text-accent flex items-center gap-1"><Sparkles className="w-4 h-4" /> Ultra HD Enhance</span>
+                              <span className="text-sm font-bold text-accent flex items-center gap-1"><Sparkles className="w-4 h-4" /> Ultra HD Studio Clarity</span>
                             </label>
 
                             <div className="space-y-4">
@@ -1442,10 +1461,10 @@ export default function BackgroundRemover() {
                                 { label: 'Brightness', val: brightness, set: setBrightness, min: 50, max: 150, unit: '%' },
                                 { label: 'Contrast', val: contrast, set: setContrast, min: 50, max: 150, unit: '%' },
                                 { label: 'Saturation', val: saturation, set: setSaturation, min: 0, max: 200, unit: '%' },
-                                { label: 'Sharpness', val: sharpness, set: setSharpness, min: 0, max: 100, unit: '' },
+                                { label: 'Photo Sharpness & Clarity', val: sharpness, set: setSharpness, min: 0, max: 100, unit: '' },
                                 { label: 'Skin Smoothing', val: smoothness, set: setSmoothness, min: 0, max: 100, unit: '' },
-                                { label: 'Edge Adjustment', val: edgeSoftness, set: setEdgeSoftness, min: 0, max: 100, unit: '' },
-                                { label: 'Beauty Face', val: beautyFace, set: setBeautyFace, min: 0, max: 100, unit: '' }
+                                { label: 'Edge Softness', val: edgeSoftness, set: setEdgeSoftness, min: 0, max: 100, unit: '' },
+                                { label: 'Beauty Face & Glow', val: beautyFace, set: setBeautyFace, min: 0, max: 100, unit: '' }
                               ].map(adj => (
                                 <div key={adj.label}>
                                   <div className="flex justify-between text-xs font-bold text-text-primary mb-1">
