@@ -478,7 +478,7 @@ function findExteriorBackgroundMask(
     const cy = Math.floor(curr / w);
     const cx = curr % w;
 
-    const barrierLimit = cy < neckLimitY ? 100 : 45;
+    const barrierLimit = cy < neckLimitY ? 100 : 15; // Lower threshold to strictly preserve shoulders and clothing
 
     const neighbors = [
       cy > 0 ? curr - w : -1,
@@ -556,10 +556,10 @@ function solidifySubjectInteriorAndClothing(
           const maxC = Math.max(r, g, b);
           const minC = Math.min(r, g, b);
 
-          // White / Light shirt signature: high brightness, low saturation
-          const isWhiteShirt = maxC >= 150 && (maxC - minC) <= 50;
+          // White / Light shirt signature: high brightness, very low saturation
+          const isWhiteShirt = maxC >= 130 && (maxC - minC) <= 45; // Strict saturation check to isolate white/grey cloth from skin
           if (isWhiteShirt) {
-            alphas[idx] = Math.max(alphas[idx], 220.0);
+            alphas[idx] = 255.0; // Strictly 255 to perfectly block background bleed-through
           }
         }
       }
@@ -573,11 +573,9 @@ function solidifySubjectInteriorAndClothing(
       alphas[i] = 0.0;
     } else {
       // INSIDE SUBJECT SILHOUETTE:
-      // Guarantee high opacity for interior while preserving smooth edge transitions
-      if (alphas[i] > 10 && alphas[i] < 180) {
-        alphas[i] = Math.max(alphas[i], 140.0);
-      } else if (alphas[i] >= 180) {
-        alphas[i] = 255.0;
+      // Guarantee absolute opacity for interior to prevent any semi-transparent shirt bleeding
+      if (alphas[i] > 10) {
+        alphas[i] = 255.0; // Force absolutely solid core
       }
     }
   }
@@ -703,8 +701,8 @@ function applyFastGuidedFilter(
   const meanB = boxFilter(b, radius);
 
   const output = new Float32Array(total);
-  const threshLow = 20;
-  const threshHigh = 220;
+  const threshLow = 110; // Extra high cutoff aggressively eats into the white outer fringe
+  const threshHigh = 160; // Lower high threshold ensures sharp crisp inner core
 
   for (let i = 0; i < total; i++) {
     const origA = rawAlpha[i];
@@ -720,15 +718,14 @@ function applyFastGuidedFilter(
     const q = Math.max(0, Math.min(1.0, meanA[i] * guide[i] + meanB[i]));
     const rawVal = q * 255.0;
 
-    // Apply Hermite Smoothstep Edge Sharpening for silky smooth anti-aliased edge
-    if (rawVal <= threshLow) {
+    // Apply steep smooth anti-aliasing to edge fringes
+    if (rawVal <= 160) {
       output[i] = 0;
-    } else if (rawVal >= threshHigh) {
+    } else if (rawVal >= 200) {
       output[i] = 255;
     } else {
-      const t = (rawVal - threshLow) / (threshHigh - threshLow);
-      const s = t * t * (3 - 2 * t);
-      output[i] = Math.max(0, Math.min(255, s * 255.0));
+      const t = (rawVal - 160) / (200 - 160);
+      output[i] = Math.max(0, Math.min(255, t * 255.0));
     }
   }
 
@@ -762,18 +759,16 @@ function applyCleanEdgeMatting(
       const alphaVal = tempAlphas[idx];
       const pIdx = idx * 4;
 
-      if (alphaVal <= 8) {
+      if (alphaVal <= 160) {
         pixels[pIdx + 3] = 0;
         continue;
       }
 
-      if (alphaVal >= 248) {
+      if (alphaVal >= 200) {
         pixels[pIdx + 3] = 255;
-        continue;
+      } else {
+        pixels[pIdx + 3] = Math.round(alphaVal);
       }
-
-      // Smooth anti-aliased transition edge
-      pixels[pIdx + 3] = Math.round(alphaVal);
 
       // High-precision 5x5 local neighborhood sampling for ear, face & hair decontamination
       let fgR = 0, fgG = 0, fgB = 0, fgCount = 0;
@@ -823,8 +818,8 @@ function applyCleanEdgeMatting(
           const distToBg = Math.hypot(curR - avgBgR, curG - avgBgG, curB - avgBgB);
           const distToFg = Math.hypot(curR - avgFgR, curG - avgFgG, curB - avgFgB);
 
-          // Zero out low-confidence halo noise around ears, face and hair
-          if (alphaVal < 45 && distToBg < distToFg * 1.2) {
+          // Zero out low-confidence halo noise around ears, face and hair, and aggressively clear old background colors
+          if (alphaVal < 185 && distToBg < Math.max(90, distToFg * 2.0)) {
             pixels[pIdx + 3] = 0;
             continue;
           }
@@ -841,11 +836,6 @@ function applyCleanEdgeMatting(
           pixels[pIdx] = Math.round(unmixR * (1 - fgWeight) + avgFgR * fgWeight);
           pixels[pIdx + 1] = Math.round(unmixG * (1 - fgWeight) + avgFgG * fgWeight);
           pixels[pIdx + 2] = Math.round(unmixB * (1 - fgWeight) + avgFgB * fgWeight);
-        } else {
-          // If no background neighbor found in 5x5, use local foreground color to prevent halo
-          pixels[pIdx] = Math.round(avgFgR);
-          pixels[pIdx + 1] = Math.round(avgFgG);
-          pixels[pIdx + 2] = Math.round(avgFgB);
         }
       } else if (bgModels) {
         // Sector model fallback for de-contamination
@@ -1009,7 +999,7 @@ function cleanEarNeckHeadHalosPass(
 
       // If a transition pixel is heavily surrounded by transparent background (concave gap/crevice)
       // or if its alpha is low in an ear/neck gap, clear its alpha to zero out halos
-      if (transparentCount >= 9 && a < 140) {
+      if (transparentCount >= 4 && a < 220) {
         pixels[pIdx + 3] = 0;
         continue;
       }
@@ -1024,9 +1014,10 @@ function cleanEarNeckHeadHalosPass(
         const curB = pixels[pIdx + 2];
 
         const distToBg = Math.hypot(curR - avgBgR, curG - avgBgG, curB - avgBgB);
+        const distToFg = Math.hypot(curR - fgR / fgCount, curG - fgG / fgCount, curB - fgB / fgCount);
 
         // If the pixel color is very close to background color, clear it out
-        if (distToBg < 30 && a < 150) {
+        if (distToBg < Math.max(80, distToFg * 2.0) && a < 240) {
           pixels[pIdx + 3] = 0;
           continue;
         }
@@ -1068,10 +1059,10 @@ function qualityControlPerimeterPass(
 
       if (a === 0) continue;
 
-      if (a < 8) {
-        // Zero out faint boundary haze
+      if (a < 120) {
+        // Zero out faint boundary haze heavily
         pixels[pIdx + 3] = 0;
-      } else if (a > 248) {
+      } else if (a > 190) {
         // Solidify subject core
         pixels[pIdx + 3] = 255;
       } else {
@@ -1291,7 +1282,7 @@ export async function removeBackground(
       const bgModels = sampleBackgroundModels(imageData, rawAlphas, w, h);
 
       // 5. Fast Guided Filter for Sub-pixel Edge Alignment
-      const refinedAlphas = applyFastGuidedFilter(imageData, rawAlphas, w, h, 3, 0.0001);
+      const refinedAlphas = applyFastGuidedFilter(imageData, rawAlphas, w, h, 2, 0.0001);
 
       // 6. Clean Edge Matting & Background De-fringing (Removes halos around ears and hair)
       if (decontaminateHalos) {
@@ -1310,11 +1301,11 @@ export async function removeBackground(
         });
       }
 
-      // 8. Sub-Pixel Edge Anti-Aliasing for Silky Smooth Contour Boundaries
-      antiAliasBoundaryEdges(pixels, w, h);
+      // 8. Sub-Pixel Edge Anti-Aliasing (DISABLED - strict binary cut in use)
+      // antiAliasBoundaryEdges(pixels, w, h);
 
       // 9. HD Photo Clarity & Feature Enhancement
-      enhanceForegroundSubjectClarity(pixels, w, h, 0.25);
+      enhanceForegroundSubjectClarity(pixels, w, h, 0.10);
 
       // 10. Ear, Neck & Jawline Halo Clearing Pass
       cleanEarNeckHeadHalosPass(pixels, w, h);
@@ -1567,39 +1558,15 @@ export async function cleanEdgeHalosAndDeFringe(
             if (isEarShoulderZone) {
               const bgDist = Math.hypot(r - avgBgR, g - avgBgG, b - avgBgB);
               
-              // If it's a translucent halo fringe (< 75 alpha or high background color match)
-              if (a < 80 || (bgDist < haloThreshold && a < 180)) {
+              // If it's a translucent halo fringe or ANY background color match
+              if (a < 210 || (bgDist < haloThreshold * 5 && a < 255)) {
                 pixels[idx + 3] = 0;
                 alphas[row + x] = 0;
                 continue;
               }
 
               // De-fringe: If it's skin or dark hair/garment with light halo bleed, clamp color to nearest solid neighbor
-              if (maxNeighborA > 220) {
-                // Find solid interior neighbor
-                let bestNeighborIdx = -1;
-                let maxA = 0;
-                const offsets = [-w - 1, -w, -w + 1, -1, 1, w - 1, w, w + 1];
-                for (const off of offsets) {
-                  const nPos = row + x + off;
-                  if (nPos >= 0 && nPos < total && alphas[nPos] > maxA) {
-                    maxA = alphas[nPos];
-                    bestNeighborIdx = nPos * 4;
-                  }
-                }
-
-                if (bestNeighborIdx !== -1 && maxA > 240) {
-                  const inR = copyPixels[bestNeighborIdx];
-                  const inG = copyPixels[bestNeighborIdx + 1];
-                  const inB = copyPixels[bestNeighborIdx + 2];
-
-                  // Replace halo fringe color with pristine interior color
-                  pixels[idx] = Math.round(r * (1 - deFringeStrength) + inR * deFringeStrength);
-                  pixels[idx + 1] = Math.round(g * (1 - deFringeStrength) + inG * deFringeStrength);
-                  pixels[idx + 2] = Math.round(b * (1 - deFringeStrength) + inB * deFringeStrength);
-                  pixels[idx + 3] = 255;
-                }
-              }
+              // DISABLED to prevent color spreading, we just let the binary cut rule.
             } else {
               // General perimeter clean
               if (a < 35) {
