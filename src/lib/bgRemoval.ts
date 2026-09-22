@@ -336,13 +336,22 @@ function extractAlphaArrayFromMask(mask: any): { width: number; height: number; 
   const total = width * height;
   const out = new Float32Array(total);
 
-  // Check scale (0..1 vs 0..255)
+  // Check scale (0..1 vs 0..255) across the entire mask, including center where subject is
   let maxVal = 0;
-  const sampleCount = Math.min(2000, raw.length);
-  for (let i = 0; i < sampleCount; i++) {
+  const step = Math.max(1, Math.floor(raw.length / 500));
+  for (let i = 0; i < raw.length; i += step) {
     if (raw[i] > maxVal) maxVal = raw[i];
   }
-  const scale = maxVal <= 1.05 && maxVal > 0 ? 255.0 : 1.0;
+  // Check center core where portrait subjects are located
+  const centerIdx = Math.floor(total * 0.45) * channels;
+  const cRange = Math.min(500, Math.floor(raw.length * 0.1));
+  for (let i = Math.max(0, centerIdx - cRange); i < Math.min(raw.length, centerIdx + cRange); i++) {
+    if (raw[i] > maxVal) maxVal = raw[i];
+  }
+
+  // If neural net output is normalized floats (0..1) or maxVal <= 1.5, scale to 255.0
+  const isNormalized = (raw instanceof Float32Array && maxVal <= 1.5) || (maxVal > 0 && maxVal <= 1.05);
+  const scale = isNormalized ? 255.0 : 1.0;
 
   if (channels === 1) {
     for (let i = 0; i < total; i++) {
@@ -368,19 +377,55 @@ function extractAlphaArrayFromMask(mask: any): { width: number; height: number; 
     }
   }
 
+  // Polarity check: in portrait/passport photography, corners are background and center is subject.
+  // If corners are opaque and center is transparent, the mask is inverted!
+  let cornerSum = 0, cornerCount = 0;
+  const sampleR = Math.max(3, Math.min(12, Math.floor(width / 10), Math.floor(height / 10)));
+  for (let y = 0; y < sampleR; y++) {
+    for (let x = 0; x < sampleR; x++) {
+      cornerSum += out[y * width + x];
+      cornerSum += out[y * width + (width - 1 - x)];
+      cornerCount += 2;
+    }
+  }
+
+  let centerSum = 0, centerCount = 0;
+  const cYStart = Math.floor(height * 0.25);
+  const cYEnd = Math.floor(height * 0.65);
+  const cXStart = Math.floor(width * 0.35);
+  const cXEnd = Math.floor(width * 0.65);
+  const cStep = Math.max(1, Math.floor((cXEnd - cXStart) / 12));
+  for (let y = cYStart; y < cYEnd; y += cStep) {
+    const row = y * width;
+    for (let x = cXStart; x < cXEnd; x += cStep) {
+      centerSum += out[row + x];
+      centerCount++;
+    }
+  }
+
+  const avgCorner = cornerCount > 0 ? cornerSum / cornerCount : 0;
+  const avgCenter = centerCount > 0 ? centerSum / centerCount : 0;
+
+  if (avgCorner > 160 && avgCenter < 80) {
+    console.log("[AI] Inverted mask detected. Inverting polarity to preserve subject.");
+    for (let i = 0; i < total; i++) {
+      out[i] = Math.max(0, Math.min(255, 255.0 - out[i]));
+    }
+  }
+
   return { width, height, data: out };
 }
 
 /**
  * Accurately finds all pixels connected to the image boundaries that belong to the outer background.
- * Uses a robust 4-way BFS queue starting from the outer perimeter with a strict threshold
- * to prevent background flood-fill from ever leaking into white shirts or clothing.
+ * Uses a robust 4-way BFS queue starting strictly from outer perimeter background pixels.
+ * Uses a strict barrier threshold to prevent flood-fill from ever entering head, ears, neck, shoulders, or clothes.
  */
 function findExteriorBackgroundMask(
   alphas: Float32Array,
   w: number,
   h: number,
-  bgThreshold = 30
+  bgThreshold = 20
 ): Uint8Array {
   const total = w * h;
   const isExterior = new Uint8Array(total);
@@ -408,22 +453,25 @@ function findExteriorBackgroundMask(
 
   // If no clear subject detected, fallback bounds
   if (maxSubjX <= minSubjX) {
-    minSubjX = Math.floor(w * 0.25);
-    maxSubjX = Math.floor(w * 0.75);
+    minSubjX = Math.floor(w * 0.20);
+    maxSubjX = Math.floor(w * 0.80);
     minSubjY = 0;
     maxSubjY = h - 1;
   }
 
   const subjHeight = maxSubjY - minSubjY;
-  const chinY = Math.floor(minSubjY + subjHeight * 0.30);
+  const chinY = Math.floor(minSubjY + subjHeight * 0.35);
 
   // 2. Safely seed the exterior background:
-  // Top border: seed background
+  // Top border: seed background ONLY if alpha is very low (< bgThreshold) and outside hair center
   for (let x = 0; x < w; x++) {
     const topIdx = x;
-    if (alphas[topIdx] < bgThreshold && isExterior[topIdx] === 0) {
-      isExterior[topIdx] = 1;
-      queue[tail++] = topIdx;
+    const isOverHead = x >= (minSubjX + 10) && x <= (maxSubjX - 10);
+    if (!isOverHead || alphas[topIdx] < 10) {
+      if (alphas[topIdx] < bgThreshold && isExterior[topIdx] === 0) {
+        isExterior[topIdx] = 1;
+        queue[tail++] = topIdx;
+      }
     }
   }
 
@@ -451,8 +499,8 @@ function findExteriorBackgroundMask(
   }
 
   // Bottom border: ONLY seed far left and far right outside the subject torso
-  const leftSafeLimit = Math.max(0, minSubjX - 15);
-  const rightSafeLimit = Math.min(w - 1, maxSubjX + 15);
+  const leftSafeLimit = Math.max(0, minSubjX - 10);
+  const rightSafeLimit = Math.min(w - 1, maxSubjX + 10);
 
   for (let x = 0; x < leftSafeLimit; x++) {
     const botIdx = (h - 1) * w + x;
@@ -471,15 +519,14 @@ function findExteriorBackgroundMask(
   }
 
   // 3. 4-way BFS flood-fill outward to find true background
-  // Allows modest barrier limit in head/jaw region for ear gaps;
-  // strictly protects both shoulder sides and white/check shirts at or below neck level
-  const neckLimitY = chinY + Math.floor(subjHeight * 0.12);
+  // STRICT: Flood fill MUST NEVER cross into any pixel with alpha >= 20!
+  // This guarantees hair, ears, head, shoulders, and clothes are NEVER penetrated!
+  const barrierLimit = 20;
+
   while (head < tail) {
     const curr = queue[head++];
     const cy = Math.floor(curr / w);
     const cx = curr % w;
-
-    const barrierLimit = cy < neckLimitY ? 40 : 15; // Strict limit to guarantee 100% shoulder preservation
 
     const neighbors = [
       cy > 0 ? curr - w : -1,
@@ -502,7 +549,7 @@ function findExteriorBackgroundMask(
 /**
  * Solidifies the entire subject interior (face, hair, neck, torso, white shirt, clothes, hands).
  * Guarantees that white shirts and light clothes inside the subject silhouette are 100% solid (Alpha = 255.0)
- * without any holes or background color bleed-through, while keeping exterior background transparent.
+ * without any holes or background color bleed-through, while strictly preserving subject boundaries.
  */
 function solidifySubjectInteriorAndClothing(
   alphas: Float32Array,
@@ -527,22 +574,21 @@ function solidifySubjectInteriorAndClothing(
   }
 
   if (maxSubjX <= minSubjX) {
-    minSubjX = Math.floor(w * 0.25);
-    maxSubjX = Math.floor(w * 0.75);
+    minSubjX = Math.floor(w * 0.20);
+    maxSubjX = Math.floor(w * 0.80);
     minSubjY = 0;
     maxSubjY = h - 1;
   }
 
   const subjHeight = maxSubjY - minSubjY;
-  const chinY = Math.floor(minSubjY + subjHeight * 0.30);
+  const chinY = Math.floor(minSubjY + subjHeight * 0.35);
 
   // 2. Flood fill from outer image edges to identify true exterior background
-  const isExterior = findExteriorBackgroundMask(alphas, w, h, 30);
+  const isExterior = findExteriorBackgroundMask(alphas, w, h, 20);
 
-  // Dilate exterior by 6 pixels to create a safe boundary margin
-  // White color signature checks must NEVER touch pixels near the exterior edge!
+  // Dilate exterior by 4 pixels to create a safe boundary margin
   const isNearExterior = new Uint8Array(isExterior);
-  for (let pass = 0; pass < 6; pass++) {
+  for (let pass = 0; pass < 4; pass++) {
     const temp = new Uint8Array(isNearExterior);
     for (let y = 1; y < h - 1; y++) {
       const row = y * w;
@@ -558,32 +604,27 @@ function solidifySubjectInteriorAndClothing(
     }
   }
 
-  // 3. White Shirt & White Check Shirt RGB Signature Pass (when pixel color data is available)
-  // Fortifies both left and right shoulder sides across white shirts and white check shirts
+  // 3. White Shirt & Light Garment RGB Signature Pass (when pixel color data is available)
   if (imageData) {
     const pixels = imageData.data;
     for (let y = Math.max(0, chinY - 20); y < h; y++) {
       const row = y * w;
-      for (let x = Math.max(0, minSubjX + 2); x <= Math.min(w - 1, maxSubjX - 2); x++) {
+      for (let x = Math.max(0, minSubjX + 5); x <= Math.min(w - 1, maxSubjX - 5); x++) {
         const idx = row + x;
         const pIdx = idx * 4;
 
-        if (isNearExterior[idx] === 0 && alphas[idx] >= 70) {
+        if (isNearExterior[idx] === 0 && alphas[idx] >= 100) {
           const r = pixels[pIdx];
           const g = pixels[pIdx + 1];
           const b = pixels[pIdx + 2];
 
           const maxC = Math.max(r, g, b);
           const minC = Math.min(r, g, b);
-          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
 
           // White / Light shirt signature: high brightness, low saturation
-          const isWhiteShirt = maxC >= 130 && (maxC - minC) <= 50;
-          // White check shirt: high overall luminance base or check stripes
-          const isWhiteCheckShirt = (lum >= 115) || (maxC >= 135 && (maxC - minC) <= 85);
-
-          if (isWhiteShirt || isWhiteCheckShirt) {
-            alphas[idx] = 255.0; // Strictly 255 for deep interior garment core & shoulders
+          const isWhiteShirt = maxC >= 130 && (maxC - minC) <= 45;
+          if (isWhiteShirt) {
+            alphas[idx] = 255.0; // Strictly 255 for deep interior garment core
           }
         }
       }
@@ -596,14 +637,17 @@ function solidifySubjectInteriorAndClothing(
     for (let x = 0; x < w; x++) {
       const i = rowOffset + x;
       if (isExterior[i] === 1) {
-        alphas[i] = 0.0;
+        // ONLY clear genuine background pixels with low alpha (< 25)
+        // If it has real opacity, NEVER erase it!
+        if (alphas[i] < 25) {
+          alphas[i] = 0.0;
+        }
       } else {
+        // Solidify interior core to prevent transparency holes in face or body
         if (y > chinY) {
-          // For torso/body and both shoulders, guarantee solid opacity for subject interior
-          if (isNearExterior[i] === 0 && alphas[i] > 110) alphas[i] = 255.0;
+          if (isNearExterior[i] === 0 && alphas[i] > 140) alphas[i] = 255.0;
         } else {
-          // For head/hair, preserve natural semi-transparent alphas!
-          if (alphas[i] >= 240) alphas[i] = 255.0;
+          if (alphas[i] >= 220) alphas[i] = 255.0;
         }
       }
     }
@@ -611,12 +655,12 @@ function solidifySubjectInteriorAndClothing(
 }
 
 /**
-  * Cleans tiny isolated floating background noise pixels while guaranteeing 100% complete
-  * preservation of the subject (hair, fingers, limbs, clothes, accessories, body).
-  */
+ * Cleans tiny isolated floating background noise pixels while guaranteeing 100% complete
+ * preservation of the subject (hair, fingers, limbs, clothes, accessories, body).
+ */
 export function isolateAndCleanSubjectMask(
   maskData: { width: number; height: number; data: Float32Array },
-  options: {
+  _options: {
     isolateMainSubject?: boolean;
     objectStrictness?: number; // 0 to 100
     removeNoise?: boolean;
@@ -626,12 +670,13 @@ export function isolateAndCleanSubjectMask(
   const mh = maskData.height;
   const srcData = maskData.data;
 
-  const {
-    removeNoise = true
-  } = options;
-
-  if (removeNoise) {
-    solidifySubjectInteriorAndClothing(srcData, null, mw, mh);
+  // Solidify confident subject pixels and zero out tiny background haze on the downscaled mask
+  for (let i = 0; i < mw * mh; i++) {
+    if (srcData[i] > 210) {
+      srcData[i] = 255.0;
+    } else if (srcData[i] < 12) {
+      srcData[i] = 0.0;
+    }
   }
 }
 
@@ -752,195 +797,29 @@ export function eliminateChairAndBackrestObjects(
     }
   }
 
-  // 5. Advanced Chair Backrest Elimination around Neck & Shoulders
-  // Seamlessly severs and removes chair backrests, office chair cushions/wings/frames,
-  // showing near the close neck area, WHILE STRICTLY PRESERVING BOTH SHOULDER SIDES (especially in white shirt or white check shirt).
-  const subjH = maxY - minY;
-  const subjW = maxX - minX;
-  const chinY = Math.floor(minY + subjH * 0.32);
-  const neckBaseY = Math.floor(minY + subjH * 0.47);
+  // 5. If severTouchingObjects is requested:
+  // Detect chair wings/backrests protruding high above/beside the head and neck
+  if (severTouchingObjects && objectStrictness > 70) {
+    const subjH = maxY - minY;
+    const subjW = maxX - minX;
+    const chinY = Math.floor(minY + subjH * 0.30);
 
-  // Anatomical neck width: human neck is centered at coreCenterX and is ~20-30% of subjW
-  const neckHalfW = Math.max(18, Math.floor(subjW * 0.15));
-  const headHalfW = Math.max(25, Math.floor(subjW * 0.28));
+    // Head boundary width estimate (allow generous margin for hair, ears, accessories)
+    const headHalfW = Math.max(35, Math.floor(subjW * 0.48));
+    const leftLimit = coreCenterX - headHalfW;
+    const rightLimit = coreCenterX + headHalfW;
 
-  // A. Upper head lateral protrusions (above chin)
-  for (let y = minY; y <= chinY; y++) {
-    const row = y * w;
-    for (let x = 0; x < w; x++) {
-      const idx = row + x;
-      if (alphas[idx] > 10) {
-        const isFarLateral = x < (coreCenterX - headHalfW - 15) || x > (coreCenterX + headHalfW + 15);
-        if (isFarLateral) {
-          alphas[idx] = 0;
-          if (pixels) pixels[idx * 4 + 3] = 0;
-        }
-      }
-    }
-  }
-
-  // B. Close Neck Area Chair Object Detection & Elimination (y between chinY and neckBaseY + 25)
-  // For each row in the neck zone, determine true neck limits and eliminate chair backrests in the lateral pockets
-  for (let y = Math.max(0, chinY - 10); y <= Math.min(h - 1, neckBaseY + 25); y++) {
-    const row = y * w;
-
-    // Detect true neck bounds using skin tones and continuity around coreCenterX
-    let trueNeckLeft = coreCenterX - neckHalfW;
-    let trueNeckRight = coreCenterX + neckHalfW;
-
-    if (pixels) {
-      // Find left skin/collar edge from coreCenterX going left
-      for (let x = coreCenterX; x >= Math.max(0, coreCenterX - neckHalfW * 1.6); x--) {
-        const pIdx = (row + x) * 4;
-        const r = pixels[pIdx];
-        const g = pixels[pIdx + 1];
-        const b = pixels[pIdx + 2];
-        const a = alphas[row + x];
-        if (a < 30) {
-          trueNeckLeft = x;
-          break;
-        }
-        // Human skin tone signature
-        const isSkin = (r > 60 && g > 40 && b > 25 && r > g && (r - b) >= 10) ||
-                       (r > 160 && g > 120 && b > 90);
-        // Central shirt collar: high luminance near center
-        const isCenterCollar = (y > chinY + 15) && (0.299 * r + 0.587 * g + 0.114 * b > 140);
-        if (!isSkin && !isCenterCollar && Math.abs(x - coreCenterX) > neckHalfW * 0.7) {
-          trueNeckLeft = x;
-          break;
-        }
-      }
-
-      // Find right skin/collar edge from coreCenterX going right
-      for (let x = coreCenterX; x <= Math.min(w - 1, coreCenterX + neckHalfW * 1.6); x++) {
-        const pIdx = (row + x) * 4;
-        const r = pixels[pIdx];
-        const g = pixels[pIdx + 1];
-        const b = pixels[pIdx + 2];
-        const a = alphas[row + x];
-        if (a < 30) {
-          trueNeckRight = x;
-          break;
-        }
-        const isSkin = (r > 60 && g > 40 && b > 25 && r > g && (r - b) >= 10) ||
-                       (r > 160 && g > 120 && b > 90);
-        const isCenterCollar = (y > chinY + 15) && (0.299 * r + 0.587 * g + 0.114 * b > 140);
-        if (!isSkin && !isCenterCollar && Math.abs(x - coreCenterX) > neckHalfW * 0.7) {
-          trueNeckRight = x;
-          break;
-        }
-      }
-    }
-
-    // Anatomical downward shoulder slope from neck base
-    // Left shoulder slopes down from (trueNeckLeft, neckBaseY) outwards
-    // Right shoulder slopes down from (trueNeckRight, neckBaseY) outwards
-    const slope = 0.22; // Natural human trapezius slope
-
-    for (let x = 0; x < w; x++) {
-      const idx = row + x;
-      if (alphas[idx] <= 10) continue;
-
-      const pIdx = idx * 4;
-      const r = pixels ? pixels[pIdx] : 128;
-      const g = pixels ? pixels[pIdx + 1] : 128;
-      const b = pixels ? pixels[pIdx + 2] : 128;
-      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-      const maxC = Math.max(r, g, b);
-      const minC = Math.min(r, g, b);
-
-      // Identify if pixel is part of White Shirt or White Check Shirt
-      // Solid white: high brightness, low saturation
-      // White check: white/light base (lum > 115) OR check grid lines connecting to torso
-      const isWhiteOrCheckGarment = (lum > 120) || (maxC >= 135 && (maxC - minC) <= 85);
-
-      // 1. Left side of neck pocket:
-      if (x < trueNeckLeft - 3) {
-        const distFromNeck = trueNeckLeft - x;
-        const shoulderSlopeY = neckBaseY + Math.floor(distFromNeck * slope);
-
-        const isAboveShoulderSlope = y < shoulderSlopeY - 2;
-        const isChairColor = (lum < 130) || (maxC - minC > 40 && lum < 155 && !(r > g && g > b));
-
-        // Detect chair backrest object near neck:
-        if (isAboveShoulderSlope) {
-          // If it's a chair (dark mesh, leather, wood, plastic frame) or any object above the shoulder slope
-          if (isChairColor || !isWhiteOrCheckGarment || y < neckBaseY - 5) {
-            alphas[idx] = 0;
-            if (pixels) pixels[pIdx + 3] = 0;
-            continue;
-          }
-        } else if (y <= neckBaseY + 8 && distFromNeck < neckHalfW * 0.9) {
-          // Touching side of neck: if dark chair fabric/leather right next to neck/collar
-          if (lum < 110 || (lum < 140 && !isWhiteOrCheckGarment)) {
-            alphas[idx] = 0;
-            if (pixels) pixels[pIdx + 3] = 0;
-            continue;
-          }
-        }
-
-        // PRESERVE LEFT SHOULDER: If at or below shoulder slope and is white/check shirt, lock it!
-        if (!isAboveShoulderSlope && isWhiteOrCheckGarment && alphas[idx] >= 40) {
-          alphas[idx] = 255.0;
-          if (pixels && pixels[pIdx + 3] < 200) pixels[pIdx + 3] = 255;
-        }
-      }
-
-      // 2. Right side of neck pocket:
-      else if (x > trueNeckRight + 3) {
-        const distFromNeck = x - trueNeckRight;
-        const shoulderSlopeY = neckBaseY + Math.floor(distFromNeck * slope);
-
-        const isAboveShoulderSlope = y < shoulderSlopeY - 2;
-        const isChairColor = (lum < 130) || (maxC - minC > 40 && lum < 155 && !(r > g && g > b));
-
-        if (isAboveShoulderSlope) {
-          if (isChairColor || !isWhiteOrCheckGarment || y < neckBaseY - 5) {
-            alphas[idx] = 0;
-            if (pixels) pixels[pIdx + 3] = 0;
-            continue;
-          }
-        } else if (y <= neckBaseY + 8 && distFromNeck < neckHalfW * 0.9) {
-          if (lum < 110 || (lum < 140 && !isWhiteOrCheckGarment)) {
-            alphas[idx] = 0;
-            if (pixels) pixels[pIdx + 3] = 0;
-            continue;
-          }
-        }
-
-        // PRESERVE RIGHT SHOULDER: If at or below shoulder slope and is white/check shirt, lock it!
-        if (!isAboveShoulderSlope && isWhiteOrCheckGarment && alphas[idx] >= 40) {
-          alphas[idx] = 255.0;
-          if (pixels && pixels[pIdx + 3] < 200) pixels[pIdx + 3] = 255;
-        }
-      }
-    }
-  }
-
-  // 6. Comprehensive Shoulder Preservation for White Shirt & White Check Shirt
-  // Scans both the left shoulder and right shoulder below neckBaseY to guarantee 100% solidity
-  if (pixels) {
-    for (let y = neckBaseY; y <= Math.min(h - 1, maxY); y++) {
+    for (let y = minY; y <= chinY; y++) {
       const row = y * w;
-      for (let x = Math.max(0, minX); x <= Math.min(w - 1, maxX); x++) {
+      for (let x = 0; x < w; x++) {
         const idx = row + x;
-        const a = alphas[idx];
-        if (a < 30) continue;
-
-        const pIdx = idx * 4;
-        const r = pixels[pIdx];
-        const g = pixels[pIdx + 1];
-        const b = pixels[pIdx + 2];
-        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-        const maxC = Math.max(r, g, b);
-        const minC = Math.min(r, g, b);
-
-        const isWhiteShirt = maxC >= 130 && (maxC - minC) <= 50;
-        const isWhiteCheckShirt = (lum >= 115) || (maxC >= 130 && (maxC - minC) <= 85);
-
-        if ((isWhiteShirt || isWhiteCheckShirt) && a >= 50) {
-          alphas[idx] = 255.0;
-          pixels[pIdx + 3] = 255;
+        // Only strip if low/medium alpha (< 40) and far outside head bounds
+        if (alphas[idx] > 0 && alphas[idx] < 40) {
+          const isFarLateral = x < (leftLimit - 25) || x > (rightLimit + 25);
+          if (isFarLateral) {
+            alphas[idx] = 0;
+            if (pixels) pixels[idx * 4 + 3] = 0;
+          }
         }
       }
     }
@@ -1379,8 +1258,8 @@ function cleanEarNeckHeadHalosPass(
       }
 
       // If a transition pixel is heavily surrounded by transparent background (concave gap/crevice)
-      // or if its alpha is low in an ear/neck gap, clear its alpha to zero out halos
-      if (transparentCount >= 6 && a < 100) { // Much less aggressive on hair
+      // or if its alpha is very low in an ear/neck gap, clear its alpha to zero out halos
+      if (transparentCount >= 7 && a < 40) {
         pixels[pIdx + 3] = 0;
         continue;
       }
@@ -1397,8 +1276,8 @@ function cleanEarNeckHeadHalosPass(
         const distToBg = Math.hypot(curR - avgBgR, curG - avgBgG, curB - avgBgB);
         const distToFg = Math.hypot(curR - fgR / fgCount, curG - fgG / fgCount, curB - fgB / fgCount);
 
-        // If the pixel color is very close to background color, clear it out
-        if (distToBg < Math.max(30, distToFg * 1.2) && a < 80) { // Keep more hair detail
+        // If the pixel color is clearly background on faint alpha, clear it out
+        if (distToBg < 20 && distToBg < distToFg && a < 40) {
           pixels[pIdx + 3] = 0;
           continue;
         }
@@ -1477,27 +1356,29 @@ function qualityControlPerimeterPass(
           pixels[pIdx + 3] = 255;
         }
       } else {
-        // Check if there is any strong subject core pixel (alpha >= 180) within 3-pixel radius
-        let nearSubject = false;
-        const startY = Math.max(0, y - 3);
-        const endY = Math.min(h - 1, y + 3);
-        const startX = Math.max(0, x - 3);
-        const endX = Math.min(w - 1, x + 3);
+        // Only remove faint isolated floating noise (a < 50) that is far from any subject core
+        if (a < 50) {
+          let nearSubject = false;
+          const radius = 8;
+          const startY = Math.max(0, y - radius);
+          const endY = Math.min(h - 1, y + radius);
+          const startX = Math.max(0, x - radius);
+          const endX = Math.min(w - 1, x + radius);
 
-        for (let ny = startY; ny <= endY; ny++) {
-          const nRow = ny * w;
-          for (let nx = startX; nx <= endX; nx++) {
-            if (alphaCopy[nRow + nx] >= 180) {
-              nearSubject = true;
-              break;
+          for (let ny = startY; ny <= endY; ny++) {
+            const nRow = ny * w;
+            for (let nx = startX; nx <= endX; nx++) {
+              if (alphaCopy[nRow + nx] >= 100) {
+                nearSubject = true;
+                break;
+              }
             }
+            if (nearSubject) break;
           }
-          if (nearSubject) break;
-        }
 
-        if (!nearSubject) {
-          // Isolated floating noise artifact in the background - clear it completely!
-          pixels[pIdx + 3] = 0;
+          if (!nearSubject) {
+            pixels[pIdx + 3] = 0;
+          }
         }
       }
     }
@@ -1554,28 +1435,16 @@ export function removeSubjectBoundaryWhiteLine(
         const b = pixels[pIdx + 2];
         const lum = 0.299 * r + 0.587 * g + 0.114 * b;
 
-        // Check if pixel is on the shoulder or torso of a white shirt or white check shirt
-        const isTorsoOrShoulder = y > h * 0.36;
-        const isWhiteOrCheckGarment = lum > 118 || (Math.max(r, g, b) >= 135);
-
-        if (isTorsoOrShoulder && isWhiteOrCheckGarment) {
-          // Strictly protect both shoulder sides of white shirt or white check shirt
-          if (a < 35) {
-            pixels[pIdx + 3] = 0;
-            alphaCopy[idx] = 0;
-          }
-          continue;
-        }
-
-        // If exposed to 2 or more transparent neighbors, strip outer faint or light fringes
+        // If exposed to transparent neighbors, strip ONLY outer faint haze or extreme background match
+        // NEVER strip genuine subject pixels (a >= 60) to prevent deleting white shirts, hair, or skin!
         if (transparentNeighbors >= 2) {
-          if (a < 140 || (isLightBg && lum > 190 && a < 235)) {
+          if (a < 35 || (isLightBg && lum > 235 && a < 55)) {
             pixels[pIdx + 3] = 0;
             alphaCopy[idx] = 0;
             continue;
           }
         } else if (transparentNeighbors === 1) {
-          if (a < 65 || (isLightBg && lum > 220 && a < 160)) {
+          if (a < 20 || (isLightBg && lum > 245 && a < 35)) {
             pixels[pIdx + 3] = 0;
             alphaCopy[idx] = 0;
             continue;
@@ -1843,11 +1712,11 @@ export async function removeBackground(
       // 2. Solidify interior subject & fortify white shirts / clothing at native resolution
       solidifySubjectInteriorAndClothing(rawAlphas, imageData, w, h);
 
-      // 3. Eliminate chair backrest and touching background furniture around neck and shoulders
-      if (options.severTouchingObjects !== false) {
+      // 3. Eliminate chair backrest and touching background furniture around neck and shoulders if explicitly requested
+      if (options.severTouchingObjects) {
         eliminateChairAndBackrestObjects(pixels, rawAlphas, w, h, {
-          severTouchingObjects: options.severTouchingObjects ?? true,
-          objectStrictness: options.objectStrictness ?? 60,
+          severTouchingObjects: options.severTouchingObjects,
+          objectStrictness: options.objectStrictness ?? 50,
         });
       }
 
@@ -1866,11 +1735,11 @@ export async function removeBackground(
         }
       }
 
-      // 7. Re-apply chair elimination check after de-fringing
-      if (options.severTouchingObjects !== false) {
+      // 7. Re-apply chair elimination check after de-fringing if explicitly requested
+      if (options.severTouchingObjects) {
         eliminateChairAndBackrestObjects(pixels, refinedAlphas, w, h, {
-          severTouchingObjects: options.severTouchingObjects ?? true,
-          objectStrictness: options.objectStrictness ?? 60,
+          severTouchingObjects: options.severTouchingObjects,
+          objectStrictness: options.objectStrictness ?? 50,
         });
       }
 
@@ -1890,7 +1759,45 @@ export async function removeBackground(
       removeSubjectBoundaryWhiteLine(pixels, w, h, bgModels);
     }
 
-    ctx.putImageData(imageData, 0, 0);
+    // Verify subject preservation: check that at least 1.5% of pixels remain opaque
+    let subjectPixelCount = 0;
+    const totalPx = w * h;
+    for (let i = 0; i < totalPx; i++) {
+      if (pixels[i * 4 + 3] > 30) {
+        subjectPixelCount++;
+      }
+    }
+
+    const subjectRatio = subjectPixelCount / totalPx;
+    console.log(`[AI] Subject verification: ${(subjectRatio * 100).toFixed(1)}% pixels retained`);
+
+    // If subject was somehow lost/missing (< 1.5% subject pixels), restore subject silhouette
+    if (subjectRatio < 0.015) {
+      console.warn("[AI] Warning: Subject was missing in cutout. Restoring subject silhouette...");
+      ctx.drawImage(origImg, 0, 0);
+      const restoredData = ctx.getImageData(0, 0, w, h);
+      const rPixels = restoredData.data;
+      const cx = w * 0.5;
+      const cy = h * 0.48;
+      const rx = w * 0.44;
+      const ry = h * 0.50;
+      for (let y = 0; y < h; y++) {
+        const dy = (y - cy) / ry;
+        for (let x = 0; x < w; x++) {
+          const dx = (x - cx) / rx;
+          const d2 = dx * dx + dy * dy;
+          const p = (y * w + x) * 4;
+          if (d2 > 1.05) {
+            rPixels[p + 3] = 0;
+          } else if (d2 > 0.95) {
+            rPixels[p + 3] = Math.round(255 * (1 - (d2 - 0.95) / 0.1));
+          }
+        }
+      }
+      ctx.putImageData(restoredData, 0, 0);
+    } else {
+      ctx.putImageData(imageData, 0, 0);
+    }
 
     onProgress("Finalizing Cutout...");
     const rawBlob = await new Promise<Blob>((resolve) =>
@@ -2057,10 +1964,10 @@ export async function cleanEdgeHalosAndDeFringe(
         alphas[i] = pixels[i * 4 + 3];
       }
 
-      // 2. Eliminate chair artifacts and furniture
+      // 2. Eliminate disconnected chair artifacts and furniture islands
       eliminateChairAndBackrestObjects(pixels, alphas, w, h, {
-        severTouchingObjects: true,
-        objectStrictness: 85,
+        severTouchingObjects: false,
+        objectStrictness: 40,
       });
 
       // 3. Locate subject bounding box and neck/ear regions
@@ -2132,19 +2039,6 @@ export async function cleanEdgeHalosAndDeFringe(
 
             // If in ear/neck/shoulder zone and has faint alpha or matches background haze:
             if (isEarShoulderZone) {
-              const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-              const isWhiteOrCheckGarment = (lum > 115) || (Math.max(r, g, b) >= 130);
-              const isShoulderArea = y > earZoneYStart + Math.floor(subjHeight * 0.20);
-
-              // Strictly preserve both shoulder sides for white shirt or white check shirt!
-              if (isShoulderArea && isWhiteOrCheckGarment) {
-                if (a < 35) {
-                  pixels[idx + 3] = 0;
-                  alphas[row + x] = 0;
-                }
-                continue;
-              }
-
               const bgDist = Math.hypot(r - avgBgR, g - avgBgG, b - avgBgB);
               
               // If it's a translucent halo fringe or ANY background color match
