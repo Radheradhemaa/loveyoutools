@@ -4,7 +4,7 @@ import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2,
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded, magicEraseObjectAtPoint, removeChairFromImage, BgRemovalOptions } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded, magicEraseObjectAtPoint, removeChairFromImage, cleanEdgeHalosAndDeFringe, BgRemovalOptions } from '../lib/bgRemoval';
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -259,15 +259,16 @@ export default function BackgroundRemover() {
       filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
     }
     
-    const finalSharpness = isUltraHD ? (sharpness + 60) : sharpness;
+    const finalSharpness = isUltraHD ? (sharpness + 35) : sharpness;
     if (finalSharpness > 0) {
-      filterString += ` url(#sharpen-filter)`;
+      const extraContrast = Math.round(finalSharpness * 0.12);
+      filterString += ` contrast(${c + extraContrast}%)`;
     }
     
     return filterString;
   };
 
-  const finalSharpness = isUltraHD ? (sharpness + 60) : sharpness;
+  const finalSharpness = isUltraHD ? (sharpness + 35) : sharpness;
   const sharpnessAmount = finalSharpness / 100;
   const centerValue = 1 + 4 * sharpnessAmount;
 
@@ -460,6 +461,23 @@ export default function BackgroundRemover() {
       addToHistory(cleaned);
     } catch (err) {
       console.error("Chair removal failed:", err);
+    } finally {
+      setIsProcessing(false);
+      setStatusText('');
+    }
+  };
+
+  const handleRemoveBoundaryWhiteLine = async () => {
+    const targetSrc = resultImage || imageSrc;
+    if (!targetSrc) return;
+    try {
+      setIsProcessing(true);
+      setStatusText('Removing Boundary White Line & Edge Halos...');
+      const cleaned = await cleanEdgeHalosAndDeFringe(targetSrc, { deFringeStrength: 1.0, haloThreshold: 35 });
+      setResultImage(cleaned);
+      addToHistory(cleaned);
+    } catch (err) {
+      console.error("White line removal failed:", err);
     } finally {
       setIsProcessing(false);
       setStatusText('');
@@ -1220,13 +1238,20 @@ export default function BackgroundRemover() {
                               </label>
                             </div>
 
-                            <div className="pt-1">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                              <button
+                                onClick={handleRemoveBoundaryWhiteLine}
+                                disabled={isProcessing}
+                                className="w-full py-2.5 px-2 bg-gradient-to-r from-accent/15 to-emerald-500/10 hover:from-accent hover:to-emerald-500 text-accent hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 border border-accent/30 shadow-sm"
+                              >
+                                <Scissors className="w-3.5 h-3.5" /> Remove White Line
+                              </button>
                               <button
                                 onClick={handleRemoveChairBackrest}
                                 disabled={isProcessing}
                                 className="w-full py-2.5 px-2 bg-gradient-to-r from-red-500/15 to-orange-500/10 hover:from-red-500 hover:to-orange-500 text-red-600 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 border border-red-500/30 shadow-sm"
                               >
-                                <Trash2 className="w-3.5 h-3.5" /> Erase Chair & Backrest
+                                <Trash2 className="w-3.5 h-3.5" /> Erase Chair
                               </button>
                             </div>
                           </div>
@@ -1576,18 +1601,6 @@ export default function BackgroundRemover() {
                   </button>
                 </div>
 
-                <svg width="0" height="0" className="absolute pointer-events-none">
-                  <defs>
-                    <filter id="sharpen-filter">
-                      <feConvolveMatrix 
-                        order="3 3" 
-                        preserveAlpha="true" 
-                        kernelMatrix={`0 ${-sharpnessAmount} 0 ${-sharpnessAmount} ${centerValue} ${-sharpnessAmount} 0 ${-sharpnessAmount} 0`}
-                        edgeMode="duplicate"
-                      />
-                    </filter>
-                  </defs>
-                </svg>
                 <div 
                   ref={previewContainerRef}
                   className="relative w-full h-[400px] sm:h-[550px] bg-bg-secondary rounded-3xl overflow-auto border border-border group shadow-inner p-6 sm:p-12"
