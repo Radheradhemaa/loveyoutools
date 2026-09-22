@@ -281,3 +281,19 @@ export function reconstructShoulders(
     img.src = imageSrc;
   });
 }
+
+export function reconstructLeftShoulder(
+  imageSrc: string,
+  extendAmount: number,
+  shoulderHeightRatio?: number,
+  clothingSlope?: number,
+  shoulderCurve?: number
+): Promise<string> {
+  return reconstructShoulders(imageSrc, {
+    extendLeft: extendAmount,
+    shoulderStartRatio: shoulderHeightRatio,
+    clothingSlope,
+    shoulderCurve,
+  });
+}
+

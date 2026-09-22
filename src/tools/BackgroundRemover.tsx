@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut, Target, Layers, MousePointerClick, Scissors } from 'lucide-react';
+import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut, Target, Layers, MousePointerClick, Scissors, ShieldCheck } from 'lucide-react';
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
 import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded, magicEraseObjectAtPoint, removeChairFromImage, cleanEdgeHalosAndDeFringe, BgRemovalOptions } from '../lib/bgRemoval';
+import { reconstructLeftShoulder } from '../lib/shoulderReconstruction';
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -53,6 +54,13 @@ export default function BackgroundRemover() {
   const [objectStrictness, setObjectStrictness] = useState(75);
   const [severTouchingObjects, setSeverTouchingObjects] = useState(false);
   const [removeBackgroundNoise, setRemoveBackgroundNoise] = useState(true);
+
+  // AI Shoulder Restoration State
+  const [extendAmount, setExtendAmount] = useState(50);
+  const [shoulderHeightRatio, setShoulderHeightRatio] = useState(0.52);
+  const [clothingSlope, setClothingSlope] = useState(0.18);
+  const [shoulderCurve, setShoulderCurve] = useState(0.50);
+  const [isExtendingShoulder, setIsExtendingShoulder] = useState(false);
 
   // Manual Touchup & Magic Eraser State
   const [isManualMode, setIsManualMode] = useState(false);
