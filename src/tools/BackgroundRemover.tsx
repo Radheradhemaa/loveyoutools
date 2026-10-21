@@ -537,6 +537,32 @@ export default function BackgroundRemover() {
     }
   }, [isManualMode, resultImage, imageSrc]);
 
+  // Round Brush Cursor State for Desktop & Smart Phone Android
+  const [touchupCursor, setTouchupCursor] = useState<{ x: number; y: number; isTouch: boolean } | null>(null);
+  const cursorFadeTimerRef = useRef<any>(null);
+
+  const updateTouchupCursor = (e: React.MouseEvent | React.TouchEvent, isTouch = false) => {
+    if (cursorFadeTimerRef.current) clearTimeout(cursorFadeTimerRef.current);
+    let clientX: number, clientY: number;
+    if ('touches' in e) {
+      if (e.touches.length === 0) return;
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = (e as React.MouseEvent).clientX;
+      clientY = (e as React.MouseEvent).clientY;
+    }
+    setTouchupCursor({ x: clientX, y: clientY, isTouch });
+  };
+
+  const getBrushRenderedDiameter = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return Math.max(12, brushSize);
+    const rect = canvas.getBoundingClientRect();
+    const scale = rect.width / (canvas.width || 1);
+    return Math.max(8, Math.round(brushSize * scale));
+  };
+
   const getCoords = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -554,11 +580,13 @@ export default function BackgroundRemover() {
   };
 
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+    updateTouchupCursor(e, 'touches' in e);
     setIsDrawing(true);
     lastPosRef.current = getCoords(e);
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
+    updateTouchupCursor(e, 'touches' in e);
     if (!isDrawing || !lastPosRef.current || !canvasRef.current || !originalImgRef.current) return;
     const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return;
@@ -596,6 +624,10 @@ export default function BackgroundRemover() {
       setResultImage(result);
       addToHistory(result);
     }
+    if (cursorFadeTimerRef.current) clearTimeout(cursorFadeTimerRef.current);
+    cursorFadeTimerRef.current = setTimeout(() => {
+      setTouchupCursor(null);
+    }, 450);
   };
 
   const resultImgRef = useRef<HTMLImageElement | null>(null);
@@ -1148,18 +1180,61 @@ export default function BackgroundRemover() {
                               />
                             </div>
                           ) : (
-                            <div className="space-y-3">
-                              <div className="flex justify-between text-sm font-bold text-text-primary">
-                                <span>Brush Size</span>
-                                <span className="text-accent">{brushSize}px</span>
+                            <div className="space-y-3.5 p-3.5 bg-accent/5 border border-accent/20 rounded-2xl">
+                              <div className="flex items-center gap-3">
+                                {/* Visual Round Brush Shape Preview */}
+                                <div className="w-12 h-12 rounded-xl bg-surface border border-border shadow-xs flex items-center justify-center shrink-0 relative overflow-hidden" title="Live Round Shape Brush Preview">
+                                  <div 
+                                    className="rounded-full border-2 border-white shadow-sm ring-1 ring-black/40 transition-all duration-75 flex items-center justify-center"
+                                    style={{ 
+                                      width: `${Math.min(42, Math.max(8, brushSize * 0.42))}px`, 
+                                      height: `${Math.min(42, Math.max(8, brushSize * 0.42))}px`,
+                                      backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.4)' : 'rgba(59, 130, 246, 0.4)'
+                                    }}
+                                  >
+                                    <div className="w-1 h-1 rounded-full bg-white shadow-xs" />
+                                  </div>
+                                </div>
+                                <div className="flex-1 space-y-1">
+                                  <div className="flex justify-between text-xs font-bold text-text-primary">
+                                    <span className="flex items-center gap-1.5">
+                                      <span className="w-2 h-2 rounded-full bg-accent inline-block" />
+                                      Round Brush Size
+                                    </span>
+                                    <span className="text-accent font-extrabold">{brushSize}px</span>
+                                  </div>
+                                  <input 
+                                    type="range" 
+                                    min="5" max="100" 
+                                    value={brushSize} 
+                                    onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                                    className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
+                                  />
+                                </div>
                               </div>
-                              <input 
-                                type="range" 
-                                min="5" max="100" 
-                                value={brushSize} 
-                                onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                                className="w-full h-1.5 bg-bg-secondary rounded-lg appearance-none cursor-pointer accent-accent"
-                              />
+
+                              {/* Quick Preset Buttons for Smartphone & Desktop */}
+                              <div className="flex items-center gap-1.5">
+                                {[
+                                  { label: '10px', val: 10 },
+                                  { label: '25px', val: 25 },
+                                  { label: '45px', val: 45 },
+                                  { label: '70px', val: 70 },
+                                ].map((preset) => (
+                                  <button
+                                    key={preset.val}
+                                    type="button"
+                                    onClick={() => setBrushSize(preset.val)}
+                                    className={`flex-1 py-1 px-1 text-[10px] font-bold rounded-lg border transition-all text-center ${
+                                      brushSize === preset.val 
+                                        ? 'bg-accent text-white border-accent shadow-xs' 
+                                        : 'bg-surface text-text-secondary border-border hover:border-accent'
+                                    }`}
+                                  >
+                                    {preset.label}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           )}
 
@@ -1646,18 +1721,23 @@ export default function BackgroundRemover() {
                         </ReactCrop>
                       </div>
                     ) : isManualMode ? (
-                      <div className="flex items-center justify-center w-full h-full">
+                      <div 
+                        className="flex items-center justify-center w-full h-full relative"
+                        onMouseEnter={(e) => updateTouchupCursor(e, false)}
+                        onMouseMove={(e) => updateTouchupCursor(e, false)}
+                        onMouseLeave={() => setTouchupCursor(null)}
+                      >
                         <canvas
                           ref={canvasRef}
-                          onMouseDown={startDrawing}
-                          onMouseMove={draw}
+                          onMouseDown={(e) => { updateTouchupCursor(e, false); startDrawing(e); }}
+                          onMouseMove={(e) => { updateTouchupCursor(e, false); draw(e); }}
                           onMouseUp={stopDrawing}
-                          onMouseLeave={stopDrawing}
-                          onTouchStart={startDrawing}
-                          onTouchMove={draw}
+                          onMouseLeave={() => { setTouchupCursor(null); stopDrawing(); }}
+                          onTouchStart={(e) => { updateTouchupCursor(e, true); startDrawing(e); }}
+                          onTouchMove={(e) => { updateTouchupCursor(e, true); draw(e); }}
                           onTouchEnd={stopDrawing}
                           onClick={handleMagicEraserClick}
-                          className={`max-w-full max-h-full ${brushMode === 'magic' ? 'cursor-pointer' : 'cursor-crosshair'} shadow-2xl rounded-lg transition-all duration-200`}
+                          className={`max-w-full max-h-full ${brushMode === 'magic' ? 'cursor-pointer' : 'cursor-none'} shadow-2xl rounded-lg transition-all duration-200 select-none touch-none`}
                           style={{
                             zoom: zoom,
                             backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
@@ -1666,6 +1746,38 @@ export default function BackgroundRemover() {
                             backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
                           }}
                         />
+
+                        {/* Round Shape Brush Cursor Overlay for Desktop & Smart Phone Android */}
+                        {brushMode !== 'magic' && touchupCursor && (
+                          <div
+                            className="pointer-events-none fixed z-50 rounded-full -translate-x-1/2 -translate-y-1/2 select-none transition-transform duration-75"
+                            style={{
+                              left: `${touchupCursor.x}px`,
+                              top: `${touchupCursor.y}px`,
+                              width: `${getBrushRenderedDiameter()}px`,
+                              height: `${getBrushRenderedDiameter()}px`,
+                              border: '2px solid rgba(255, 255, 255, 0.95)',
+                              boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.8), 0 0 12px rgba(0, 0, 0, 0.4)',
+                              backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(59, 130, 246, 0.3)',
+                            }}
+                          >
+                            {/* Precise Center Point */}
+                            <div className="absolute inset-0 m-auto w-1.5 h-1.5 rounded-full bg-white shadow-xs ring-1 ring-black/70" />
+
+                            {/* Smart Phone Android Touch Alignment Guides */}
+                            {touchupCursor.isTouch && (
+                              <>
+                                <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
+                                <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
+                                <div className="absolute -left-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
+                                <div className="absolute -right-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
+                                <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-black/85 text-white text-[9px] font-bold rounded-full shadow-md whitespace-nowrap border border-white/30 backdrop-blur-xs">
+                                  {brushSize}px
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="flex items-center justify-center relative w-full h-full">

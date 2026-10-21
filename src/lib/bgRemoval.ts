@@ -921,28 +921,32 @@ function applyFastGuidedFilter(
   const meanB = boxFilter(b, radius);
 
   const output = new Float32Array(total);
-  const threshLow = 110; // Extra high cutoff aggressively eats into the white outer fringe
-  const threshHigh = 160; // Lower high threshold ensures sharp crisp inner core
 
   for (let i = 0; i < total; i++) {
     const origA = rawAlpha[i];
-    if (origA <= 2) {
+    const gVal = guide[i];
+    // If neural net predicted clear background, never invent alpha
+    if (origA < 15) {
       output[i] = 0;
       continue;
     }
-    if (origA >= 253) {
+    // If background is very light/white, don't allow faint haze to leak into background
+    if (origA < 25 && gVal > 0.72) {
+      output[i] = 0;
+      continue;
+    }
+    if (origA >= 245) {
       output[i] = 255;
       continue;
     }
 
-    const q = Math.max(0, Math.min(1.0, meanA[i] * guide[i] + meanB[i]));
+    const q = Math.max(0, Math.min(1.0, meanA[i] * gVal + meanB[i]));
     const rawVal = q * 255.0;
 
-    // We want a sharp, tight cutoff for the lower body (shoulders, clothing)
-    // and a soft, detailed cutoff for the upper body (head, hair).
-    const isUpper = i < total * 0.45;
-    const threshLow = isUpper ? 20 : 45; // Cleanly cuts outer white background fringe
-    const threshHigh = isUpper ? 230 : 210;
+    // Sharp, crisp cutoff for body, and clean hair boundary cutoff without fuzzy white halos
+    const isUpper = i < total * 0.55;
+    const threshLow = isUpper ? 36 : 42; // Cleanly cuts outer white fringe and background haze
+    const threshHigh = isUpper ? 215 : 205;
     
     if (rawVal <= threshLow) {
       output[i] = 0;
@@ -951,7 +955,13 @@ function applyFastGuidedFilter(
     } else {
       const t = (rawVal - threshLow) / (threshHigh - threshLow);
       const s = t * t * (3 - 2 * t);
-      output[i] = Math.max(0, Math.min(255, s * 255.0));
+      const refined = s * 255.0;
+      // If background is light/white, never inflate alpha into the background
+      if (gVal > 0.68) {
+        output[i] = Math.max(0, Math.min(255, Math.min(origA + 2, refined)));
+      } else {
+        output[i] = Math.max(0, Math.min(255, Math.min(origA + 15, refined)));
+      }
     }
   }
 
@@ -963,8 +973,9 @@ function applyFastGuidedFilter(
 // -------------------------------------------------------------
 
 /**
- * Applies clean edge matting with advanced local 5x5 color de-contamination (de-fringing)
- * to completely eliminate background halos around ears, face, jawline, neck, and hair.
+ * Applies clean edge matting with advanced local color de-contamination (de-fringing)
+ * to completely eliminate white background halos around hair, ears, face, jawline, and neck
+ * without introducing any artificial black spots.
  */
 function applyCleanEdgeMatting(
   pixels: Uint8ClampedArray,
@@ -973,21 +984,37 @@ function applyCleanEdgeMatting(
   h: number,
   bgModels?: BackgroundModels
 ) {
-  const tempPixels = new Uint8ClampedArray(pixels);
   const tempAlphas = new Float32Array(alphas);
+  const copyPixels = new Uint8ClampedArray(pixels);
+
+  // Background luminance check
+  const bgMeanR = bgModels?.global?.meanR ?? 245;
+  const bgMeanG = bgModels?.global?.meanG ?? 245;
+  const bgMeanB = bgModels?.global?.meanB ?? 245;
+  const bgLum = 0.299 * bgMeanR + 0.587 * bgMeanG + 0.114 * bgMeanB;
+  const isLightBg = bgLum > 155;
 
   for (let y = 0; y < h; y++) {
-    const secY = Math.min(2, Math.floor((y / h) * 3));
     const rowOffset = y * w;
+    const isUpper = y < h * 0.58; // Hair, head, ears, and neck region
 
     for (let x = 0; x < w; x++) {
       const idx = rowOffset + x;
       const alphaVal = tempAlphas[idx];
       const pIdx = idx * 4;
 
-      const isUpper = y < h * 0.45;
-      const lowerCut = isUpper ? 5 : 20; // Allow natural anti-aliasing on edges
-      const upperCut = isUpper ? 245 : 210;
+      const r = copyPixels[pIdx];
+      const g = copyPixels[pIdx + 1];
+      const b = copyPixels[pIdx + 2];
+      const curLum = 0.299 * r + 0.587 * g + 0.114 * b;
+
+      // Cleanly cut outer background haze and white fringe:
+      // Prevents white halos from lingering in the background transition
+      let lowerCut = isUpper ? 34 : 26;
+      if (isLightBg && isUpper && curLum > 175) {
+        lowerCut = 50; // Cut white background bleed on outer perimeter
+      }
+      const upperCut = isUpper ? 220 : 210;
 
       if (alphaVal <= lowerCut) {
         pixels[pIdx + 3] = 0;
@@ -997,120 +1024,68 @@ function applyCleanEdgeMatting(
       if (alphaVal >= upperCut) {
         pixels[pIdx + 3] = 255;
       } else {
-        pixels[pIdx + 3] = Math.round(alphaVal);
+        // Smooth non-linear curve for anti-aliased hair strands and clean contours
+        const t = (alphaVal - lowerCut) / (upperCut - lowerCut);
+        const smoothAlpha = t * t * (3 - 2 * t) * 255.0;
+        pixels[pIdx + 3] = Math.round(Math.max(0, Math.min(255, smoothAlpha)));
       }
 
-      // High-precision 5x5 local neighborhood sampling for ear, face & hair decontamination
-      let fgR = 0, fgG = 0, fgB = 0, fgCount = 0;
-      let bgR = 0, bgG = 0, bgB = 0, bgCount = 0;
-
-      const rRange = 4;
-      const startY = Math.max(0, y - rRange);
-      const endY = Math.min(h - 1, y + rRange);
-      const startX = Math.max(0, x - rRange);
-      const endX = Math.min(w - 1, x + rRange);
-
-      for (let ny = startY; ny <= endY; ny++) {
-        const nRow = ny * w;
-        for (let nx = startX; nx <= endX; nx++) {
-          const nIdx = nRow + nx;
-          const nA = tempAlphas[nIdx];
-          const npIdx = nIdx * 4;
-
-          if (nA >= 210) {
-            fgR += tempPixels[npIdx];
-            fgG += tempPixels[npIdx + 1];
-            fgB += tempPixels[npIdx + 2];
-            fgCount++;
-          } else if (nA <= 10) {
-            bgR += tempPixels[npIdx];
-            bgG += tempPixels[npIdx + 1];
-            bgB += tempPixels[npIdx + 2];
-            bgCount++;
-          }
-        }
-      }
-
-      if (fgCount > 0) {
-        const avgFgR = fgR / fgCount;
-        const avgFgG = fgG / fgCount;
-        const avgFgB = fgB / fgCount;
-
-        const curR = tempPixels[pIdx];
-        const curG = tempPixels[pIdx + 1];
-        const curB = tempPixels[pIdx + 2];
-
-        if (bgCount > 0) {
-          const avgBgR = bgR / bgCount;
-          const avgBgG = bgG / bgCount;
-          const avgBgB = bgB / bgCount;
-
-          const distToBg = Math.hypot(curR - avgBgR, curG - avgBgG, curB - avgBgB);
-          const distToFg = Math.hypot(curR - avgFgR, curG - avgFgG, curB - avgFgB);
-
-          // Clear obvious noise or light background bleed on low alpha
-          if (alphaVal < 90 && distToBg < Math.max(50, distToFg * 1.3)) {
-            pixels[pIdx + 3] = 0;
-            continue;
-          }
-
-          // Unmix background color mathematically:
-          const aNorm = Math.max(0.15, alphaVal / 255.0);
-          const invA = 1.0 - aNorm;
-          const unmixR = Math.max(0, Math.min(255, (curR - avgBgR * invA) / aNorm));
-          const unmixG = Math.max(0, Math.min(255, (curG - avgBgG * invA) / aNorm));
-          const unmixB = Math.max(0, Math.min(255, (curB - avgBgB * invA) / aNorm));
-
-          const curLum = 0.299 * curR + 0.587 * curG + 0.114 * curB;
-          const fgLum = 0.299 * avgFgR + 0.587 * avgFgG + 0.114 * avgFgB;
-          const bgLum = 0.299 * avgBgR + 0.587 * avgBgG + 0.114 * avgBgB;
-
-          // If background is light/white and edge pixel is brighter than true foreground:
-          // Directly replace contaminated white fringe with genuine subject color!
-          if (bgLum > 175 && (curLum > fgLum + 10 || (curR > 195 && curG > 195 && curB > 195 && fgLum < 185))) {
-            pixels[pIdx] = Math.round(avgFgR);
-            pixels[pIdx + 1] = Math.round(avgFgG);
-            pixels[pIdx + 2] = Math.round(avgFgB);
-            if (alphaVal < 140) {
-              pixels[pIdx + 3] = Math.round(alphaVal * 0.7);
-            }
-          } else {
-            // High-weight foreground blending to eliminate pale halos
-            const fgWeight = Math.max(0.60, 1.0 - aNorm);
-            pixels[pIdx] = Math.round(unmixR * (1 - fgWeight) + avgFgR * fgWeight);
-            pixels[pIdx + 1] = Math.round(unmixG * (1 - fgWeight) + avgFgG * fgWeight);
-            pixels[pIdx + 2] = Math.round(unmixB * (1 - fgWeight) + avgFgB * fgWeight);
-          }
-        }
-      } else if (bgModels) {
-        // Sector model fallback for de-contamination
-        const secX = Math.min(2, Math.floor((x / w) * 3));
-        const sector = bgModels.sectors[secY * 3 + secX] || bgModels.global;
-
-        const origR = tempPixels[pIdx];
-        const origG = tempPixels[pIdx + 1];
-        const origB = tempPixels[pIdx + 2];
-
-        const alphaNorm = alphaVal / 255.0;
-        const invAlpha = 1.0 - alphaNorm;
-
-        const safeAlpha = Math.max(0.25, alphaNorm);
-        const unmixR = (origR - sector.meanR * invAlpha) / safeAlpha;
-        const unmixG = (origG - sector.meanG * invAlpha) / safeAlpha;
-        const unmixB = (origB - sector.meanB * invAlpha) / safeAlpha;
-
-        pixels[pIdx] = Math.round(Math.max(0, Math.min(255, unmixR)));
-        pixels[pIdx + 1] = Math.round(Math.max(0, Math.min(255, unmixG)));
-        pixels[pIdx + 2] = Math.round(Math.max(0, Math.min(255, unmixB)));
-      }
-      
-      // Green Spill Suppression (Despill) to eliminate green screen halos in hair
-      if (pixels[pIdx + 3] > 0 && tempAlphas[idx] < 250) {
-        const r = pixels[pIdx];
-        const g = pixels[pIdx + 1];
-        const b = pixels[pIdx + 2];
+      // Green Spill Suppression (Despill) to eliminate green screen reflections in hair/shoulders
+      if (pixels[pIdx + 3] > 0 && alphaVal < 250) {
         if (g > r && g > b) {
           pixels[pIdx + 1] = Math.max(r, b); // Clamp green to max of red or blue
+        }
+      }
+
+      // Hair Edge White Halo De-contamination (De-fringing)
+      // If the original background was light/white and this boundary pixel has white background bleed,
+      // sample authentic interior hair color and remove the white matte contamination
+      // WITHOUT clamping to zero (which prevents black spots).
+      if (isLightBg && isUpper && pixels[pIdx + 3] > 0 && alphaVal < 225) {
+        // Sample nearby interior hair foreground (where alpha is high)
+        let fgR = 0, fgG = 0, fgB = 0, fgCount = 0;
+        const rad = 4;
+        const startY = Math.max(0, y - rad);
+        const endY = Math.min(h - 1, y + rad);
+        const startX = Math.max(0, x - rad);
+        const endX = Math.min(w - 1, x + rad);
+
+        for (let ny = startY; ny <= endY; ny++) {
+          const nRow = ny * w;
+          for (let nx = startX; nx <= endX; nx++) {
+            const nIdx = nRow + nx;
+            if (tempAlphas[nIdx] >= 210) {
+              const npIdx = nIdx * 4;
+              fgR += copyPixels[npIdx];
+              fgG += copyPixels[npIdx + 1];
+              fgB += copyPixels[npIdx + 2];
+              fgCount++;
+            }
+          }
+        }
+
+        if (fgCount > 0) {
+          const avgFgR = fgR / fgCount;
+          const avgFgG = fgG / fgCount;
+          const avgFgB = fgB / fgCount;
+          const fgLum = 0.299 * avgFgR + 0.587 * avgFgG + 0.114 * avgFgB;
+
+          // If the boundary pixel is lighter than authentic hair due to white background spill:
+          if (curLum > fgLum + 12) {
+            const aNorm = Math.max(0.2, pixels[pIdx + 3] / 255.0);
+            const haloFactor = Math.min(1.0, (curLum - fgLum) / 120.0);
+            
+            // Decontaminate white background bleed towards natural hair color
+            // Lower-bounded by avgFg so it NEVER creates black spots!
+            const unmixR = Math.max(avgFgR, (r - bgMeanR * (1 - aNorm)) / aNorm);
+            const unmixG = Math.max(avgFgG, (g - bgMeanG * (1 - aNorm)) / aNorm);
+            const unmixB = Math.max(avgFgB, (b - bgMeanB * (1 - aNorm)) / aNorm);
+
+            const blend = haloFactor * (1 - aNorm * 0.7);
+            pixels[pIdx] = Math.round(r * (1 - blend) + Math.min(255, unmixR) * blend);
+            pixels[pIdx + 1] = Math.round(g * (1 - blend) + Math.min(255, unmixG) * blend);
+            pixels[pIdx + 2] = Math.round(b * (1 - blend) + Math.min(255, unmixB) * blend);
+          }
         }
       }
     }
@@ -1174,15 +1149,15 @@ function enhanceForegroundSubjectClarity(
     for (let x = 1; x < w - 1; x++) {
       const idx = (rowOffset + x) * 4;
       const alpha = pixels[idx + 3];
-      if (alpha < 120) continue; // Skip transparent / boundary pixels
+      if (alpha < 220) continue; // Skip boundary and transition pixels completely
 
       const iUp = ((y - 1) * w + x) * 4;
       const iDown = ((y + 1) * w + x) * 4;
       const iLeft = (rowOffset + x - 1) * 4;
       const iRight = (rowOffset + x + 1) * 4;
 
-      // Prevent brightening border pixels next to transparency:
-      if (copy[iUp + 3] < 120 || copy[iDown + 3] < 120 || copy[iLeft + 3] < 120 || copy[iRight + 3] < 120) {
+      // Prevent sharpening anywhere near transparency (preserves hair perimeter without dark ringing):
+      if (copy[iUp + 3] < 220 || copy[iDown + 3] < 220 || copy[iLeft + 3] < 220 || copy[iRight + 3] < 220) {
         continue;
       }
 
@@ -1229,7 +1204,6 @@ function cleanEarNeckHeadHalosPass(
       // Sample a 5x5 neighborhood around this boundary pixel
       let transparentCount = 0;
       let bgR = 0, bgG = 0, bgB = 0, bgCount = 0;
-      let fgR = 0, fgG = 0, fgB = 0, fgCount = 0;
 
       const startY = Math.max(0, y - 2);
       const endY = Math.min(h - 1, y + 2);
@@ -1248,23 +1222,19 @@ function cleanEarNeckHeadHalosPass(
             bgG += pixels[npIdx + 1];
             bgB += pixels[npIdx + 2];
             bgCount++;
-          } else if (nA >= 200) {
-            fgR += pixels[npIdx];
-            fgG += pixels[npIdx + 1];
-            fgB += pixels[npIdx + 2];
-            fgCount++;
           }
         }
       }
 
       // If a transition pixel is heavily surrounded by transparent background (concave gap/crevice)
-      // or if its alpha is very low in an ear/neck gap, clear its alpha to zero out halos
-      if (transparentCount >= 7 && a < 40) {
+      // or if its alpha is very low, clear its alpha to eliminate halos cleanly
+      if (transparentCount >= 6 && a < 50) {
         pixels[pIdx + 3] = 0;
         continue;
       }
 
-      if (bgCount > 0 && fgCount > 0) {
+      // If the pixel color is clearly background on faint alpha, clear it out
+      if (bgCount > 0 && a < 60) {
         const avgBgR = bgR / bgCount;
         const avgBgG = bgG / bgCount;
         const avgBgB = bgB / bgCount;
@@ -1274,29 +1244,11 @@ function cleanEarNeckHeadHalosPass(
         const curB = pixels[pIdx + 2];
 
         const distToBg = Math.hypot(curR - avgBgR, curG - avgBgG, curB - avgBgB);
-        const distToFg = Math.hypot(curR - fgR / fgCount, curG - fgG / fgCount, curB - fgB / fgCount);
 
-        // If the pixel color is clearly background on faint alpha, clear it out
-        if (distToBg < 20 && distToBg < distToFg && a < 40) {
+        if (distToBg < 25) {
           pixels[pIdx + 3] = 0;
           continue;
         }
-
-        // Replace any remaining RGB color with pure local skin/hair foreground color
-        const avgFgR = fgR / fgCount;
-        const avgFgG = fgG / fgCount;
-        const avgFgB = fgB / fgCount;
-        
-        const aNorm = Math.max(0.15, a / 255.0);
-        const invA = 1.0 - aNorm;
-        const unmixR = Math.max(0, Math.min(255, (curR - avgBgR * invA) / aNorm));
-        const unmixG = Math.max(0, Math.min(255, (curG - avgBgG * invA) / aNorm));
-        const unmixB = Math.max(0, Math.min(255, (curB - avgBgB * invA) / aNorm));
-        
-        const fgWeight = 1.0 - aNorm;
-        pixels[pIdx] = Math.round(unmixR * (1 - fgWeight) + avgFgR * fgWeight);
-        pixels[pIdx + 1] = Math.round(unmixG * (1 - fgWeight) + avgFgG * fgWeight);
-        pixels[pIdx + 2] = Math.round(unmixB * (1 - fgWeight) + avgFgB * fgWeight);
       }
       
       // Green Spill Suppression (Despill) to eliminate green screen halos
@@ -1336,12 +1288,12 @@ function qualityControlPerimeterPass(
 
       if (a === 0) continue;
 
-      const isUpper = y < h * 0.45;
-      const hazeCutoff = isUpper ? 5 : 20; // Preserve fine hair and shoulder edges
-      const solidCutoff = isUpper ? 240 : 190;
+      const isUpper = y < h * 0.55;
+      const hazeCutoff = isUpper ? 30 : 25; // Cleanly eliminate faint boundary haze around hair
+      const solidCutoff = isUpper ? 230 : 190;
 
       if (a < hazeCutoff) {
-        // Zero out faint boundary haze heavily
+        // Zero out faint boundary haze heavily so no black spots or smudges spread
         pixels[pIdx + 3] = 0;
       } else if (a > solidCutoff) {
         // Only solidify if not touching an external transparent pixel:
@@ -1356,8 +1308,8 @@ function qualityControlPerimeterPass(
           pixels[pIdx + 3] = 255;
         }
       } else {
-        // Only remove faint isolated floating noise (a < 50) that is far from any subject core
-        if (a < 50) {
+        // Only remove faint isolated floating noise (a < 55) that is far from any subject core
+        if (a < 55) {
           let nearSubject = false;
           const radius = 8;
           const startY = Math.max(0, y - radius);
@@ -1368,7 +1320,7 @@ function qualityControlPerimeterPass(
           for (let ny = startY; ny <= endY; ny++) {
             const nRow = ny * w;
             for (let nx = startX; nx <= endX; nx++) {
-              if (alphaCopy[nRow + nx] >= 100) {
+              if (alphaCopy[nRow + nx] >= 110) {
                 nearSubject = true;
                 break;
               }
@@ -1407,11 +1359,14 @@ export function removeSubjectBoundaryWhiteLine(
   let bgMeanR = bgModels?.global?.meanR ?? 250;
   let bgMeanG = bgModels?.global?.meanG ?? 250;
   let bgMeanB = bgModels?.global?.meanB ?? 250;
-  const isLightBg = (0.299 * bgMeanR + 0.587 * bgMeanG + 0.114 * bgMeanB) > 160;
+  const bgLum = 0.299 * bgMeanR + 0.587 * bgMeanG + 0.114 * bgMeanB;
+  const isLightBg = bgLum > 155;
 
   // Pass 1: Outermost white boundary trimming
   for (let y = 1; y < h - 1; y++) {
     const row = y * w;
+    const isHairZone = y < h * 0.58;
+
     for (let x = 1; x < w - 1; x++) {
       const idx = row + x;
       const a = alphaCopy[idx];
@@ -1435,16 +1390,15 @@ export function removeSubjectBoundaryWhiteLine(
         const b = pixels[pIdx + 2];
         const lum = 0.299 * r + 0.587 * g + 0.114 * b;
 
-        // If exposed to transparent neighbors, strip ONLY outer faint haze or extreme background match
-        // NEVER strip genuine subject pixels (a >= 60) to prevent deleting white shirts, hair, or skin!
+        // If exposed to transparent neighbors, cleanly eliminate light/white background fringe
         if (transparentNeighbors >= 2) {
-          if (a < 35 || (isLightBg && lum > 235 && a < 55)) {
+          if (a < 35 || (isLightBg && lum > 165 && a < 95) || (isHairZone && isLightBg && lum > 150 && a < 110)) {
             pixels[pIdx + 3] = 0;
             alphaCopy[idx] = 0;
             continue;
           }
         } else if (transparentNeighbors === 1) {
-          if (a < 20 || (isLightBg && lum > 245 && a < 35)) {
+          if (a < 20 || (isLightBg && lum > 175 && a < 65) || (isHairZone && isLightBg && lum > 160 && a < 80)) {
             pixels[pIdx + 3] = 0;
             alphaCopy[idx] = 0;
             continue;
@@ -1454,81 +1408,80 @@ export function removeSubjectBoundaryWhiteLine(
     }
   }
 
-  // Pass 2: Foreground Color Inpainting for boundary edge de-fringe
-  // Replace contaminated white/light boundary edge color with authentic nearby foreground color
-  const copyPixels = new Uint8ClampedArray(pixels);
-
+  // Pass 2: Boundary Fringe White Halo De-contamination & Alpha Attenuation
+  // Cleanly eliminates white background rims around hair strands and perimeter edges
+  // without staining or darkening genuine hair.
   for (let y = 1; y < h - 1; y++) {
     const row = y * w;
+    const isHairZone = y < h * 0.58;
+
     for (let x = 1; x < w - 1; x++) {
       const idx = row + x;
       const a = pixels[idx * 4 + 3];
-      if (a === 0) continue;
+      if (a === 0 || a >= 235) continue;
 
-      // Check if pixel is on the perimeter edge
+      // Check if pixel is on the perimeter edge touching transparency
       const aUp = alphaCopy[row - w + x];
       const aDown = alphaCopy[row + w + x];
       const aLeft = alphaCopy[row + x - 1];
       const aRight = alphaCopy[row + x + 1];
-      const isEdge = aUp < 220 || aDown < 220 || aLeft < 220 || aRight < 220 || a < 240;
+      const isTouchingBg = aUp === 0 || aDown === 0 || aLeft === 0 || aRight === 0;
 
-      if (!isEdge) continue;
+      if (!isTouchingBg) continue;
 
       const pIdx = idx * 4;
-      const curR = copyPixels[pIdx];
-      const curG = copyPixels[pIdx + 1];
-      const curB = copyPixels[pIdx + 2];
+      const curR = pixels[pIdx];
+      const curG = pixels[pIdx + 1];
+      const curB = pixels[pIdx + 2];
       const curLum = 0.299 * curR + 0.587 * curG + 0.114 * curB;
 
-      // Sample true solid interior foreground within a 7x7 window
-      let fgSumR = 0, fgSumG = 0, fgSumB = 0, fgCount = 0;
-      const rRange = 3;
-      const startY = Math.max(0, y - rRange);
-      const endY = Math.min(h - 1, y + rRange);
-      const startX = Math.max(0, x - rRange);
-      const endX = Math.min(w - 1, x + rRange);
-
-      for (let ny = startY; ny <= endY; ny++) {
-        const nRow = ny * w;
-        for (let nx = startX; nx <= endX; nx++) {
-          const nIdx = nRow + nx;
-          if (alphaCopy[nIdx] >= 200) {
-            const npIdx = nIdx * 4;
-            fgSumR += copyPixels[npIdx];
-            fgSumG += copyPixels[npIdx + 1];
-            fgSumB += copyPixels[npIdx + 2];
-            fgCount++;
-          }
+      // If background is light and boundary pixel is a pale fringe, cleanly attenuate its alpha
+      if (isLightBg && curLum > 160 && a < 190) {
+        if (curLum > 200 && a < 120) {
+          pixels[pIdx + 3] = Math.round(a * 0.45);
+        } else if (curLum > 175 && a < 155) {
+          pixels[pIdx + 3] = Math.round(a * 0.75);
         }
-      }
 
-      if (fgCount > 0) {
-        const avgFgR = fgSumR / fgCount;
-        const avgFgG = fgSumG / fgCount;
-        const avgFgB = fgSumB / fgCount;
-        const fgLum = 0.299 * avgFgR + 0.587 * avgFgG + 0.114 * avgFgB;
-
-        // Detect white/light fringe contamination
-        const isWhiteLine = (curLum > fgLum + 12) || (curR > 200 && curG > 200 && curB > 200 && fgLum < 190);
-
-        if (isWhiteLine) {
-          // Replace contaminated fringe color with genuine local subject color
-          pixels[pIdx] = Math.round(avgFgR);
-          pixels[pIdx + 1] = Math.round(avgFgG);
-          pixels[pIdx + 2] = Math.round(avgFgB);
-
-          // If it's a weak fringe, suppress alpha
-          if (a < 120) {
-            pixels[pIdx + 3] = 0;
-          } else if (a < 210) {
-            pixels[pIdx + 3] = Math.round(a * 0.85);
+        // Decontaminate hair edge pixels by removing white background light bleed
+        if (isHairZone) {
+          let fgR = 0, fgG = 0, fgB = 0, fgCount = 0;
+          for (let dy = -3; dy <= 3; dy++) {
+            const ny = y + dy;
+            if (ny < 0 || ny >= h) continue;
+            for (let dx = -3; dx <= 3; dx++) {
+              const nx = x + dx;
+              if (nx < 0 || nx >= w) continue;
+              const nIdx = ny * w + nx;
+              if (alphaCopy[nIdx] >= 210) {
+                const npIdx = nIdx * 4;
+                fgR += pixels[npIdx];
+                fgG += pixels[npIdx + 1];
+                fgB += pixels[npIdx + 2];
+                fgCount++;
+              }
+            }
           }
-        } else if (a < 240) {
-          // Smooth blend toward authentic foreground color
-          const blendWeight = ((255 - a) / 255.0) * 0.6;
-          pixels[pIdx] = Math.round(curR * (1 - blendWeight) + avgFgR * blendWeight);
-          pixels[pIdx + 1] = Math.round(curG * (1 - blendWeight) + avgFgG * blendWeight);
-          pixels[pIdx + 2] = Math.round(curB * (1 - blendWeight) + avgFgB * blendWeight);
+
+          if (fgCount > 0) {
+            const avgFgR = fgR / fgCount;
+            const avgFgG = fgG / fgCount;
+            const avgFgB = fgB / fgCount;
+            const fgLum = 0.299 * avgFgR + 0.587 * avgFgG + 0.114 * avgFgB;
+
+            if (curLum > fgLum + 12) {
+              const aNorm = Math.max(0.2, a / 255.0);
+              const haloFactor = Math.min(1.0, (curLum - fgLum) / 100.0);
+              const unmixR = Math.max(avgFgR, (curR - bgMeanR * (1 - aNorm)) / aNorm);
+              const unmixG = Math.max(avgFgG, (curG - bgMeanG * (1 - aNorm)) / aNorm);
+              const unmixB = Math.max(avgFgB, (curB - bgMeanB * (1 - aNorm)) / aNorm);
+
+              const blend = haloFactor * (1 - aNorm * 0.7);
+              pixels[pIdx] = Math.round(curR * (1 - blend) + Math.min(255, unmixR) * blend);
+              pixels[pIdx + 1] = Math.round(curG * (1 - blend) + Math.min(255, unmixG) * blend);
+              pixels[pIdx + 2] = Math.round(curB * (1 - blend) + Math.min(255, unmixB) * blend);
+            }
+          }
         }
       }
     }
@@ -1992,7 +1945,8 @@ export async function cleanEdgeHalosAndDeFringe(
       for (let y = 0; y < h; y += 4) {
         for (let x of [0, 1, 2, w - 3, w - 2, w - 1]) {
           const idx = (y * w + x) * 4;
-          if (pixels[idx + 3] < 20) {
+          const a = pixels[idx + 3];
+          if (a > 0 && a < 80) {
             bgSumR += pixels[idx];
             bgSumG += pixels[idx + 1];
             bgSumB += pixels[idx + 2];
@@ -2000,9 +1954,10 @@ export async function cleanEdgeHalosAndDeFringe(
           }
         }
       }
-      const avgBgR = bgCount > 0 ? bgSumR / bgCount : 255;
-      const avgBgG = bgCount > 0 ? bgSumG / bgCount : 255;
-      const avgBgB = bgCount > 0 ? bgSumB / bgCount : 255;
+      // If transparent borders had zero RGB, default to white background (255, 255, 255)
+      const avgBgR = bgCount > 5 ? bgSumR / bgCount : 255;
+      const avgBgG = bgCount > 5 ? bgSumG / bgCount : 255;
+      const avgBgB = bgCount > 5 ? bgSumB / bgCount : 255;
 
       // 5. Morphological edge fringe stripping and color de-contamination
       const copyPixels = new Uint8ClampedArray(pixels);
