@@ -205,12 +205,38 @@ export default function PassportPhotoMaker() {
   // Manual Touchup State
   const [isManualMode, setIsManualMode] = useState(false);
   const [brushMode, setBrushMode] = useState<'erase' | 'restore'>('erase');
-  const [brushSize, setBrushSize] = useState(20);
+  const [brushSize, setBrushSize] = useState(25);
   const [isDrawing, setIsDrawing] = useState(false);
   const touchupCanvasRef = useRef<HTMLCanvasElement>(null);
   const originalPatternRef = useRef<CanvasPattern | null>(null);
   const lastPosRef = useRef<{x: number, y: number} | null>(null);
   const isDrawingUpdateRef = useRef(false);
+
+  // Round Brush Cursor State for Desktop & Smart Phone Android
+  const [touchupCursor, setTouchupCursor] = useState<{ x: number; y: number; isTouch: boolean } | null>(null);
+  const cursorFadeTimerRef = useRef<any>(null);
+
+  const updateTouchupCursor = (e: React.MouseEvent | React.TouchEvent, isTouch = false) => {
+    if (cursorFadeTimerRef.current) clearTimeout(cursorFadeTimerRef.current);
+    let clientX: number, clientY: number;
+    if ('touches' in e) {
+      if (e.touches.length === 0) return;
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = (e as React.MouseEvent).clientX;
+      clientY = (e as React.MouseEvent).clientY;
+    }
+    setTouchupCursor({ x: clientX, y: clientY, isTouch });
+  };
+
+  const getBrushRenderedDiameter = () => {
+    const canvas = touchupCanvasRef.current;
+    if (!canvas) return Math.max(12, brushSize);
+    const rect = canvas.getBoundingClientRect();
+    const scale = rect.width / (canvas.width || 1);
+    return Math.max(8, Math.round(brushSize * scale));
+  };
 
   // --- Manual Touchup Logic ---
   useEffect(() => {
@@ -286,13 +312,35 @@ export default function PassportPhotoMaker() {
 
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
     if (e.cancelable) e.preventDefault();
+    updateTouchupCursor(e, 'touches' in e);
     setIsDrawing(true);
-    lastPosRef.current = getCoordinates(e);
+    const pos = getCoordinates(e);
+    lastPosRef.current = pos;
+
+    if (pos && touchupCanvasRef.current) {
+      const ctx = touchupCanvasRef.current.getContext('2d');
+      if (ctx) {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, brushSize / 2, 0, Math.PI * 2);
+        if (brushMode === 'erase') {
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.fillStyle = 'rgba(0,0,0,1)';
+          ctx.fill();
+        } else {
+          ctx.globalCompositeOperation = 'source-over';
+          if (originalPatternRef.current) {
+            ctx.fillStyle = originalPatternRef.current;
+            ctx.fill();
+          }
+        }
+      }
+    }
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!isDrawing || !lastPosRef.current || !touchupCanvasRef.current) return;
     if (e.cancelable) e.preventDefault();
+    updateTouchupCursor(e, 'touches' in e);
+    if (!isDrawing || !lastPosRef.current || !touchupCanvasRef.current) return;
     
     const ctx = touchupCanvasRef.current.getContext('2d');
     if (!ctx) return;
@@ -329,6 +377,10 @@ export default function PassportPhotoMaker() {
       setBgRemovedImageSrc(result);
       addToHistory(result);
     }
+    if (cursorFadeTimerRef.current) clearTimeout(cursorFadeTimerRef.current);
+    cursorFadeTimerRef.current = setTimeout(() => {
+      setTouchupCursor(null);
+    }, 450);
   };
 
   // --- 1. Load Image & Initialize Crop ---
@@ -1365,19 +1417,63 @@ export default function PassportPhotoMaker() {
                               Restore
                             </button>
                           </div>
-                          <div>
-                            <div className="flex justify-between text-xs text-gray-600 mb-1.5">
-                              <span className="font-bold">Brush Size</span>
-                              <span className="font-bold">{brushSize}px</span>
+                          <div className="space-y-3 pt-1">
+                            <div className="flex items-center gap-3 p-2 bg-white rounded-xl border border-gray-200 shadow-xs">
+                              {/* Visual Round Brush Shape Preview */}
+                              <div className="w-11 h-11 rounded-lg bg-gray-50 border border-gray-200 flex items-center justify-center shrink-0 relative overflow-hidden" title="Live Round Brush Preview">
+                                <div 
+                                  className="rounded-full border-2 border-white shadow-sm ring-1 ring-black/40 transition-all duration-75 flex items-center justify-center"
+                                  style={{ 
+                                    width: `${Math.min(38, Math.max(8, brushSize * 0.38))}px`, 
+                                    height: `${Math.min(38, Math.max(8, brushSize * 0.38))}px`,
+                                    backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.45)' : 'rgba(59, 130, 246, 0.45)'
+                                  }}
+                                >
+                                  <div className="w-1 h-1 rounded-full bg-white shadow-xs" />
+                                </div>
+                              </div>
+                              <div className="flex-1 space-y-1">
+                                <div className="flex justify-between text-xs text-gray-700">
+                                  <span className="font-bold flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-[#e8501a] inline-block" />
+                                    Round Brush Size
+                                  </span>
+                                  <span className="font-extrabold text-[#e8501a]">{brushSize}px</span>
+                                </div>
+                                <input
+                                  type="range"
+                                  min="5"
+                                  max="100"
+                                  value={brushSize}
+                                  onChange={(e) => setBrushSize(Number(e.target.value))}
+                                  className="w-full accent-[#e8501a] cursor-pointer"
+                                />
+                              </div>
                             </div>
-                            <input
-                              type="range"
-                              min="5"
-                              max="100"
-                              value={brushSize}
-                              onChange={(e) => setBrushSize(Number(e.target.value))}
-                              className="w-full accent-[#e8501a]"
-                            />
+
+                            {/* Quick Presets for Smart Phone Android & Desktop */}
+                            <div className="flex items-center gap-1.5">
+                              {[
+                                { label: '10px', val: 10 },
+                                { label: '20px', val: 20 },
+                                { label: '35px', val: 35 },
+                                { label: '50px', val: 50 },
+                                { label: '75px', val: 75 },
+                              ].map((preset) => (
+                                <button
+                                  key={preset.val}
+                                  type="button"
+                                  onClick={() => setBrushSize(preset.val)}
+                                  className={`flex-1 py-1 px-1 text-[10px] font-bold rounded-lg border transition-all text-center ${
+                                    brushSize === preset.val 
+                                      ? 'bg-[#e8501a] text-white border-[#e8501a] shadow-xs' 
+                                      : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
+                                  }`}
+                                >
+                                  {preset.label}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       )}
@@ -1767,22 +1863,61 @@ export default function PassportPhotoMaker() {
                       }}
                     >
                       {isManualMode ? (
-                        <canvas
-                          ref={touchupCanvasRef}
-                          onMouseDown={startDrawing}
-                          onMouseMove={draw}
-                          onMouseUp={stopDrawing}
-                          onMouseLeave={stopDrawing}
-                          onTouchStart={startDrawing}
-                          onTouchMove={draw}
-                          onTouchEnd={stopDrawing}
-                          className="max-w-full max-h-full object-contain block cursor-crosshair touch-none"
-                          style={{
-                            filter: `brightness(${brightness}%) contrast(${contrast + (isUltraHD ? 15 : 0)}%) saturate(${saturation + (isUltraHD ? 20 : 0)}%) ${smoothness > 0 ? `blur(${smoothness / 20}px)` : ''}`,
-                            backgroundColor: bgColor === 'transparent' ? 'transparent' : (bgColor === 'custom' ? customColor : bgColor),
-                            backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : 'none'
-                          }}
-                        />
+                        <div
+                          className="flex items-center justify-center w-full h-full relative"
+                          onMouseEnter={(e) => updateTouchupCursor(e, false)}
+                          onMouseMove={(e) => updateTouchupCursor(e, false)}
+                          onMouseLeave={() => setTouchupCursor(null)}
+                        >
+                          <canvas
+                            ref={touchupCanvasRef}
+                            onMouseDown={(e) => { updateTouchupCursor(e, false); startDrawing(e); }}
+                            onMouseMove={(e) => { updateTouchupCursor(e, false); draw(e); }}
+                            onMouseUp={stopDrawing}
+                            onMouseLeave={() => { setTouchupCursor(null); stopDrawing(); }}
+                            onTouchStart={(e) => { updateTouchupCursor(e, true); startDrawing(e); }}
+                            onTouchMove={(e) => { updateTouchupCursor(e, true); draw(e); }}
+                            onTouchEnd={stopDrawing}
+                            className="max-w-full max-h-full object-contain block cursor-none touch-none select-none"
+                            style={{
+                              filter: `brightness(${brightness}%) contrast(${contrast + (isUltraHD ? 15 : 0)}%) saturate(${saturation + (isUltraHD ? 20 : 0)}%) ${smoothness > 0 ? `blur(${smoothness / 20}px)` : ''}`,
+                              backgroundColor: bgColor === 'transparent' ? 'transparent' : (bgColor === 'custom' ? customColor : bgColor),
+                              backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : 'none'
+                            }}
+                          />
+
+                          {/* Round Shape Brush Cursor Overlay for Desktop & Smart Phone Android */}
+                          {touchupCursor && (
+                            <div
+                              className="pointer-events-none fixed z-50 rounded-full -translate-x-1/2 -translate-y-1/2 select-none transition-transform duration-75"
+                              style={{
+                                left: `${touchupCursor.x}px`,
+                                top: `${touchupCursor.y}px`,
+                                width: `${getBrushRenderedDiameter()}px`,
+                                height: `${getBrushRenderedDiameter()}px`,
+                                border: '2px solid rgba(255, 255, 255, 0.95)',
+                                boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.8), 0 0 12px rgba(0, 0, 0, 0.4)',
+                                backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.35)' : 'rgba(59, 130, 246, 0.35)',
+                              }}
+                            >
+                              {/* Precise Center Point */}
+                              <div className="absolute inset-0 m-auto w-1.5 h-1.5 rounded-full bg-white shadow-xs ring-1 ring-black/70" />
+
+                              {/* Smart Phone Android Touch Alignment Guides */}
+                              {touchupCursor.isTouch && (
+                                <>
+                                  <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
+                                  <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
+                                  <div className="absolute -left-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
+                                  <div className="absolute -right-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
+                                  <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-black/85 text-white text-[9px] font-bold rounded-full shadow-md whitespace-nowrap border border-white/30 backdrop-blur-xs">
+                                    {brushSize}px
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       ) : (
                         <>
                           <img 

@@ -580,12 +580,34 @@ export default function BackgroundRemover() {
   };
 
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+    if (e.cancelable) e.preventDefault();
     updateTouchupCursor(e, 'touches' in e);
     setIsDrawing(true);
-    lastPosRef.current = getCoords(e);
+    const pos = getCoords(e);
+    lastPosRef.current = pos;
+
+    if (pos && canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, brushSize / 2, 0, Math.PI * 2);
+        if (brushMode === 'erase') {
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.fill();
+        } else if (originalImgRef.current) {
+          ctx.globalCompositeOperation = 'source-over';
+          const pattern = ctx.createPattern(originalImgRef.current, 'no-repeat');
+          if (pattern) {
+            ctx.fillStyle = pattern;
+            ctx.fill();
+          }
+        }
+      }
+    }
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
+    if (e.cancelable) e.preventDefault();
     updateTouchupCursor(e, 'touches' in e);
     if (!isDrawing || !lastPosRef.current || !canvasRef.current || !originalImgRef.current) return;
     const ctx = canvasRef.current.getContext('2d');
