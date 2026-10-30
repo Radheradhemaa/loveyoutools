@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, FileText, Download, Settings, RefreshCw, File as FileIcon, Eye, Lock, Unlock, Trash2 } from 'lucide-react';
+import { Upload, FileText, Download, Settings, RefreshCw, File as FileIcon, Lock, Trash2 } from 'lucide-react';
 import { PDFDocument, rgb, degrees } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
@@ -40,9 +40,11 @@ export default function PdfTools({ toolId }: { toolId: string }) {
       const selectedFiles = Array.from(e.target.files) as File[];
       
       // Check if the first PDF is encrypted
-      if (selectedFiles[0] && selectedFiles[0].type === 'application/pdf') {
+      const firstFile = selectedFiles[0];
+      const isPdf = firstFile && (firstFile.type === 'application/pdf' || firstFile.name.toLowerCase().endsWith('.pdf'));
+      if (isPdf) {
         try {
-          const arrayBuffer = await selectedFiles[0].arrayBuffer();
+          const arrayBuffer = await firstFile.arrayBuffer();
           await pdfjsLib.getDocument({ 
             data: arrayBuffer,
             cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
@@ -53,7 +55,11 @@ export default function PdfTools({ toolId }: { toolId: string }) {
         } catch (err: any) {
           const errStr = typeof err === 'string' ? err : (err?.message || '');
           const isPasswordError = err?.name === 'PasswordException' || 
-                                  errStr.toLowerCase().includes('password');
+                                  err?.name?.toLowerCase().includes('password') ||
+                                  errStr.toLowerCase().includes('password') ||
+                                  errStr.toLowerCase().includes('encrypted') ||
+                                  err?.code === 1 ||
+                                  err?.code === 2;
           if (isPasswordError) {
             setIsEncrypted(true);
             setWarning("This PDF is password protected. Please enter the password in the Settings panel to process it.");
@@ -117,13 +123,34 @@ export default function PdfTools({ toolId }: { toolId: string }) {
       // Handle PDF to Image/Text conversions (requires pdfjs)
       if (['pdf-to-jpg', 'pdf-to-png', 'pdf-to-text', 'pdf-to-zip'].includes(toolId)) {
         const fileBuffer = await files[0].arrayBuffer();
-        const loadingTask = pdfjsLib.getDocument({ 
-          data: fileBuffer,
-          password: documentPassword || undefined,
-          cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
-          cMapPacked: true,
-        });
-        const pdf = await loadingTask.promise;
+        const pwdCandidates = [
+          documentPassword,
+          documentPassword?.trim(),
+          documentPassword?.trim().toUpperCase(),
+          documentPassword?.trim().toLowerCase(),
+        ].filter(Boolean) as string[];
+
+        let pdf: any = null;
+        let lastErr: any = null;
+        for (const pwd of (pwdCandidates.length > 0 ? pwdCandidates : [undefined])) {
+          try {
+            const loadingTask = pdfjsLib.getDocument({ 
+              data: new Uint8Array(fileBuffer.slice(0)),
+              password: pwd,
+              cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
+              cMapPacked: true,
+            });
+            loadingTask.onPassword = (updatePassword: any) => {
+              if (pwd) updatePassword(pwd);
+              else updatePassword(new Error('Password required'));
+            };
+            pdf = await loadingTask.promise;
+            break;
+          } catch (e: any) {
+            lastErr = e;
+          }
+        }
+        if (!pdf) throw lastErr;
         const numPages = pdf.numPages;
         
         if (toolId === 'pdf-to-text') {

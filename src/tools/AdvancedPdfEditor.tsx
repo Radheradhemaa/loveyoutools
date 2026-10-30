@@ -240,6 +240,7 @@ const SortableThumbnail = ({
 
 export default function AdvancedPdfEditor() {
   const [lastExportedUrl, setLastExportedUrl] = useState<string | null>(null);
+  const lastExportedUrlRef = useRef<string | null>(null);
   const [originalFilename, setOriginalFilename] = useState<string>("document");
   const editorRef = useRef<any>(null);
 
@@ -263,9 +264,10 @@ export default function AdvancedPdfEditor() {
   ];
 
   const handleDownload = () => {
-    if (lastExportedUrl) {
+    const urlToUse = lastExportedUrlRef.current || lastExportedUrl;
+    if (urlToUse) {
       const link = document.createElement("a");
-      link.href = lastExportedUrl;
+      link.href = urlToUse;
       const baseName = originalFilename.replace(/\.pdf$/i, "");
       link.download = `edited-${baseName}.pdf`;
       document.body.appendChild(link);
@@ -283,17 +285,21 @@ export default function AdvancedPdfEditor() {
       multiple={true}
       faq={faq}
       onDownload={handleDownload}
+      downloadUrl={lastExportedUrl || undefined}
+      downloadFileName={`edited-${originalFilename.replace(/\.pdf$/i, "")}.pdf`}
       renderToolbar={() => null}
     >
       {({ file, state, onComplete, onReset }) => {
         useEffect(() => {
           if (state === "BEFORE") {
             setLastExportedUrl(null);
+            lastExportedUrlRef.current = null;
           }
         }, [state]);
 
         useEffect(() => {
           setLastExportedUrl(null);
+          lastExportedUrlRef.current = null;
           if (file && file[0]) {
             setOriginalFilename(file[0].name);
           }
@@ -303,6 +309,7 @@ export default function AdvancedPdfEditor() {
           <PdfEditorWorkspace
             initialFile={file}
             onComplete={(url: string) => {
+              lastExportedUrlRef.current = url;
               setLastExportedUrl(url);
               onComplete();
             }}
@@ -630,6 +637,10 @@ const PdfEditorWorkspace = React.forwardRef(
   ({ initialFile, onComplete, onReset }: any, ref) => {
     const { setIsFocusMode } = useFocusMode();
     const [pdfFile, setPdfFile] = useState<File | null>(null);
+    const [passwordError, setPasswordError] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
+    const [isDecrypting, setIsDecrypting] = useState(false);
+    const [docLoadVersion, setDocLoadVersion] = useState(0);
     const [state, setState] = useState<EditorState>({
       currentPage: 1,
       zoom: 1,
@@ -1632,6 +1643,9 @@ const PdfEditorWorkspace = React.forwardRef(
       if (initialFile) {
         const file = Array.isArray(initialFile) ? initialFile[0] : initialFile;
         setPdfFile(file);
+        setPasswordError("");
+        setShowPassword(false);
+        setIsDecrypting(false);
         if (fabricCanvas.current) {
           fabricCanvas.current.dispose();
           fabricCanvas.current = null;
@@ -1657,6 +1671,8 @@ const PdfEditorWorkspace = React.forwardRef(
           isPasswordProtected: false,
           password: "",
           eraserWidth: 20,
+          showFloatingMenu: false,
+          floatingMenuPos: { x: 0, y: 0 },
           textData: {},
           editingText: null,
         });
@@ -1665,6 +1681,8 @@ const PdfEditorWorkspace = React.forwardRef(
         // Reset state when initialFile is null
         setPdfFile(null);
         pdfDocRef.current = null;
+        setPasswordError("");
+        setIsDecrypting(false);
         if (fabricCanvas.current) {
           fabricCanvas.current.dispose();
           fabricCanvas.current = null;
@@ -1690,69 +1708,172 @@ const PdfEditorWorkspace = React.forwardRef(
           isPasswordProtected: false,
           password: "",
           eraserWidth: 20,
+          showFloatingMenu: false,
+          floatingMenuPos: { x: 0, y: 0 },
           textData: {},
           editingText: null,
         });
       }
     }, [initialFile]);
 
-    const loadPdf = (file: File, password?: string) => {
-      setState((prev) => ({
-        ...prev,
-        isProcessing: true,
-        isPasswordProtected: false,
-      }));
-      const reader = new FileReader();
-      reader.onload = async (e) => {
+    const isPasswordError = (error: any) => {
+      if (!error) return false;
+      const name = String(error.name || "");
+      const msg = String(error.message || "");
+      const code = error.code;
+      return (
+        name === "PasswordException" ||
+        name.toLowerCase().includes("password") ||
+        msg.toLowerCase().includes("password") ||
+        msg.toLowerCase().includes("encrypted") ||
+        code === 1 || // pdfjs.PasswordResponses.NEED_PASSWORD
+        code === 2    // pdfjs.PasswordResponses.INCORRECT_PASSWORD
+      );
+    };
+
+    const attemptPdfUnlock = async (
+      rawArrayBuffer: ArrayBuffer,
+      enteredPassword?: string
+    ): Promise<{ pdf: any; workingPassword: string }> => {
+      const candidates: string[] = [];
+      if (enteredPassword !== undefined && enteredPassword !== null && enteredPassword !== "") {
+        // 1. Exact entered password
+        candidates.push(enteredPassword);
+
+        // 2. Trimmed password (fixes clipboard trailing space/newline from WhatsApp, Gmail, etc.)
+        const trimmed = enteredPassword.trim();
+        if (trimmed && !candidates.includes(trimmed)) {
+          candidates.push(trimmed);
+        }
+
+        // 3. Unquoted password (e.g. "secret" -> secret)
+        const unquoted = enteredPassword.replace(/^["'`]|["'`]$/g, "").trim();
+        if (unquoted && !candidates.includes(unquoted)) {
+          candidates.push(unquoted);
+        }
+
+        // 4. Uppercase variant (e.g. Aadhaar / PAN / Bank statement passwords typed in lowercase)
+        const upper = trimmed.toUpperCase();
+        if (upper && !candidates.includes(upper)) {
+          candidates.push(upper);
+        }
+
+        // 5. Lowercase variant (mobile keyboards auto-capitalizing first letter)
+        const lower = trimmed.toLowerCase();
+        if (lower && !candidates.includes(lower)) {
+          candidates.push(lower);
+        }
+      } else {
+        candidates.push("");
+      }
+
+      let lastError: any = null;
+
+      for (const pwd of candidates) {
         try {
-          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          // CRITICAL: PDF.js transfers the buffer to the Web Worker. Always slice a fresh copy!
+          const dataCopy = new Uint8Array(rawArrayBuffer.slice(0));
           const loadingTask = pdfjs.getDocument({
-            data,
-            password,
+            data: dataCopy,
+            password: pwd || undefined,
             cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
             cMapPacked: true,
           });
+
+          // Wire up the onPassword callback so PDF.js worker receives the candidate password cleanly
+          loadingTask.onPassword = (
+            updatePassword: (p: string | Error) => void,
+            reason: number
+          ) => {
+            if (pwd) {
+              updatePassword(pwd);
+            } else {
+              updatePassword(new Error("Password required"));
+            }
+          };
+
           const pdf = await loadingTask.promise;
+          return { pdf, workingPassword: pwd };
+        } catch (err: any) {
+          lastError = err;
+          if (!isPasswordError(err)) {
+            throw err;
+          }
+        }
+      }
+
+      throw lastError;
+    };
+
+    const loadPdf = (file: File, password?: string) => {
+      const hasProvidedPassword = Boolean(password && password.trim());
+      if (hasProvidedPassword) {
+        setIsDecrypting(true);
+      } else {
+        setState((prev) => ({
+          ...prev,
+          isProcessing: true,
+        }));
+      }
+      setPasswordError("");
+
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const rawBuffer = e.target?.result as ArrayBuffer;
+          if (!rawBuffer || rawBuffer.byteLength === 0) {
+            throw new Error("Unable to read PDF file data.");
+          }
+
+          const { pdf, workingPassword } = await attemptPdfUnlock(rawBuffer, password);
           pdfDocRef.current = pdf;
 
           const order = Array.from({ length: pdf.numPages }, (_, i) => i + 1);
-          setState((prev) => ({ ...prev, pageOrder: order }));
 
-          const newThumbnails = [];
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const viewport = page.getPageViewport ? page.getPageViewport({ scale: 1.5 }) : page.getViewport({ scale: 1.5 });
-            const canvas = document.createElement("canvas");
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            const ctx = canvas.getContext("2d");
-            if (!ctx) continue;
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = "high";
-            await (page as any).render({
-              canvasContext: ctx,
-              viewport,
-            }).promise;
-            newThumbnails.push(canvas.toDataURL());
-            
-            // Explicitly release canvas memory
-            canvas.width = 0;
-            canvas.height = 0;
+          // Generate thumbnails safely without letting any thumbnail error block the document
+          const newThumbnails: string[] = [];
+          try {
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const viewport = page.getPageViewport ? page.getPageViewport({ scale: 1.5 }) : page.getViewport({ scale: 1.5 });
+              const canvas = document.createElement("canvas");
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              const ctx = canvas.getContext("2d");
+              if (!ctx) continue;
+              ctx.imageSmoothingEnabled = true;
+              ctx.imageSmoothingQuality = "high";
+              await (page as any).render({
+                canvasContext: ctx,
+                viewport,
+              }).promise;
+              newThumbnails.push(canvas.toDataURL());
+              
+              // Explicitly release canvas memory
+              canvas.width = 0;
+              canvas.height = 0;
+            }
+          } catch (thumbErr) {
+            console.warn("Non-fatal error generating thumbnails:", thumbErr);
           }
 
           let initialZoom = 1;
-          if (wrapperRef.current) {
-            const containerWidth = Math.min(900, wrapperRef.current.clientWidth) - 48;
-            const containerHeight = wrapperRef.current.clientHeight - 48;
-            const firstPage = await pdf.getPage(1);
-            const firstPageViewport = firstPage.getViewport({ scale: 1.0 });
-            if (firstPageViewport.width > 0 && firstPageViewport.height > 0) {
-              const scaleWidth = containerWidth / firstPageViewport.width;
-              const scaleHeight = containerHeight / firstPageViewport.height;
-              initialZoom = Math.max(0.1, Math.min(scaleWidth, scaleHeight));
-              // Round to 2 decimals
-              initialZoom = Math.floor(initialZoom * 100) / 100;
+          try {
+            if (wrapperRef.current) {
+              const containerWidth = Math.min(900, wrapperRef.current.clientWidth) - 48;
+              const containerHeight = wrapperRef.current.clientHeight - 48;
+              const firstPage = await pdf.getPage(1);
+              const firstPageViewport = firstPage.getViewport({ scale: 1.0 });
+              if (firstPageViewport.width > 0 && firstPageViewport.height > 0) {
+                const scaleWidth = containerWidth / firstPageViewport.width;
+                const scaleHeight = containerHeight / firstPageViewport.height;
+                initialZoom = Math.max(0.1, Math.min(scaleWidth, scaleHeight));
+                // Round to 2 decimals
+                initialZoom = Math.floor(initialZoom * 100) / 100;
+              }
             }
+          } catch (zoomErr) {
+            console.warn("Non-fatal error calculating initial zoom:", zoomErr);
           }
 
           setState((prev) => ({
@@ -1762,6 +1883,7 @@ const PdfEditorWorkspace = React.forwardRef(
             currentPage: 1,
             zoom: initialZoom,
             isPasswordProtected: false,
+            password: workingPassword || prev.password || "",
             textData: {},
             pageData: {},
             deletedPages: [],
@@ -1770,16 +1892,30 @@ const PdfEditorWorkspace = React.forwardRef(
             historyIndex: -1,
             editingText: null,
           }));
+          setIsDecrypting(false);
+          setPasswordError("");
+          setDocLoadVersion((v) => v + 1);
+
+          // Force page 1 render after loading completes
+          setTimeout(() => {
+            renderPage(1);
+          }, 80);
         } catch (error: any) {
-          if (error.name === "PasswordException") {
+          setIsDecrypting(false);
+          if (isPasswordError(error)) {
             setState((prev) => ({
               ...prev,
               isPasswordProtected: true,
               isProcessing: false,
             }));
+            if (hasProvidedPassword) {
+              setPasswordError("Incorrect password. Please verify Caps Lock and try again.");
+            } else {
+              setPasswordError("");
+            }
           } else {
             console.error("Error loading PDF:", error);
-            setState((prev) => ({ ...prev, isProcessing: false }));
+            setState((prev) => ({ ...prev, isProcessing: false, isPasswordProtected: false }));
           }
         }
       };
@@ -1788,8 +1924,17 @@ const PdfEditorWorkspace = React.forwardRef(
 
     const handlePasswordSubmit = (e: React.FormEvent) => {
       e.preventDefault();
-      if (pdfFile) {
-        loadPdf(pdfFile, state.password);
+      const entered = state.password;
+      if (!entered || !entered.trim()) {
+        setPasswordError("Please enter the password to unlock this PDF.");
+        return;
+      }
+      const targetFile = pdfFile || (initialFile ? (Array.isArray(initialFile) ? initialFile[0] : initialFile) : null);
+      if (targetFile) {
+        setPdfFile(targetFile);
+        loadPdf(targetFile, entered);
+      } else {
+        setPasswordError("PDF file reference not found. Please re-upload.");
       }
     };
 
@@ -1908,7 +2053,7 @@ const PdfEditorWorkspace = React.forwardRef(
       if (pdfDocRef.current) {
         renderPage(state.currentPage);
       }
-    }, [state.currentPage, state.zoom]);
+    }, [state.currentPage, state.zoom, docLoadVersion]);
 
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
@@ -2387,16 +2532,46 @@ const PdfEditorWorkspace = React.forwardRef(
       if (!pdfFile) return;
       setState((prev) => ({ ...prev, isProcessing: true }));
 
+      // 1. Commit active editing text if currently in the middle of typing
+      if (state.editingText && (state.editingText as any).blockId) {
+        const blkId = (state.editingText as any).blockId;
+        const curText = state.editingText.text;
+        const pageNum = state.currentPage;
+        const pageBlocks = [...(state.textData[pageNum] || [])];
+        const idx = pageBlocks.findIndex((b: any) => b.id === blkId);
+        if (idx > -1) {
+          pageBlocks[idx] = { ...pageBlocks[idx], text: curText };
+          state.textData[pageNum] = pageBlocks;
+        }
+      }
+
+      // 2. Capture live Fabric canvas objects for the active page
+      let activeCanvasJson: any = null;
+      if (fabricCanvas.current) {
+        activeCanvasJson = fabricCanvas.current.toJSON(["data", "visible"]);
+        if (activeCanvasJson && activeCanvasJson.objects) {
+          activeCanvasJson.objects = activeCanvasJson.objects.filter((obj: any) => !obj.data?.isBackground);
+        }
+      }
+
       try {
         const existingPdfBytes = await pdfFile.arrayBuffer();
         let pdfDoc: any = null;
         try {
           pdfDoc = await PDFDocument.load(existingPdfBytes, {
-            password: state.password || undefined,
-            ignoreEncryption: false, 
+            ignoreEncryption: true, 
           });
+          // CRITICAL: pdf-lib does NOT decrypt PDF streams when ignoreEncryption is true!
+          // Copying encrypted pages into an unencrypted PDFDocument causes PDF readers to fail parsing
+          // the ciphertext content stream, producing a 100% BLANK page.
+          // Therefore, if the document is encrypted, we MUST use PDF.js high-resolution decrypted rendering!
+          if (pdfDoc.isEncrypted) {
+            console.log("PDF is encrypted - switching to decrypted high-fidelity raster export");
+            pdfDoc = null;
+          }
         } catch (e) {
-          console.warn("Encrypted PDF detected. Falling back to rasterizing pages.");
+          console.warn("Could not load PDF with pdf-lib, falling back to PDF.js export:", e);
+          pdfDoc = null;
         }
         const finalPdfDoc = await PDFDocument.create();
         finalPdfDoc.registerFontkit((fontkit as any).default || fontkit);
@@ -2478,31 +2653,58 @@ const PdfEditorWorkspace = React.forwardRef(
           const pdfjsPage = await pdfDocRef.current.getPage(pageNum);
           const viewport = pdfjsPage.getViewport({ scale: 1.0 });
 
-          // Prevent rasterization - clone native PDF pages for identical structural preservation
-          if (pdfDoc) {
-            const [page] = await finalPdfDoc.copyPages(pdfDoc, [
-              pageNum - 1,
-            ]);
-            copiedPage = finalPdfDoc.addPage(page);
-          } else {
-            // Fallback for encrypted pdfs
+          let isPageVectorCopied = false;
+          if (pdfDoc && !pdfDoc.isEncrypted) {
+            try {
+              const [page] = await finalPdfDoc.copyPages(pdfDoc, [
+                pageNum - 1,
+              ]);
+              copiedPage = finalPdfDoc.addPage(page);
+              isPageVectorCopied = true;
+            } catch (copyErr) {
+              console.warn(`Vector copy failed for page ${pageNum}, falling back to high-res render:`, copyErr);
+              isPageVectorCopied = false;
+            }
+          }
+
+          if (!isPageVectorCopied) {
+            // Decrypted high-resolution export for encrypted/protected PDFs or unsupported formats
             copiedPage = finalPdfDoc.addPage([viewport.width, viewport.height]);
-            const renderScale = 4.0;
+            const renderScale = 3.0; // 216 DPI, sharp, crystal clear
             const renderViewport = pdfjsPage.getViewport({ scale: renderScale });
             const tempCanvas = document.createElement("canvas");
-            const tempCtx = tempCanvas.getContext("2d")!;
+            const tempCtx = tempCanvas.getContext("2d", { willReadFrequently: true })!;
             tempCanvas.width = renderViewport.width;
             tempCanvas.height = renderViewport.height;
 
-            const originalFillText = tempCtx.fillText;
-            tempCtx.fillText = function () { return; };
-            const originalStrokeText = tempCtx.strokeText;
-            tempCtx.strokeText = function () { return; };
+            // Fill solid white background so transparency doesn't produce black background
+            tempCtx.fillStyle = "#ffffff";
+            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
 
+            // CRITICAL: Render PDF.js page with ALL text and graphics enabled (never mute fillText/strokeText!)
             await pdfjsPage.render({ canvasContext: tempCtx, viewport: renderViewport }).promise;
-          
-            tempCtx.fillText = originalFillText;
-            tempCtx.strokeText = originalStrokeText;
+
+            // Whiteout rectangles for modified or deleted text directly on the high-res canvas
+            const pageTexts = state.textData[pageNum] || [];
+            for (const textBlock of pageTexts) {
+              const isModified = textBlock.isDeleted || 
+                                 textBlock.text !== textBlock.originalText || 
+                                 textBlock.color !== textBlock.originalColor || 
+                                 textBlock.fontSize !== (textBlock.originalFontSize || textBlock.fontSize) ||
+                                 textBlock.fontWeight !== (textBlock.originalFontWeight || textBlock.fontWeight) ||
+                                 textBlock.fontStyle !== (textBlock.originalFontStyle || textBlock.fontStyle);
+
+              if (textBlock.isOriginal && isModified) {
+                const pad = 1.5 * renderScale;
+                tempCtx.fillStyle = textBlock.bgColor || "#ffffff";
+                tempCtx.fillRect(
+                  textBlock.left * renderScale - pad,
+                  textBlock.top * renderScale - pad,
+                  textBlock.width * renderScale + pad * 2,
+                  textBlock.height * renderScale + pad * 2
+                );
+              }
+            }
 
             const imgData = tempCanvas.toDataURL("image/jpeg", 0.95);
             const img = await finalPdfDoc.embedJpg(imgData);
@@ -2526,8 +2728,8 @@ const PdfEditorWorkspace = React.forwardRef(
                                 textBlock.fontWeight !== (textBlock.originalFontWeight || textBlock.fontWeight) ||
                                 textBlock.fontStyle !== (textBlock.originalFontStyle || textBlock.fontStyle);
 
-             // If it's original text but has been modified, we must white out the original PDF text
-             if (textBlock.isOriginal && isModified && pdfDoc) {
+             // If vector page was copied, white out the original PDF text
+             if (textBlock.isOriginal && isModified && isPageVectorCopied) {
                 const padLeft = 1;
                 const padRight = 1;
                 const padBottom = 2;
@@ -2550,7 +2752,7 @@ const PdfEditorWorkspace = React.forwardRef(
 
              if (textBlock.isDeleted) continue;
 
-             if (!textBlock.isOriginal || isModified || !pdfDoc) {
+             if (!textBlock.isOriginal || isModified) {
                let fontToUse = helveticaFont;
                const weightVal = typeof textBlock.fontWeight === "number"
                  ? textBlock.fontWeight
@@ -2669,14 +2871,76 @@ const PdfEditorWorkspace = React.forwardRef(
           };
           await runPageTexts();
 
-          // 2. Draw user-placed Fabric objects on top of the text layer (photos, signatures, shapes)
-          const data = state.pageData[pageNum];
+          // 2. Draw user-placed Fabric objects (photos, signatures, shapes, drawings)
+          const data = (pageNum === state.currentPage && activeCanvasJson) 
+            ? activeCanvasJson 
+            : (state.pageData[pageNum] || { objects: [] });
 
-          if (data && data.objects) {
+          if (data && data.objects && data.objects.length > 0) {
+            // Check for path objects (freehand drawings, signatures, eraser strokes, highlighters)
+            const pathObjects = data.objects.filter((o: any) => o.type === "path" && o.visible !== false);
+            if (pathObjects.length > 0) {
+              try {
+                const overlayScale = 2.0;
+                const overlayCanvas = document.createElement("canvas");
+                overlayCanvas.width = viewport.width * overlayScale;
+                overlayCanvas.height = viewport.height * overlayScale;
+                const oCtx = overlayCanvas.getContext("2d");
+                if (oCtx) {
+                  oCtx.scale(overlayScale, overlayScale);
+                  for (const pObj of pathObjects) {
+                    if (Array.isArray(pObj.path)) {
+                      oCtx.save();
+                      oCtx.translate(pObj.left || 0, pObj.top || 0);
+                      oCtx.scale(pObj.scaleX || 1, pObj.scaleY || 1);
+                      if (pObj.angle) {
+                        oCtx.rotate((pObj.angle * Math.PI) / 180);
+                      }
+                      oCtx.globalAlpha = pObj.opacity !== undefined ? pObj.opacity : 1;
+                      oCtx.strokeStyle = pObj.stroke || "#000000";
+                      oCtx.lineWidth = pObj.strokeWidth || 1;
+                      oCtx.lineCap = (pObj.strokeLineCap as CanvasLineCap) || "round";
+                      oCtx.lineJoin = (pObj.strokeLineJoin as CanvasLineJoin) || "round";
+                      if (pObj.fill && pObj.fill !== "transparent") {
+                        oCtx.fillStyle = pObj.fill;
+                      }
 
+                      oCtx.beginPath();
+                      for (const cmd of pObj.path) {
+                        const type = cmd[0];
+                        if (type === "M") oCtx.moveTo(cmd[1], cmd[2]);
+                        else if (type === "L") oCtx.lineTo(cmd[1], cmd[2]);
+                        else if (type === "Q") oCtx.quadraticCurveTo(cmd[1], cmd[2], cmd[3], cmd[4]);
+                        else if (type === "C") oCtx.bezierCurveTo(cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6]);
+                        else if (type === "Z") oCtx.closePath();
+                      }
+                      if (pObj.fill && pObj.fill !== "transparent") {
+                        oCtx.fill();
+                      }
+                      if (pObj.stroke && pObj.stroke !== "transparent") {
+                        oCtx.stroke();
+                      }
+                      oCtx.restore();
+                    }
+                  }
+                  const overlayImgBytes = await getImgBytes(overlayCanvas.toDataURL("image/png"));
+                  const overlayEmbedded = await finalPdfDoc.embedPng(overlayImgBytes);
+                  copiedPage.drawImage(overlayEmbedded, {
+                    x: 0,
+                    y: 0,
+                    width: viewport.width,
+                    height: viewport.height,
+                  });
+                }
+              } catch (pathErr) {
+                console.warn("Failed drawing path overlay:", pathErr);
+              }
+            }
+
+            // Draw other Fabric objects: text, images, rects, circles
             for (const obj of data.objects) {
               if (obj.visible === false) continue;
-              
+              if (obj.type === "path") continue; // Handled via high-fidelity overlay
               if (obj.type === "image" && !obj.selectable) continue;
 
               const pdfCoords = viewport.convertToPdfPoint(obj.left, obj.top);
@@ -2684,7 +2948,6 @@ const PdfEditorWorkspace = React.forwardRef(
               const pdfY = pdfCoords[1];
 
               if (obj.type === "i-text" || obj.type === "text") {
-                // User-added I-Text on the Fabric Canvas
                 const textToDraw = obj.text || "";
                 let fontToUse = helveticaFont;
                 const isBold = obj.fontWeight === "bold" || (typeof obj.fontWeight === "number" && obj.fontWeight > 400);
@@ -2710,12 +2973,9 @@ const PdfEditorWorkspace = React.forwardRef(
                 
                 try {
                   const drawFontSize = (obj.fontSize || 16) * (obj.scaleY || 1);
-                  // Fabric I-Text 'top' is the top edge. DrawText expects the bottom edge (baseline)
-                  // So we must add the height. But we are shifting everything to bottom-left with (- obj.height * obj.scaleY).
-                  // pdf-lib drawText places it at the baseline.
                   copiedPage.drawText(textToDraw, {
                     x: pdfX,
-                    y: pdfY - (obj.height * (obj.scaleY || 1)) + ((obj.fontSize || 16) * 0.2), // Adjust for baseline
+                    y: pdfY - (obj.height * (obj.scaleY || 1)) + ((obj.fontSize || 16) * 0.2),
                     size: drawFontSize,
                     font: fontToUse,
                     color: rgb(r, g, b),
@@ -2746,7 +3006,7 @@ const PdfEditorWorkspace = React.forwardRef(
                 } catch (imgErr) {
                   console.error("Failed to process image object for export:", imgErr);
                 }
-              } else if (obj.type === "rect" || obj.type === "path") {
+              } else if (obj.type === "rect") {
                 let rectColor = { r: 1, g: 1, b: 1 };
                 let strokeColor = { r: 0, g: 0, b: 0 };
                 const strokeWidth = obj.strokeWidth || 0;
@@ -2784,8 +3044,7 @@ const PdfEditorWorkspace = React.forwardRef(
                   }
                 }
 
-                if (obj.type === "rect" && obj.visible) {
-                  // If it's a whiteout mask (has isWhiteoutMask in data or strokeDashArray), hide the editing borders in final exported PDF!
+                if (obj.visible) {
                   const isMask = obj.data?.isWhiteoutMask || obj.data?.isLogoWhiteoutMask || obj.data?.isWhiteoutElement || obj.strokeDashArray;
                   const finalBorderColor = isMask ? undefined : (obj.stroke ? rgb(strokeColor.r, strokeColor.g, strokeColor.b) : undefined);
                   const finalBorderWidth = isMask ? 0 : strokeWidth;
@@ -2801,27 +3060,55 @@ const PdfEditorWorkspace = React.forwardRef(
                     borderWidth: finalBorderWidth,
                     opacity: opacity,
                   });
-                } else if (obj.type === "path") {
-                  let pathData = "";
-                  if (Array.isArray(obj.path)) {
-                    pathData = obj.path.map((p: any) => p.join(" ")).join(" ");
-                  }
-                  if (pathData) {
-                    try {
-                      copiedPage.drawSvgPath(pathData, {
-                        x: pdfX,
-                        y: pdfY,
-                        scale: obj.scaleX || 1,
-                        color: obj.fill ? rgb(rectColor.r, rectColor.g, rectColor.b) : undefined,
-                        borderColor: obj.stroke ? rgb(strokeColor.r, strokeColor.g, strokeColor.b) : undefined,
-                        borderWidth: strokeWidth,
-                        opacity: opacity,
-                      });
-                    } catch (e) {
-                      console.warn("Failed to draw SVG path for export", e);
+                }
+              } else if (obj.type === "circle") {
+                let circleColor = { r: 1, g: 1, b: 1 };
+                let strokeColor = { r: 0, g: 0, b: 0 };
+                const strokeWidth = obj.strokeWidth || 0;
+                let opacity = obj.opacity || 1;
+
+                if (obj.fill && typeof obj.fill === "string") {
+                  if (obj.fill.startsWith("rgba")) {
+                    const m = obj.fill.match(/[\d.]+/g);
+                    if (m && m.length >= 4) {
+                      circleColor = { r: Number(m[0]) / 255, g: Number(m[1]) / 255, b: Number(m[2]) / 255 };
+                      opacity = Number(m[3]);
                     }
+                  } else if (obj.fill.startsWith("#")) {
+                    circleColor = {
+                      r: (parseInt(obj.fill.slice(1, 3), 16) || 0) / 255,
+                      g: (parseInt(obj.fill.slice(3, 5), 16) || 0) / 255,
+                      b: (parseInt(obj.fill.slice(5, 7), 16) || 0) / 255,
+                    };
                   }
                 }
+                if (obj.stroke && typeof obj.stroke === "string") {
+                  if (obj.stroke.startsWith("rgba")) {
+                    const m = obj.stroke.match(/[\d.]+/g);
+                    if (m && m.length >= 4) {
+                      strokeColor = { r: Number(m[0]) / 255, g: Number(m[1]) / 255, b: Number(m[2]) / 255 };
+                    }
+                  } else if (obj.stroke.startsWith("#")) {
+                    strokeColor = {
+                      r: (parseInt(obj.stroke.slice(1, 3), 16) || 0) / 255,
+                      g: (parseInt(obj.stroke.slice(3, 5), 16) || 0) / 255,
+                      b: (parseInt(obj.stroke.slice(5, 7), 16) || 0) / 255,
+                    };
+                  }
+                }
+
+                const radius = (obj.radius || 20) * (obj.scaleX || 1);
+                copiedPage.drawEllipse({
+                  x: pdfX + radius,
+                  y: pdfY - radius,
+                  xScale: radius,
+                  yScale: radius * ((obj.scaleY || 1) / (obj.scaleX || 1)),
+                  color: (obj.fill === "transparent" || obj.fill === "rgba(255, 255, 255, 0.01)") 
+                    ? undefined : rgb(circleColor.r, circleColor.g, circleColor.b),
+                  borderColor: obj.stroke ? rgb(strokeColor.r, strokeColor.g, strokeColor.b) : undefined,
+                  borderWidth: strokeWidth,
+                  opacity: opacity,
+                });
               }
             }
           }
@@ -2836,12 +3123,23 @@ const PdfEditorWorkspace = React.forwardRef(
         const blob = new Blob([pdfBytes], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
 
+        // Immediate direct browser download so the user receives their file without delay
+        const baseName = (pdfFile?.name || "document").replace(/\.pdf$/i, "");
+        const downloadName = `edited-${baseName}.pdf`;
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = downloadName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
         confetti({
           particleCount: 150,
           spread: 70,
           origin: { y: 0.6 },
         });
 
+        setState((prev) => ({ ...prev, isProcessing: false }));
         onComplete(url);
       } catch (error) {
         console.error("Export Error:", error);
@@ -3543,47 +3841,86 @@ const PdfEditorWorkspace = React.forwardRef(
         </AnimatePresence>
 
         {state.isPasswordProtected && (
-          <div className="fixed inset-0 bg-white/90 backdrop-blur-xl flex items-center justify-center z-[100]">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="w-full max-w-md bg-white p-10 rounded-[2.5rem] shadow-[0_50px_100px_rgba(0,0,0,0.2)] border border-gray-100 flex flex-col items-center ring-1 ring-black/5"
+              className="w-full max-w-md bg-white p-8 sm:p-10 rounded-[2.5rem] shadow-2xl border border-gray-100 flex flex-col items-center"
             >
-              <div className="w-20 h-20 bg-red-50 text-[#ff4b4b] rounded-3xl flex items-center justify-center mb-8 shadow-inner animate-bounce">
-                <Lock className="w-10 h-10" />
+              <div className="w-16 h-16 sm:w-20 sm:h-20 bg-red-50 text-[#ff4b4b] rounded-3xl flex items-center justify-center mb-6 shadow-inner">
+                <Lock className="w-8 h-8 sm:w-10 sm:h-10 text-[#ff4b4b]" />
               </div>
-              <h2 className="text-2xl font-black text-gray-800 mb-2 uppercase tracking-tight">
-                Encrypted PDF
+              <h2 className="text-xl sm:text-2xl font-black text-gray-800 mb-2 uppercase tracking-tight text-center">
+                Protected PDF File
               </h2>
-              <p className="text-sm font-medium text-gray-400 text-center mb-10 px-6 leading-relaxed">
-                This document is protected by industrial-grade encryption. Enter
-                the administrative password.
+              <p className="text-sm font-medium text-gray-500 text-center mb-6 px-4 leading-relaxed">
+                This PDF is encrypted with a password. Please enter the password to unlock, view, and edit the document.
               </p>
-              <form
-                onSubmit={handlePasswordSubmit}
-                className="w-full space-y-5"
-              >
-                <input
-                  type="password"
-                  value={state.password}
-                  onChange={(e) =>
-                    setState((prev) => ({ ...prev, password: e.target.value }))
-                  }
-                  className="w-full px-6 py-5 bg-gray-50 border border-gray-200 rounded-3xl outline-none focus:ring-8 focus:ring-[#ff4b4b]/5 focus:border-[#ff4b4b] transition-all text-center text-xl font-black tracking-widest placeholder:tracking-normal placeholder:font-bold"
-                  placeholder="••••••••"
-                  autoFocus
-                />
+
+              {passwordError && (
+                <div className="w-full mb-5 p-3.5 bg-red-50 border border-red-200 text-red-600 rounded-2xl text-xs font-bold flex items-center gap-2.5">
+                  <span className="w-2 h-2 rounded-full bg-red-500 shrink-0 animate-ping" />
+                  <span>{passwordError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handlePasswordSubmit} className="w-full space-y-4">
+                <div className="relative w-full">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={state.password}
+                    onChange={(e) => {
+                      setPasswordError("");
+                      setState((prev) => ({ ...prev, password: e.target.value }));
+                    }}
+                    autoComplete="current-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className={`w-full pl-5 pr-12 py-4 bg-gray-50 border ${
+                      passwordError ? "border-red-400 ring-2 ring-red-400/20" : "border-gray-200"
+                    } rounded-2xl outline-none focus:ring-4 focus:ring-[#ff4b4b]/10 focus:border-[#ff4b4b] transition-all text-center text-lg font-bold tracking-widest placeholder:tracking-normal placeholder:font-medium placeholder:text-gray-400`}
+                    placeholder="Enter PDF password"
+                    autoFocus
+                    disabled={isDecrypting}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 p-1 rounded-lg transition-colors cursor-pointer"
+                    title={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-400 text-center font-medium">
+                  Passwords are case-sensitive. Both uppercase and lowercase formats are tested automatically.
+                </p>
+
                 <button
                   type="submit"
-                  className="w-full py-5 bg-[#ff4b4b] text-white rounded-3xl font-black uppercase text-xs tracking-[0.2em] hover:bg-[#e63e3e] transition-all active:scale-[0.97] shadow-2xl shadow-[#ff4b4b]/30"
+                  disabled={isDecrypting || !state.password.trim()}
+                  className="w-full py-4 bg-[#ff4b4b] hover:bg-[#e63e3e] text-white rounded-2xl font-black uppercase text-xs tracking-wider transition-all active:scale-[0.98] shadow-lg shadow-[#ff4b4b]/25 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
                 >
-                  Authenticate & View
+                  {isDecrypting ? (
+                    <>
+                      <Sparkles className="w-4 h-4 animate-spin text-white" />
+                      <span>Unlocking Document...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Unlock className="w-4 h-4" />
+                      <span>Unlock & View PDF</span>
+                    </>
+                  )}
                 </button>
+
                 <button
+                  type="button"
                   onClick={onReset}
-                  className="w-full py-3 text-gray-400 text-[10px] font-black uppercase tracking-[0.3em] hover:text-gray-600 transition-all hover:tracking-[0.4em]"
+                  className="w-full py-2.5 text-gray-400 text-xs font-bold uppercase tracking-wider hover:text-gray-600 transition-colors cursor-pointer"
                 >
-                  Cancel Entry
+                  Cancel & Choose Another File
                 </button>
               </form>
             </motion.div>
