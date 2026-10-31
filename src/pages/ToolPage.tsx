@@ -16,6 +16,7 @@ const WordCounter = lazy(() => import('../tools/WordCounter'));
 const JsonFormatter = lazy(() => import('../tools/JsonFormatter'));
 const AgeCalculator = lazy(() => import('../tools/AgeCalculator'));
 const QrGenerator = lazy(() => import('../tools/QrGenerator'));
+const BarcodeGenerator = lazy(() => import('../tools/BarcodeGenerator'));
 const ImageCompressor = lazy(() => import('../tools/ImageCompressor'));
 const BackgroundRemover = lazy(() => import('../tools/BackgroundRemover'));
 const PassportPhotoMaker = lazy(() => import('../tools/PassportPhotoMaker'));
@@ -109,9 +110,8 @@ export default function ToolPage() {
     if (tool.id === 'word-counter') return <WordCounter />;
     if (tool.id === 'json-formatter-validator') return <JsonFormatter />;
     if (tool.id === 'age-calculator') return <AgeCalculator />;
-    if (tool.id === 'qr-code-generator' || tool.id === 'barcode-generator') {
-      return <QrGenerator initialMode={tool.id === 'barcode-generator' ? 'barcode' : 'qr'} />;
-    }
+    if (tool.id === 'qr-code-generator') return <QrGenerator />;
+    if (tool.id === 'barcode-generator') return <BarcodeGenerator />;
     if (tool.id === 'background-remover') return <BackgroundRemover />;
     if (tool.id === 'passport-photo-maker') return <PassportPhotoMaker />;
     if (tool.id === 'image-compressor') return <ImageCompressor />;

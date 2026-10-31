@@ -1,13 +1,12 @@
 import { useState, useRef, useMemo, useEffect, ChangeEvent } from 'react';
 import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
-import JsBarcode from 'jsbarcode';
 import PrintSheetModal from './PrintSheetModal';
 import { 
   Download, Link as LinkIcon, Type, Phone, Mail, Wifi, MessageSquare, 
   User, MessageCircle, Image as ImageIcon, Settings, Palette, Trash2, 
   CreditCard, ArrowLeftRight, RotateCcw, Check, AlertTriangle, CheckCircle2,
-  Sparkles, Barcode as BarcodeIcon, QrCode, Printer, Zap, Copy, CheckCheck,
-  Sliders, ShieldCheck, Info
+  Sparkles, QrCode, Printer, Zap, Copy, CheckCheck,
+  ShieldCheck
 } from 'lucide-react';
 
 interface ColorPreset {
@@ -43,103 +42,7 @@ const BG_SWATCHES = [
   '#fef2f2', '#faf5ff', '#fff7ed', '#fefce8', '#0f172a'
 ];
 
-type BarcodeFormat = 'CODE128' | 'EAN13' | 'UPC' | 'EAN8' | 'CODE39' | 'ITF14' | 'MSI' | 'pharmacode' | 'codabar';
-
-interface BarcodeFormatMeta {
-  id: BarcodeFormat;
-  name: string;
-  defaultVal: string;
-  description: string;
-  example: string;
-  patternHelp: string;
-}
-
-const BARCODE_FORMATS: BarcodeFormatMeta[] = [
-  { 
-    id: 'CODE128', 
-    name: 'Code 128 (Universal)', 
-    defaultVal: 'LYT-849204-PROD', 
-    description: 'Universal alphanumeric barcode for packaging, inventory, and labels.',
-    example: 'ABC-12345',
-    patternHelp: 'Supports all letters (A-Z, a-z), numbers (0-9), and punctuation.'
-  },
-  { 
-    id: 'EAN13', 
-    name: 'EAN-13 (Global Retail)', 
-    defaultVal: '5901234123457', 
-    description: 'International retail product barcode standard worldwide.',
-    example: '5901234123457',
-    patternHelp: 'Requires 12 or 13 numeric digits. 13th is checksum.'
-  },
-  { 
-    id: 'UPC', 
-    name: 'UPC-A (US Retail)', 
-    defaultVal: '012345678905', 
-    description: 'Standard 12-digit North American retail barcode.',
-    example: '012345678905',
-    patternHelp: 'Requires 11 or 12 numeric digits.'
-  },
-  { 
-    id: 'EAN8', 
-    name: 'EAN-8 (Compact)', 
-    defaultVal: '96385074', 
-    description: 'Compact 8-digit barcode for small packages and sweets.',
-    example: '96385074',
-    patternHelp: 'Requires exactly 7 or 8 numeric digits.'
-  },
-  { 
-    id: 'CODE39', 
-    name: 'Code 39 (Industrial)', 
-    defaultVal: 'CODE39-TEST', 
-    description: 'Widely used in automotive, defense, ID badges, and logistics.',
-    example: 'PART-902',
-    patternHelp: 'Supports uppercase letters, numbers, and symbols: - . $ / + % SPACE'
-  },
-  { 
-    id: 'ITF14', 
-    name: 'ITF-14 (Carton Box)', 
-    defaultVal: '10012345678902', 
-    description: '14-digit shipping carton and master package barcode.',
-    example: '10012345678902',
-    patternHelp: 'Requires exactly 14 numeric digits with even length.'
-  },
-  { 
-    id: 'MSI', 
-    name: 'MSI Plessey', 
-    defaultVal: '12345670', 
-    description: 'Used for warehouse shelf tags and inventory control.',
-    example: '12345670',
-    patternHelp: 'Numbers only (0-9).'
-  },
-  { 
-    id: 'pharmacode', 
-    name: 'Pharmacode', 
-    defaultVal: '12345', 
-    description: 'Used in pharmaceutical packaging and quality control.',
-    example: '12345',
-    patternHelp: 'Integer number between 3 and 131070.'
-  },
-  { 
-    id: 'codabar', 
-    name: 'Codabar', 
-    defaultVal: 'A12345678B', 
-    description: 'Used in libraries, blood banks, and airbills.',
-    example: 'A12345678B',
-    patternHelp: 'Starts and ends with A, B, C, or D; numbers and - $ : / . + inside.'
-  },
-];
-
-export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr' | 'barcode' }) {
-  // Main Generator Mode: QR Code vs Barcode
-  const [activeTab, setActiveTab] = useState<'qr' | 'barcode'>(initialMode);
-
-  // Sync mode if initialMode prop changes
-  useEffect(() => {
-    if (initialMode) {
-      setActiveTab(initialMode);
-    }
-  }, [initialMode]);
-
+export default function QrGenerator() {
   // --- QR Code State ---
   const [type, setType] = useState('url');
   const [value, setValue] = useState('https://loveyoutools.in');
@@ -162,31 +65,9 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
   const qrRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- Barcode State ---
-  const [barcodeFormat, setBarcodeFormat] = useState<BarcodeFormat>('CODE128');
-  const [barcodeValue, setBarcodeValue] = useState('LYT-849204-PROD');
-  const [barcodeFgColor, setBarcodeFgColor] = useState('#000000');
-  const [barcodeBgColor, setBarcodeBgColor] = useState('#ffffff');
-  const [barcodeIsTransparentBg, setBarcodeIsTransparentBg] = useState(false);
-  const [barcodeBarWidth, setBarcodeBarWidth] = useState(2);
-  const [barcodeHeight, setBarcodeHeight] = useState(80);
-  const [barcodeMargin, setBarcodeMargin] = useState(10);
-  const [barcodeDisplayValue, setBarcodeDisplayValue] = useState(true);
-  const [barcodeCustomText, setBarcodeCustomText] = useState('');
-  const [barcodeFont, setBarcodeFont] = useState('monospace');
-  const [barcodeFontSize, setBarcodeFontSize] = useState(16);
-  const [barcodeFontOptions, setBarcodeFontOptions] = useState<'bold' | ''>('bold');
-  const [barcodeTextAlign, setBarcodeTextAlign] = useState<'center' | 'left' | 'right'>('center');
-  const [barcodeTextPosition, setBarcodeTextPosition] = useState<'bottom' | 'top'>('bottom');
-  const [barcodeError, setBarcodeError] = useState<string | null>(null);
-  const [barcodeDownloadFormat, setBarcodeDownloadFormat] = useState<'png' | 'svg' | 'jpeg'>('png');
-
-  const barcodeSvgRef = useRef<SVGSVGElement | null>(null);
-
   // Print Sheet Modal State (Multiple copies across different paper sizes)
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printModalItemImage, setPrintModalItemImage] = useState<string>('');
-  const [printModalType, setPrintModalType] = useState<'qr' | 'barcode'>('qr');
 
   // Automatically switch QR error correction to H if a logo is added (to ensure data recovery),
   // and back to M if logo is cleared (for fastest scanning).
@@ -294,83 +175,6 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
 
   const effectiveBgColor = isTransparentBg ? 'rgba(0, 0, 0, 0)' : bgColor;
 
-  // --- Render Barcode on SVG with JsBarcode ---
-  useEffect(() => {
-    if (activeTab === 'barcode' && barcodeSvgRef.current) {
-      try {
-        const effectiveBarcodeBg = barcodeIsTransparentBg ? 'transparent' : barcodeBgColor;
-        JsBarcode(barcodeSvgRef.current, barcodeValue || ' ', {
-          format: barcodeFormat,
-          lineColor: barcodeFgColor,
-          background: effectiveBarcodeBg,
-          width: barcodeBarWidth,
-          height: barcodeHeight,
-          displayValue: barcodeDisplayValue,
-          text: barcodeCustomText.trim() ? barcodeCustomText : undefined,
-          fontOptions: barcodeFontOptions,
-          font: barcodeFont,
-          textAlign: barcodeTextAlign,
-          textPosition: barcodeTextPosition,
-          textMargin: 4,
-          fontSize: barcodeFontSize,
-          margin: barcodeMargin,
-          valid: (valid: boolean) => {
-            if (!valid) {
-              setBarcodeError('Invalid barcode data format');
-            } else {
-              setBarcodeError(null);
-            }
-          }
-        });
-        setBarcodeError(null);
-      } catch (err: any) {
-        setBarcodeError(err?.message || 'Invalid barcode format for this data');
-      }
-    }
-  }, [
-    activeTab,
-    barcodeFormat, 
-    barcodeValue, 
-    barcodeFgColor, 
-    barcodeBgColor, 
-    barcodeIsTransparentBg,
-    barcodeBarWidth, 
-    barcodeHeight, 
-    barcodeMargin, 
-    barcodeDisplayValue, 
-    barcodeCustomText, 
-    barcodeFont, 
-    barcodeFontSize, 
-    barcodeFontOptions, 
-    barcodeTextAlign, 
-    barcodeTextPosition
-  ]);
-
-  // Switch Barcode format and load clean default value
-  const handleBarcodeFormatChange = (fmt: BarcodeFormat) => {
-    setBarcodeFormat(fmt);
-    const meta = BARCODE_FORMATS.find(f => f.id === fmt);
-    if (meta) {
-      setBarcodeValue(meta.defaultVal);
-    }
-  };
-
-  // Helper to auto-calculate EAN-13 / UPC Check Digit
-  const handleAutoFixEan13 = () => {
-    const raw = barcodeValue.replace(/\D/g, '');
-    if (raw.length === 12 || raw.length === 13) {
-      const base12 = raw.substring(0, 12);
-      let sum = 0;
-      for (let i = 0; i < 12; i++) {
-        const digit = parseInt(base12[i], 10);
-        sum += (i % 2 === 0) ? digit : digit * 3;
-      }
-      const checkDigit = (10 - (sum % 10)) % 10;
-      setBarcodeValue(base12 + checkDigit.toString());
-      setBarcodeError(null);
-    }
-  };
-
   // Download QR Code
   const handleDownloadQr = () => {
     if (!qrRef.current) return;
@@ -420,191 +224,56 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
     }
   };
 
-  // Download Barcode
-  const handleDownloadBarcode = () => {
-    if (!barcodeSvgRef.current) return;
-
-    if (barcodeDownloadFormat === 'svg') {
-      const svgData = new XMLSerializer().serializeToString(barcodeSvgRef.current);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const svgUrl = URL.createObjectURL(svgBlob);
-      const a = document.createElement('a');
-      a.href = svgUrl;
-      a.download = `barcode-${barcodeFormat.toLowerCase()}-${Date.now()}.svg`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(svgUrl), 1000);
-    } else {
-      // Export as PNG or JPEG
-      const svgElement = barcodeSvgRef.current;
-      const svgData = new XMLSerializer().serializeToString(svgElement);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const URL_OBJ = window.URL || window.webkitURL || window;
-      const blobURL = URL_OBJ.createObjectURL(svgBlob);
-      
-      const image = new Image();
-      image.onload = () => {
-        const scale = 2; // High-DPI 300 DPI for thermal printing
-        const canvas = document.createElement('canvas');
-        canvas.width = image.width * scale;
-        canvas.height = image.height * scale;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        ctx.imageSmoothingEnabled = false;
-
-        if (barcodeDownloadFormat === 'jpeg' || !barcodeIsTransparentBg) {
-          ctx.fillStyle = barcodeBgColor;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-
-        ctx.scale(scale, scale);
-        ctx.drawImage(image, 0, 0);
-
-        const mime = barcodeDownloadFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
-        const dataUrl = canvas.toDataURL(mime, 0.98);
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        a.download = `barcode-${barcodeFormat.toLowerCase()}-${Date.now()}.${barcodeDownloadFormat}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL_OBJ.revokeObjectURL(blobURL);
-      };
-      image.src = blobURL;
-    }
-  };
-
-  // Print Barcode Label
-  const handlePrintBarcode = () => {
-    if (!barcodeSvgRef.current) return;
-    const svgData = new XMLSerializer().serializeToString(barcodeSvgRef.current);
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Print Barcode - ${barcodeValue}</title>
-          <style>
-            body {
-              margin: 0;
-              padding: 20px;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              font-family: system-ui, sans-serif;
-            }
-            .barcode-box {
-              text-align: center;
-              padding: 10px;
-            }
-            @media print {
-              body { padding: 0; }
-              @page { margin: 5mm; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="barcode-box">
-            ${svgData}
-          </div>
-          <script>
-            window.onload = function() {
-              window.print();
-              window.onafterprint = function() { window.close(); }
-            }
-          </script>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
-  };
-
   // Open Multi-Copy Sheet Printing Modal (Supports A4, Letter, Stickers, Custom Paper Sizes)
-  const handleOpenPrintSheet = (type: 'qr' | 'barcode') => {
-    setPrintModalType(type);
-    if (type === 'qr') {
-      if (!qrRef.current) return;
-      const canvas = qrRef.current.querySelector('canvas');
-      if (canvas) {
-        const highResCanvas = document.createElement('canvas');
-        const exportSize = Math.max(size, 600);
-        highResCanvas.width = exportSize;
-        highResCanvas.height = exportSize;
-        const ctx = highResCanvas.getContext('2d');
-        if (ctx) {
-          ctx.imageSmoothingEnabled = false;
-          if (!isTransparentBg) {
-            ctx.fillStyle = bgColor;
-            ctx.fillRect(0, 0, exportSize, exportSize);
-          }
-          ctx.drawImage(canvas, 0, 0, exportSize, exportSize);
-          setPrintModalItemImage(highResCanvas.toDataURL('image/png'));
-        } else {
-          setPrintModalItemImage(canvas.toDataURL('image/png'));
+  const handleOpenPrintSheet = () => {
+    if (!qrRef.current) return;
+    const canvas = qrRef.current.querySelector('canvas');
+    if (canvas) {
+      const highResCanvas = document.createElement('canvas');
+      const exportSize = Math.max(size, 600);
+      highResCanvas.width = exportSize;
+      highResCanvas.height = exportSize;
+      const ctx = highResCanvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = false;
+        if (!isTransparentBg) {
+          ctx.fillStyle = bgColor;
+          ctx.fillRect(0, 0, exportSize, exportSize);
         }
-        setPrintModalOpen(true);
+        ctx.drawImage(canvas, 0, 0, exportSize, exportSize);
+        setPrintModalItemImage(highResCanvas.toDataURL('image/png'));
       } else {
-        const svg = qrRef.current.querySelector('svg');
-        if (svg) {
-          const svgData = new XMLSerializer().serializeToString(svg);
-          const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-          const url = URL.createObjectURL(svgBlob);
-          const img = new Image();
-          img.onload = () => {
-            const off = document.createElement('canvas');
-            off.width = 600;
-            off.height = 600;
-            const ctx = off.getContext('2d');
-            if (ctx) {
-              ctx.imageSmoothingEnabled = false;
-              if (!isTransparentBg) {
-                ctx.fillStyle = bgColor;
-                ctx.fillRect(0, 0, 600, 600);
-              }
-              ctx.drawImage(img, 0, 0, 600, 600);
-              setPrintModalItemImage(off.toDataURL('image/png'));
-            } else {
-              setPrintModalItemImage(url);
-            }
-            URL.revokeObjectURL(url);
-            setPrintModalOpen(true);
-          };
-          img.src = url;
-        }
+        setPrintModalItemImage(canvas.toDataURL('image/png'));
       }
+      setPrintModalOpen(true);
     } else {
-      if (!barcodeSvgRef.current) return;
-      const svg = barcodeSvgRef.current;
-      const svgData = new XMLSerializer().serializeToString(svg);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(svgBlob);
-      const img = new Image();
-      img.onload = () => {
-        const scale = 3;
-        const off = document.createElement('canvas');
-        off.width = (img.width || 400) * scale;
-        off.height = (img.height || 120) * scale;
-        const ctx = off.getContext('2d');
-        if (ctx) {
-          ctx.imageSmoothingEnabled = false;
-          if (!barcodeIsTransparentBg) {
-            ctx.fillStyle = barcodeBgColor;
-            ctx.fillRect(0, 0, off.width, off.height);
+      const svg = qrRef.current.querySelector('svg');
+      if (svg) {
+        const svgData = new XMLSerializer().serializeToString(svg);
+        const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+        const img = new Image();
+        img.onload = () => {
+          const off = document.createElement('canvas');
+          off.width = 600;
+          off.height = 600;
+          const ctx = off.getContext('2d');
+          if (ctx) {
+            ctx.imageSmoothingEnabled = false;
+            if (!isTransparentBg) {
+              ctx.fillStyle = bgColor;
+              ctx.fillRect(0, 0, 600, 600);
+            }
+            ctx.drawImage(img, 0, 0, 600, 600);
+            setPrintModalItemImage(off.toDataURL('image/png'));
+          } else {
+            setPrintModalItemImage(url);
           }
-          ctx.drawImage(img, 0, 0, off.width, off.height);
-          setPrintModalItemImage(off.toDataURL('image/png'));
-        } else {
-          setPrintModalItemImage(url);
-        }
-        URL.revokeObjectURL(url);
-        setPrintModalOpen(true);
-      };
-      img.src = url;
+          URL.revokeObjectURL(url);
+          setPrintModalOpen(true);
+        };
+        img.src = url;
+      }
     }
   };
 
@@ -899,53 +568,26 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
     }
   };
 
-  const currentBarcodeMeta = useMemo(() => {
-    return BARCODE_FORMATS.find(f => f.id === barcodeFormat) || BARCODE_FORMATS[0];
-  }, [barcodeFormat]);
-
   return (
     <div className="tool-layout-container">
       {/* Left Controls (Sidebar) */}
       <aside className="tool-sidebar">
-        {/* Top Segmented Mode Switcher: QR Code vs Barcode */}
-        <div className="p-3 bg-surface border-b border-border">
-          <div className="flex p-1 bg-bg-secondary rounded-2xl border border-border">
-            <button
-              type="button"
-              onClick={() => setActiveTab('qr')}
-              className={`flex-1 py-2 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 ${
-                activeTab === 'qr'
-                  ? 'bg-accent text-white shadow-md'
-                  : 'text-text-muted hover:text-text-primary hover:bg-surface/50'
-              }`}
-            >
+        <div className="sidebar-header p-4 border-b border-border flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent">
               <QrCode className="w-4 h-4" />
-              <span>QR Code</span>
-              <span className="hidden sm:inline-block px-1.5 py-0.2 rounded-full text-[9px] bg-white/20 font-black">
-                Fast
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('barcode')}
-              className={`flex-1 py-2 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 ${
-                activeTab === 'barcode'
-                  ? 'bg-accent text-white shadow-md'
-                  : 'text-text-muted hover:text-text-primary hover:bg-surface/50'
-              }`}
-            >
-              <BarcodeIcon className="w-4 h-4" />
-              <span>Barcode</span>
-              <span className="hidden sm:inline-block px-1.5 py-0.2 rounded-full text-[9px] bg-white/20 font-black">
-                1D
-              </span>
-            </button>
+            </div>
+            <div>
+              <h2 className="text-sm font-black tracking-tight">QR Code Generator</h2>
+              <p className="text-[10px] text-text-muted">Instant scannable QR code generator</p>
+            </div>
           </div>
+          <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold border border-emerald-500/20">
+            Ultra-Fast
+          </span>
         </div>
 
-        {/* Tab 1: QR CODE GENERATOR CONTROLS */}
-        {activeTab === 'qr' && (
-          <div className="sidebar-content custom-scrollbar p-6 space-y-6">
+        <div className="sidebar-content custom-scrollbar p-6 space-y-6">
             {/* 1-Click Fast Scan Optimizer Banner */}
             <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-blue-500/10 border border-emerald-500/25 relative overflow-hidden">
               <div className="flex items-center justify-between gap-2">
@@ -1372,372 +1014,34 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
               </div>
             </div>
           </div>
-        )}
-
-        {/* Tab 2: BARCODE GENERATOR CONTROLS */}
-        {activeTab === 'barcode' && (
-          <div className="sidebar-content custom-scrollbar p-6 space-y-6">
-            {/* Barcode Type & Format Selector */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-black text-[10px] uppercase tracking-widest flex items-center gap-2 text-text-muted">
-                  <BarcodeIcon className="w-4 h-4 text-accent" /> 1D Barcode Symbology
-                </h3>
-                <span className="text-[9px] px-2 py-0.5 rounded-full bg-accent/10 text-accent font-bold">
-                  {currentBarcodeMeta.name.split(' ')[0]}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 gap-1.5 max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
-                {BARCODE_FORMATS.map((fmt) => (
-                  <button
-                    key={fmt.id}
-                    type="button"
-                    onClick={() => handleBarcodeFormatChange(fmt.id)}
-                    className={`p-2.5 rounded-xl border text-left transition-all flex items-center justify-between gap-2 ${
-                      barcodeFormat === fmt.id
-                        ? 'border-accent bg-accent/5 ring-1 ring-accent text-text-primary'
-                        : 'border-border bg-surface hover:border-accent/40 text-text-secondary'
-                    }`}
-                  >
-                    <div>
-                      <div className="text-xs font-bold">{fmt.name}</div>
-                      <div className="text-[10px] text-text-muted line-clamp-1">{fmt.description}</div>
-                    </div>
-                    {barcodeFormat === fmt.id && <Check className="w-4 h-4 text-accent shrink-0" />}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Barcode Data Input */}
-            <div className="pt-4 border-t border-border space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-text-secondary flex items-center gap-1.5">
-                  <Type className="w-3.5 h-3.5 text-accent" /> Barcode Value
-                </label>
-                {(barcodeFormat === 'EAN13' || barcodeFormat === 'UPC') && (
-                  <button
-                    type="button"
-                    onClick={handleAutoFixEan13}
-                    className="text-[10px] font-bold text-accent hover:underline flex items-center gap-1"
-                  >
-                    <Sparkles className="w-3 h-3" /> Auto Check Digit
-                  </button>
-                )}
-              </div>
-
-              <input
-                type="text"
-                className="fi font-mono text-sm tracking-wider"
-                value={barcodeValue}
-                onChange={(e) => setBarcodeValue(e.target.value)}
-                placeholder={currentBarcodeMeta.example}
-              />
-
-              {barcodeError ? (
-                <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold block">Barcode Format Issue</span>
-                    <span className="text-[10px] opacity-90">{currentBarcodeMeta.patternHelp}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-2 rounded-xl bg-bg-secondary text-[10px] text-text-muted flex items-center gap-1.5">
-                  <Info className="w-3.5 h-3.5 text-text-muted shrink-0" />
-                  <span>{currentBarcodeMeta.patternHelp}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Barcode Style Customisation */}
-            <div className="pt-4 border-t border-border space-y-4">
-              <h3 className="font-black text-[10px] uppercase tracking-widest flex items-center gap-2 text-text-muted">
-                <Sliders className="w-4 h-4 text-accent" /> Barcode Dimensions
-              </h3>
-
-              {/* Bar Width */}
-              <div className="fg">
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-bold text-text-secondary">Bar Width: {barcodeBarWidth}px</label>
-                  <span className="text-[10px] text-text-muted">{barcodeBarWidth === 2 ? 'Recommended' : ''}</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="1" max="4" step="1" 
-                  value={barcodeBarWidth} 
-                  onChange={(e) => setBarcodeBarWidth(Number(e.target.value))}
-                  className="w-full accent-accent"
-                />
-              </div>
-
-              {/* Bar Height */}
-              <div className="fg">
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-bold text-text-secondary">Height: {barcodeHeight}px</label>
-                </div>
-                <input 
-                  type="range" 
-                  min="30" max="160" step="5" 
-                  value={barcodeHeight} 
-                  onChange={(e) => setBarcodeHeight(Number(e.target.value))}
-                  className="w-full accent-accent"
-                />
-              </div>
-
-              {/* Quiet Margin */}
-              <div className="fg">
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-bold text-text-secondary">Margin: {barcodeMargin}px</label>
-                </div>
-                <input 
-                  type="range" 
-                  min="0" max="30" step="2" 
-                  value={barcodeMargin} 
-                  onChange={(e) => setBarcodeMargin(Number(e.target.value))}
-                  className="w-full accent-accent"
-                />
-              </div>
-            </div>
-
-            {/* Human Readable Text Label Controls */}
-            <div className="pt-4 border-t border-border space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-bold text-text-secondary block">Display Human-Readable Text</span>
-                  <span className="text-[10px] text-text-muted">Print numbers / labels beneath bars</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setBarcodeDisplayValue(!barcodeDisplayValue)}
-                  className={`relative w-10 h-5 rounded-full transition-colors ${barcodeDisplayValue ? 'bg-accent' : 'bg-border'}`}
-                >
-                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${barcodeDisplayValue ? 'translate-x-5' : ''}`} />
-                </button>
-              </div>
-
-              {barcodeDisplayValue && (
-                <div className="space-y-3 pt-2">
-                  <div className="fg">
-                    <label className="fl">Custom Label Text (Optional)</label>
-                    <input
-                      type="text"
-                      className="fi text-xs"
-                      value={barcodeCustomText}
-                      onChange={(e) => setBarcodeCustomText(e.target.value)}
-                      placeholder="Leave blank to show barcode number"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="fg">
-                      <label className="fl">Text Position</label>
-                      <div className="flex gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setBarcodeTextPosition('bottom')}
-                          className={`flex-1 py-1 rounded-lg border text-xs font-bold ${barcodeTextPosition === 'bottom' ? 'bg-accent text-white border-accent' : 'border-border'}`}
-                        >
-                          Bottom
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setBarcodeTextPosition('top')}
-                          className={`flex-1 py-1 rounded-lg border text-xs font-bold ${barcodeTextPosition === 'top' ? 'bg-accent text-white border-accent' : 'border-border'}`}
-                        >
-                          Top
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="fg">
-                      <label className="fl">Text Style</label>
-                      <div className="flex gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setBarcodeFontOptions(barcodeFontOptions === 'bold' ? '' : 'bold')}
-                          className={`flex-1 py-1 rounded-lg border text-xs font-bold ${barcodeFontOptions === 'bold' ? 'bg-accent text-white border-accent' : 'border-border'}`}
-                        >
-                          Bold
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setBarcodeFont(barcodeFont === 'monospace' ? 'sans-serif' : 'monospace')}
-                          className="flex-1 py-1 rounded-lg border text-xs font-bold border-border hover:bg-bg-secondary"
-                        >
-                          {barcodeFont === 'monospace' ? 'Mono' : 'Sans'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    <div className="fg">
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="fl text-[11px] mb-0">Font Size: {barcodeFontSize}px</label>
-                      </div>
-                      <input 
-                        type="range" 
-                        min="10" max="28" step="1" 
-                        value={barcodeFontSize} 
-                        onChange={(e) => setBarcodeFontSize(Number(e.target.value))}
-                        className="w-full accent-accent"
-                      />
-                    </div>
-                    <div className="fg">
-                      <label className="fl text-[11px] mb-1">Alignment</label>
-                      <div className="flex gap-1">
-                        {(['left', 'center', 'right'] as const).map((align) => (
-                          <button
-                            key={align}
-                            type="button"
-                            onClick={() => setBarcodeTextAlign(align)}
-                            className={`flex-1 py-1 rounded-lg border text-[11px] font-bold capitalize transition-colors ${barcodeTextAlign === align ? 'bg-accent text-white border-accent' : 'border-border text-text-secondary hover:bg-bg-secondary'}`}
-                          >
-                            {align}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Barcode Color Customisation */}
-            <div className="pt-4 border-t border-border space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="font-black text-[10px] uppercase tracking-widest flex items-center gap-2 text-text-muted">
-                  <Palette className="w-4 h-4 text-accent" /> Barcode Colors
-                </h3>
-                <label className="flex items-center gap-1 text-[11px] font-bold text-accent cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={barcodeIsTransparentBg}
-                    onChange={(e) => setBarcodeIsTransparentBg(e.target.checked)}
-                    className="rounded text-accent focus:ring-0"
-                  />
-                  Transparent BG
-                </label>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className="p-2.5 bg-bg-secondary/40 rounded-xl border border-border">
-                  <label className="text-[10px] font-bold text-text-muted block mb-1">Bar Color</label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="color"
-                      value={barcodeFgColor}
-                      onChange={(e) => setBarcodeFgColor(e.target.value)}
-                      className="w-7 h-7 p-0.5 rounded border border-border cursor-pointer bg-surface"
-                    />
-                    <input
-                      type="text"
-                      value={barcodeFgColor}
-                      onChange={(e) => setBarcodeFgColor(e.target.value)}
-                      className="fi text-xs font-mono py-1 px-1.5 flex-1"
-                    />
-                  </div>
-                </div>
-
-                <div className="p-2.5 bg-bg-secondary/40 rounded-xl border border-border">
-                  <label className="text-[10px] font-bold text-text-muted block mb-1">Background</label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="color"
-                      disabled={barcodeIsTransparentBg}
-                      value={barcodeBgColor}
-                      onChange={(e) => setBarcodeBgColor(e.target.value)}
-                      className="w-7 h-7 p-0.5 rounded border border-border cursor-pointer bg-surface disabled:opacity-40"
-                    />
-                    <input
-                      type="text"
-                      disabled={barcodeIsTransparentBg}
-                      value={barcodeIsTransparentBg ? 'Transparent' : barcodeBgColor}
-                      onChange={(e) => setBarcodeBgColor(e.target.value)}
-                      className="fi text-xs font-mono py-1 px-1.5 flex-1 disabled:opacity-50"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Sidebar Bottom Actions (Download & Print) */}
         <div className="sidebar-actions p-4 border-t border-border bg-surface flex flex-col gap-2">
-          {activeTab === 'qr' ? (
-            <>
-              <div className="flex gap-2">
-                {(['png', 'svg', 'jpeg'] as const).map((fmt) => (
-                  <button 
-                    key={fmt}
-                    onClick={() => setDownloadFormat(fmt)} 
-                    className={`flex-1 py-1.5 rounded-xl border font-bold text-xs uppercase transition-all ${
-                      downloadFormat === fmt ? 'bg-accent text-white border-accent shadow-xs' : 'border-border hover:bg-bg-secondary text-text-secondary'
-                    }`}
-                  >
-                    {fmt}
-                  </button>
-                ))}
-              </div>
+          <div className="flex gap-2">
+            {(["png", "svg", "jpeg"] as const).map((fmt) => (
               <button 
-                onClick={handleDownloadQr} 
-                className="btn bp gap-2 w-full py-3 text-xs font-black uppercase tracking-widest shadow-lg shadow-accent/20 cursor-pointer"
+                key={fmt}
+                onClick={() => setDownloadFormat(fmt)} 
+                className={`flex-1 py-1.5 rounded-xl border font-bold text-xs uppercase transition-all ${
+                  downloadFormat === fmt ? "bg-accent text-white border-accent shadow-xs" : "border-border hover:bg-bg-secondary text-text-secondary"
+                }`}
               >
-                <Download className="w-4 h-4" /> Download QR Code ({downloadFormat.toUpperCase()})
+                {fmt}
               </button>
-              <button
-                type="button"
-                onClick={() => handleOpenPrintSheet('qr')}
-                className="btn bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 gap-2 w-full py-2.5 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center"
-              >
-                <Printer className="w-4 h-4" /> Print Multiple Copies / Sheet
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="flex gap-2">
-                {(['png', 'svg', 'jpeg'] as const).map((fmt) => (
-                  <button 
-                    key={fmt}
-                    onClick={() => setBarcodeDownloadFormat(fmt)} 
-                    className={`flex-1 py-1.5 rounded-xl border font-bold text-xs uppercase transition-all ${
-                      barcodeDownloadFormat === fmt ? 'bg-accent text-white border-accent shadow-xs' : 'border-border hover:bg-bg-secondary text-text-secondary'
-                    }`}
-                  >
-                    {fmt}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <button 
-                  onClick={handleDownloadBarcode} 
-                  disabled={!!barcodeError}
-                  className="btn bp gap-2 flex-1 py-3 text-xs font-black uppercase tracking-wider shadow-lg shadow-accent/20 cursor-pointer disabled:opacity-50"
-                >
-                  <Download className="w-4 h-4" /> Download Barcode
-                </button>
-                <button
-                  onClick={handlePrintBarcode}
-                  disabled={!!barcodeError}
-                  title="Quick Print Label"
-                  className="p-3 rounded-xl border border-border bg-surface hover:bg-bg-secondary transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <Printer className="w-4 h-4 text-text-secondary" />
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleOpenPrintSheet('barcode')}
-                disabled={!!barcodeError}
-                className="btn bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 gap-2 w-full py-2 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center"
-              >
-                <Printer className="w-4 h-4" /> Print Multiple Barcodes / Sheet
-              </button>
-            </>
-          )}
+            ))}
+          </div>
+          <button 
+            onClick={handleDownloadQr} 
+            className="btn bp gap-2 w-full py-3 text-xs font-black uppercase tracking-widest shadow-lg shadow-accent/20 cursor-pointer"
+          >
+            <Download className="w-4 h-4" /> Download QR Code ({downloadFormat.toUpperCase()})
+          </button>
+          <button
+            type="button"
+            onClick={handleOpenPrintSheet}
+            className="btn bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 gap-2 w-full py-2.5 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center"
+          >
+            <Printer className="w-4 h-4" /> Print Multiple Copies / Sheet
+          </button>
         </div>
       </aside>
 
@@ -1750,24 +1054,15 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
             <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none z-10">
               <div className="flex items-center gap-2 pointer-events-auto">
                 <span className="px-3 py-1 rounded-full bg-surface/90 backdrop-blur-sm border border-border text-xs font-bold text-text-primary shadow-2xs flex items-center gap-1.5">
-                  {activeTab === 'qr' ? (
-                    <>
-                      <QrCode className="w-3.5 h-3.5 text-accent" />
-                      <span>QR Code Preview</span>
-                    </>
-                  ) : (
-                    <>
-                      <BarcodeIcon className="w-3.5 h-3.5 text-accent" />
-                      <span>{currentBarcodeMeta.name}</span>
-                    </>
-                  )}
+                  <QrCode className="w-3.5 h-3.5 text-accent" />
+                  <span>QR Code Preview</span>
                 </span>
               </div>
 
               <div className="flex items-center gap-2 pointer-events-auto">
                 <button
                   type="button"
-                  onClick={() => handleOpenPrintSheet(activeTab)}
+                  onClick={handleOpenPrintSheet}
                   className="px-3 py-1 rounded-full bg-surface/90 hover:bg-surface border border-border text-text-primary font-bold text-[11px] shadow-xs transition-all flex items-center gap-1.5 cursor-pointer hover:border-accent"
                   title="Print multiple copies on A4, Letter, Stickers, etc."
                 >
@@ -1775,20 +1070,17 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
                   <span>Print Copies</span>
                 </button>
 
-                {activeTab === 'qr' && (
-                  <button
-                    onClick={handleOptimizeFastScan}
-                    className="px-3 py-1 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white font-black text-[10px] uppercase tracking-wider shadow-xs transition-all flex items-center gap-1 cursor-pointer"
-                  >
-                    <Zap className="w-3 h-3" /> Ultra-Fast Scan
-                  </button>
-                )}
+                <button
+                  onClick={handleOptimizeFastScan}
+                  className="px-3 py-1 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white font-black text-[10px] uppercase tracking-wider shadow-xs transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <Zap className="w-3 h-3" /> Ultra-Fast Scan
+                </button>
               </div>
             </div>
 
             {/* PREVIEW CONTAINER */}
-            {activeTab === 'qr' ? (
-              <div 
+            <div 
                 ref={qrRef} 
                 className="p-6 rounded-2xl shadow-xl transition-all flex items-center justify-center relative overflow-hidden"
                 style={{ 
@@ -1834,79 +1126,39 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
                   />
                 )}
               </div>
-            ) : (
-              /* BARCODE PREVIEW */
-              <div 
-                className="p-8 rounded-2xl shadow-xl transition-all flex flex-col items-center justify-center relative overflow-hidden max-w-full"
-                style={{ 
-                  backgroundColor: barcodeIsTransparentBg ? 'transparent' : barcodeBgColor,
-                  backgroundImage: barcodeIsTransparentBg ? 'repeating-conic-gradient(#cbd5e1 0% 25%, transparent 0% 50%) 50% / 16px 16px' : 'none'
-                }}
-              >
-                <div className="overflow-x-auto max-w-full flex justify-center custom-scrollbar">
-                  <svg ref={barcodeSvgRef} className="max-w-full h-auto" />
-                </div>
-                {barcodeError && (
-                  <div className="mt-3 text-xs text-rose-500 font-bold bg-rose-500/10 px-3 py-1.5 rounded-lg border border-rose-500/20 text-center">
-                    {barcodeError}
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Badges / Diagnostics bar */}
             <div className="flex flex-wrap items-center justify-center gap-2 mt-6 text-xs">
-              {activeTab === 'qr' ? (
-                <>
-                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface border border-border shadow-2xs font-mono text-[11px]">
-                    <span className="w-2.5 h-2.5 rounded-full border border-black/20" style={{ backgroundColor: fgColor }} />
-                    <span>FG: {fgColor.toUpperCase()}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface border border-border shadow-2xs font-mono text-[11px]">
-                    <span className="w-2.5 h-2.5 rounded-full border border-black/20" style={{ backgroundColor: isTransparentBg ? 'transparent' : bgColor }} />
-                    <span>BG: {isTransparentBg ? 'TRANSPARENT' : bgColor.toUpperCase()}</span>
-                  </div>
-                  <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-bold text-[10px] border border-emerald-500/20">
-                    Quiet Zone: {includeMargin ? `${marginSize} modules` : 'None'}
-                  </span>
-                  <span className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-700 dark:text-blue-300 font-bold text-[10px] border border-blue-500/20">
-                    Recovery: Level {level}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface border border-border shadow-2xs font-mono text-[11px]">
-                    <span>Format: {currentBarcodeMeta.name}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface border border-border shadow-2xs font-mono text-[11px]">
-                    <span>Length: {barcodeValue.length} chars</span>
-                  </div>
-                  <button
-                    onClick={handlePrintBarcode}
-                    className="px-2.5 py-1 rounded-full bg-accent/10 text-accent font-bold text-[10px] border border-accent/20 hover:bg-accent/20 transition-colors flex items-center gap-1 cursor-pointer"
-                  >
-                    <Printer className="w-3 h-3" /> Thermal Label Ready
-                  </button>
-                </>
-              )}
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface border border-border shadow-2xs font-mono text-[11px]">
+                <span className="w-2.5 h-2.5 rounded-full border border-black/20" style={{ backgroundColor: fgColor }} />
+                <span>FG: {fgColor.toUpperCase()}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface border border-border shadow-2xs font-mono text-[11px]">
+                <span className="w-2.5 h-2.5 rounded-full border border-black/20" style={{ backgroundColor: isTransparentBg ? "transparent" : bgColor }} />
+                <span>BG: {isTransparentBg ? "TRANSPARENT" : bgColor.toUpperCase()}</span>
+              </div>
+              <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-bold text-[10px] border border-emerald-500/20">
+                Quiet Zone: {includeMargin ? `${marginSize} modules` : "None"}
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-700 dark:text-blue-300 font-bold text-[10px] border border-blue-500/20">
+                Recovery: Level {level}
+              </span>
             </div>
 
-            {/* Slider control: Size for QR or Barcode */}
-            {activeTab === 'qr' && (
-              <div className="mt-6 w-full max-w-md bg-surface p-4 rounded-xl border border-border shadow-sm">
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-bold text-text-secondary">QR Code Size: {size}px</label>
-                  <span className="text-[10px] text-text-muted">High-Res Pixel Snap</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="160" max="600" step="20" 
-                  value={size} 
-                  onChange={(e) => setSize(Number(e.target.value))}
-                  className="w-full accent-accent"
-                />
+            {/* Slider control: Size for QR */}
+            <div className="mt-6 w-full max-w-md bg-surface p-4 rounded-xl border border-border shadow-sm">
+              <div className="flex justify-between items-center mb-1">
+                <label className="text-xs font-bold text-text-secondary">QR Code Size: {size}px</label>
+                <span className="text-[10px] text-text-muted">High-Res Pixel Snap</span>
               </div>
-            )}
+              <input 
+                type="range" 
+                min="160" max="600" step="20" 
+                value={size} 
+                onChange={(e) => setSize(Number(e.target.value))}
+                className="w-full accent-accent"
+              />
+            </div>
 
             {/* Test Scanner Payload Inspector */}
             <div className="mt-4 w-full max-w-md bg-surface p-3 rounded-xl border border-border shadow-2xs">
@@ -1921,11 +1173,11 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
                   className="text-[10px] font-bold text-accent hover:underline flex items-center gap-1"
                 >
                   {copiedPayload ? <CheckCheck className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                  {copiedPayload ? 'Copied' : 'Copy'}
+                  {copiedPayload ? "Copied" : "Copy"}
                 </button>
               </div>
               <div className="p-2 rounded-lg bg-bg-secondary text-[11px] font-mono text-text-secondary break-all max-h-16 overflow-y-auto custom-scrollbar">
-                {activeTab === 'qr' ? (value || '<Empty>') : (barcodeValue || '<Empty>')}
+                {value || "<Empty>"}
               </div>
             </div>
           </div>
@@ -1936,10 +1188,10 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
       <PrintSheetModal
         isOpen={printModalOpen}
         onClose={() => setPrintModalOpen(false)}
-        title={printModalType === 'qr' ? 'QR Code Print Sheet' : 'Barcode Print Sheet'}
+        title="QR Code Print Sheet"
         itemImageSrc={printModalItemImage}
-        itemType={printModalType}
-        initialQrValue={printModalType === 'qr' ? value : barcodeValue}
+        itemType="qr"
+        initialQrValue={value}
       />
     </div>
   );
