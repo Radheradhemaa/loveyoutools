@@ -104,7 +104,8 @@ export const tools = [
   { id: 'internet-speed-test', c: 'developer', n: 'Internet Speed Test', d: 'Measure your internet connection speed, ping, and jitter with high accuracy.', i: '🚀', b: '#dbeafe', popular: true },
 
   // GENERATOR TOOLS (bg: #ecfdf5)
-  { id: 'qr-code-generator', c: 'generator', n: 'QR Code Generator', d: 'Generate QR codes easily.', i: '⬛', b: '#ecfdf5' },
+  { id: 'qr-code-generator', c: 'generator', n: 'QR Code Generator', d: 'Generate fast-scanning QR codes & Barcodes with custom colors, logos, and formats.', i: '⬛', b: '#ecfdf5', popular: true },
+  { id: 'barcode-generator', c: 'generator', n: 'Barcode Generator', d: 'Generate 1D barcodes in Code 128, EAN-13, UPC-A, Code 39, and more formats.', i: '📊', b: '#ecfdf5', popular: true },
   { id: 'password-generator', c: 'generator', n: 'Password Generator', d: 'Generate secure passwords.', i: '🔑', b: '#ecfdf5' },
   { id: 'username-generator', c: 'generator', n: 'Username Generator', d: 'Generate cool usernames.', i: '👤', b: '#ecfdf5' },
   { id: 'random-number-generator', c: 'generator', n: 'Random Number Generator', d: 'Generate random numbers.', i: '🎲', b: '#ecfdf5' },
