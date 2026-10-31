@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, useEffect, ChangeEvent } from 'react';
 import { QRCodeCanvas, QRCodeSVG } from 'qrcode.react';
 import JsBarcode from 'jsbarcode';
+import PrintSheetModal from './PrintSheetModal';
 import { 
   Download, Link as LinkIcon, Type, Phone, Mail, Wifi, MessageSquare, 
   User, MessageCircle, Image as ImageIcon, Settings, Palette, Trash2, 
@@ -181,6 +182,11 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
   const [barcodeDownloadFormat, setBarcodeDownloadFormat] = useState<'png' | 'svg' | 'jpeg'>('png');
 
   const barcodeSvgRef = useRef<SVGSVGElement | null>(null);
+
+  // Print Sheet Modal State (Multiple copies across different paper sizes)
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [printModalItemImage, setPrintModalItemImage] = useState<string>('');
+  const [printModalType, setPrintModalType] = useState<'qr' | 'barcode'>('qr');
 
   // Automatically switch QR error correction to H if a logo is added (to ensure data recovery),
   // and back to M if logo is cleared (for fastest scanning).
@@ -516,6 +522,90 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
       </html>
     `);
     printWindow.document.close();
+  };
+
+  // Open Multi-Copy Sheet Printing Modal (Supports A4, Letter, Stickers, Custom Paper Sizes)
+  const handleOpenPrintSheet = (type: 'qr' | 'barcode') => {
+    setPrintModalType(type);
+    if (type === 'qr') {
+      if (!qrRef.current) return;
+      const canvas = qrRef.current.querySelector('canvas');
+      if (canvas) {
+        const highResCanvas = document.createElement('canvas');
+        const exportSize = Math.max(size, 600);
+        highResCanvas.width = exportSize;
+        highResCanvas.height = exportSize;
+        const ctx = highResCanvas.getContext('2d');
+        if (ctx) {
+          ctx.imageSmoothingEnabled = false;
+          if (!isTransparentBg) {
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, exportSize, exportSize);
+          }
+          ctx.drawImage(canvas, 0, 0, exportSize, exportSize);
+          setPrintModalItemImage(highResCanvas.toDataURL('image/png'));
+        } else {
+          setPrintModalItemImage(canvas.toDataURL('image/png'));
+        }
+        setPrintModalOpen(true);
+      } else {
+        const svg = qrRef.current.querySelector('svg');
+        if (svg) {
+          const svgData = new XMLSerializer().serializeToString(svg);
+          const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+          const url = URL.createObjectURL(svgBlob);
+          const img = new Image();
+          img.onload = () => {
+            const off = document.createElement('canvas');
+            off.width = 600;
+            off.height = 600;
+            const ctx = off.getContext('2d');
+            if (ctx) {
+              ctx.imageSmoothingEnabled = false;
+              if (!isTransparentBg) {
+                ctx.fillStyle = bgColor;
+                ctx.fillRect(0, 0, 600, 600);
+              }
+              ctx.drawImage(img, 0, 0, 600, 600);
+              setPrintModalItemImage(off.toDataURL('image/png'));
+            } else {
+              setPrintModalItemImage(url);
+            }
+            URL.revokeObjectURL(url);
+            setPrintModalOpen(true);
+          };
+          img.src = url;
+        }
+      }
+    } else {
+      if (!barcodeSvgRef.current) return;
+      const svg = barcodeSvgRef.current;
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      img.onload = () => {
+        const scale = 3;
+        const off = document.createElement('canvas');
+        off.width = (img.width || 400) * scale;
+        off.height = (img.height || 120) * scale;
+        const ctx = off.getContext('2d');
+        if (ctx) {
+          ctx.imageSmoothingEnabled = false;
+          if (!barcodeIsTransparentBg) {
+            ctx.fillStyle = barcodeBgColor;
+            ctx.fillRect(0, 0, off.width, off.height);
+          }
+          ctx.drawImage(img, 0, 0, off.width, off.height);
+          setPrintModalItemImage(off.toDataURL('image/png'));
+        } else {
+          setPrintModalItemImage(url);
+        }
+        URL.revokeObjectURL(url);
+        setPrintModalOpen(true);
+      };
+      img.src = url;
+    }
   };
 
   const handleLogoUpload = (e: ChangeEvent<HTMLInputElement>) => {
@@ -1594,9 +1684,16 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
               </div>
               <button 
                 onClick={handleDownloadQr} 
-                className="btn bp gap-2 w-full py-3.5 text-xs font-black uppercase tracking-widest shadow-lg shadow-accent/20 cursor-pointer"
+                className="btn bp gap-2 w-full py-3 text-xs font-black uppercase tracking-widest shadow-lg shadow-accent/20 cursor-pointer"
               >
                 <Download className="w-4 h-4" /> Download QR Code ({downloadFormat.toUpperCase()})
+              </button>
+              <button
+                type="button"
+                onClick={() => handleOpenPrintSheet('qr')}
+                className="btn bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 gap-2 w-full py-2.5 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center"
+              >
+                <Printer className="w-4 h-4" /> Print Multiple Copies / Sheet
               </button>
             </>
           ) : (
@@ -1625,12 +1722,20 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
                 <button
                   onClick={handlePrintBarcode}
                   disabled={!!barcodeError}
-                  title="Print Label"
+                  title="Quick Print Label"
                   className="p-3 rounded-xl border border-border bg-surface hover:bg-bg-secondary transition-colors cursor-pointer disabled:opacity-50"
                 >
                   <Printer className="w-4 h-4 text-text-secondary" />
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={() => handleOpenPrintSheet('barcode')}
+                disabled={!!barcodeError}
+                className="btn bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 gap-2 w-full py-2 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center"
+              >
+                <Printer className="w-4 h-4" /> Print Multiple Barcodes / Sheet
+              </button>
             </>
           )}
         </div>
@@ -1659,16 +1764,26 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
                 </span>
               </div>
 
-              {activeTab === 'qr' && (
-                <div className="pointer-events-auto">
+              <div className="flex items-center gap-2 pointer-events-auto">
+                <button
+                  type="button"
+                  onClick={() => handleOpenPrintSheet(activeTab)}
+                  className="px-3 py-1 rounded-full bg-surface/90 hover:bg-surface border border-border text-text-primary font-bold text-[11px] shadow-xs transition-all flex items-center gap-1.5 cursor-pointer hover:border-accent"
+                  title="Print multiple copies on A4, Letter, Stickers, etc."
+                >
+                  <Printer className="w-3.5 h-3.5 text-accent" />
+                  <span>Print Copies</span>
+                </button>
+
+                {activeTab === 'qr' && (
                   <button
                     onClick={handleOptimizeFastScan}
                     className="px-3 py-1 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white font-black text-[10px] uppercase tracking-wider shadow-xs transition-all flex items-center gap-1 cursor-pointer"
                   >
                     <Zap className="w-3 h-3" /> Ultra-Fast Scan
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             {/* PREVIEW CONTAINER */}
@@ -1816,6 +1931,16 @@ export default function QrGenerator({ initialMode = 'qr' }: { initialMode?: 'qr'
           </div>
         </div>
       </main>
+
+      {/* Multiple Copies / Multi-Paper Size Sheet Printing Modal */}
+      <PrintSheetModal
+        isOpen={printModalOpen}
+        onClose={() => setPrintModalOpen(false)}
+        title={printModalType === 'qr' ? 'QR Code Print Sheet' : 'Barcode Print Sheet'}
+        itemImageSrc={printModalItemImage}
+        itemType={printModalType}
+        initialQrValue={printModalType === 'qr' ? value : barcodeValue}
+      />
     </div>
   );
 }
