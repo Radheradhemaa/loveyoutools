@@ -13,8 +13,107 @@ import {
   CreditCard, ArrowLeftRight, RotateCcw, Check, CheckCircle2,
   Sparkles, QrCode, Printer, Zap, Copy, CheckCheck,
   ShieldCheck, LayoutTemplate, Shapes, Sliders, Smartphone,
-  Tag, Award, Ticket, Store
+  Tag, Award, Ticket, Store, Lock, Unlock, Key, Eye, EyeOff,
+  AlertCircle, ExternalLink, HelpCircle, RefreshCw
 } from 'lucide-react';
+
+// --- AES-256-GCM Web Crypto Encryption & Decryption Helpers ---
+async function encryptPayload(plainText: string, secret: string): Promise<string> {
+  const enc = new TextEncoder();
+  const salt = window.crypto.getRandomValues(new Uint8Array(16));
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  
+  const keyMaterial = await window.crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  
+  const key = await window.crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 100000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt']
+  );
+  
+  const cipherBuffer = await window.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    enc.encode(plainText)
+  );
+  
+  const combined = new Uint8Array(salt.length + iv.length + cipherBuffer.byteLength);
+  combined.set(salt, 0);
+  combined.set(iv, salt.length);
+  combined.set(new Uint8Array(cipherBuffer), salt.length + iv.length);
+  
+  let binary = '';
+  for (let i = 0; i < combined.byteLength; i++) {
+    binary += String.fromCharCode(combined[i]);
+  }
+  return btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+async function decryptPayload(cipherB64Url: string, secret: string): Promise<string> {
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  
+  let base64 = cipherB64Url.replace(/-/g, '+').replace(/_/g, '/');
+  while (base64.length % 4) base64 += '=';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  
+  if (bytes.length < 28) {
+    throw new Error('Invalid encrypted data format');
+  }
+  
+  const salt = bytes.slice(0, 16);
+  const iv = bytes.slice(16, 28);
+  const ciphertext = bytes.slice(28);
+  
+  const keyMaterial = await window.crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  
+  const key = await window.crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 100000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+  
+  const decrypted = await window.crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    ciphertext
+  );
+  
+  return dec.decode(decrypted);
+}
 
 // --- Preset Color Palettes ---
 interface ColorPreset {
@@ -279,7 +378,7 @@ const QUICK_CTA_SUGGESTIONS = [
 
 export default function QrGenerator() {
   // Navigation tabs in sidebar
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'content' | 'frames' | 'shapes' | 'colors' | 'logo' | 'settings'>('content');
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'content' | 'frames' | 'shapes' | 'colors' | 'logo' | 'security' | 'settings'>('content');
 
   // --- 1. Content / Payload State ---
   const [type, setType] = useState('url');
@@ -287,6 +386,137 @@ export default function QrGenerator() {
   const [upiType, setUpiType] = useState<'vpa' | 'account'>('vpa');
   const [copiedPayload, setCopiedPayload] = useState(false);
   const [fastScanToast, setFastScanToast] = useState(false);
+
+  // --- Password Encryption State ---
+  const [isEncrypted, setIsEncrypted] = useState(false);
+  const [qrPassword, setQrPassword] = useState('');
+  const [showQrPassword, setShowQrPassword] = useState(false);
+  const [passwordHint, setPasswordHint] = useState('');
+  const [encryptedPayload, setEncryptedPayload] = useState('');
+  const [encryptionDelivery, setEncryptionDelivery] = useState<'web-unlock' | 'raw-cipher'>('web-unlock');
+  const [isEncrypting, setIsEncrypting] = useState(false);
+
+  // Decryption / Unlock Modal State (For recipients scanning or testing)
+  const [unlockModalOpen, setUnlockModalOpen] = useState(false);
+  const [unlockCipherInput, setUnlockCipherInput] = useState('');
+  const [unlockHintText, setUnlockHintText] = useState('');
+  const [unlockPasswordInput, setUnlockPasswordInput] = useState('');
+  const [showUnlockPassword, setShowUnlockPassword] = useState(false);
+  const [decryptedResult, setDecryptedResult] = useState<string | null>(null);
+  const [unlockError, setUnlockError] = useState('');
+  const [isDecryptingQr, setIsDecryptingQr] = useState(false);
+  const [copiedDecrypted, setCopiedDecrypted] = useState(false);
+
+  // Check URL query parameters on load (e.g. when mobile camera opens ?unlock=...)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const unlockParam = params.get('unlock');
+      const hintParam = params.get('hint');
+      if (unlockParam) {
+        setUnlockCipherInput(unlockParam);
+        if (hintParam) setUnlockHintText(hintParam);
+        setUnlockModalOpen(true);
+      }
+    }
+  }, []);
+
+  // Auto-encrypt content whenever value, password, hint, or mode changes
+  useEffect(() => {
+    let isCurrent = true;
+    if (isEncrypted && qrPassword.trim() && value.trim()) {
+      setIsEncrypting(true);
+      encryptPayload(value.trim(), qrPassword.trim())
+        .then((cipher) => {
+          if (!isCurrent) return;
+          if (encryptionDelivery === 'web-unlock') {
+            const origin = typeof window !== 'undefined' ? window.location.origin : 'https://loveyoutools.in';
+            const hintPart = passwordHint.trim() ? `&hint=${encodeURIComponent(passwordHint.trim())}` : '';
+            setEncryptedPayload(`${origin}/tool/qr-code-generator?unlock=${cipher}${hintPart}`);
+          } else {
+            setEncryptedPayload(`ENCRYPTED:${cipher}`);
+          }
+          setIsEncrypting(false);
+        })
+        .catch((err) => {
+          console.error('Encryption failed:', err);
+          if (isCurrent) setIsEncrypting(false);
+        });
+    } else {
+      setEncryptedPayload('');
+      setIsEncrypting(false);
+    }
+    return () => {
+      isCurrent = false;
+    };
+  }, [value, isEncrypted, qrPassword, passwordHint, encryptionDelivery]);
+
+  // Execute Decryption
+  const handlePerformUnlock = async (overrideCipher?: string, overridePwd?: string) => {
+    const cipherToUse = (overrideCipher !== undefined ? overrideCipher : unlockCipherInput).trim();
+    const pwdToUse = (overridePwd !== undefined ? overridePwd : unlockPasswordInput).trim();
+
+    if (!cipherToUse) {
+      setUnlockError('Encrypted payload is missing.');
+      return;
+    }
+    if (!pwdToUse) {
+      setUnlockError('Please enter the password to decrypt.');
+      return;
+    }
+
+    setIsDecryptingQr(true);
+    setUnlockError('');
+    setDecryptedResult(null);
+
+    try {
+      // Strip ENCRYPTED: prefix if present
+      let cleanCipher = cipherToUse;
+      if (cleanCipher.startsWith('ENCRYPTED:')) {
+        cleanCipher = cleanCipher.replace('ENCRYPTED:', '');
+      } else if (cleanCipher.includes('unlock=')) {
+        try {
+          const u = new URL(cleanCipher);
+          cleanCipher = u.searchParams.get('unlock') || cleanCipher;
+        } catch {
+          const match = cleanCipher.match(/unlock=([^&]+)/);
+          if (match) cleanCipher = match[1];
+        }
+      }
+
+      const decrypted = await decryptPayload(cleanCipher, pwdToUse);
+      setDecryptedResult(decrypted);
+    } catch (err: any) {
+      console.error('Decryption failed:', err);
+      setUnlockError('Incorrect password! Unable to decrypt this QR code.');
+    } finally {
+      setIsDecryptingQr(false);
+    }
+  };
+
+  // Open unlock modal to test current encryption
+  const handleOpenTestUnlock = () => {
+    if (isEncrypted && encryptedPayload) {
+      let cipherVal = encryptedPayload;
+      if (cipherVal.startsWith('ENCRYPTED:')) {
+        cipherVal = cipherVal.replace('ENCRYPTED:', '');
+      } else if (cipherVal.includes('unlock=')) {
+        try {
+          const u = new URL(cipherVal);
+          cipherVal = u.searchParams.get('unlock') || cipherVal;
+        } catch {
+          const match = cipherVal.match(/unlock=([^&]+)/);
+          if (match) cipherVal = match[1];
+        }
+      }
+      setUnlockCipherInput(cipherVal);
+      setUnlockHintText(passwordHint);
+      setUnlockPasswordInput(qrPassword); // Pre-fill with current password for convenience
+      setDecryptedResult(null);
+      setUnlockError('');
+      setUnlockModalOpen(true);
+    }
+  };
 
   // --- 2. Frame Customization State ---
   const [frameStyle, setFrameStyle] = useState<FrameStyle>('none');
@@ -456,7 +686,9 @@ export default function QrGenerator() {
 
   // Build options object for QRCodeStyling
   const qrOptions = useMemo(() => {
-    const rawData = value.trim() || 'https://loveyoutools.in';
+    const rawData = isEncrypted && qrPassword.trim() && encryptedPayload 
+      ? encryptedPayload 
+      : (value.trim() || 'https://loveyoutools.in');
     const effectiveBg = isTransparentBg ? 'transparent' : bgColor;
 
     return {
@@ -505,7 +737,7 @@ export default function QrGenerator() {
       }
     };
   }, [
-    size, value, qrShape, includeMargin, marginSize, level, logoImage, logoSize,
+    size, value, isEncrypted, qrPassword, encryptedPayload, qrShape, includeMargin, marginSize, level, logoImage, logoSize,
     fgColor, fgColor2, isGradient, gradientType, dotsType, customEyeColor,
     eyeColor, cornersSquareType, cornersDotType, isTransparentBg, bgColor
   ]);
@@ -1102,6 +1334,7 @@ export default function QrGenerator() {
         <div className="flex items-center gap-1 p-2 bg-bg-secondary/60 border-b border-border overflow-x-auto no-scrollbar">
           {[
             { id: 'content', label: 'Content', icon: LinkIcon },
+            { id: 'security', label: 'Security', icon: Lock },
             { id: 'frames', label: 'Frames', icon: LayoutTemplate },
             { id: 'shapes', label: 'Shapes', icon: Shapes },
             { id: 'colors', label: 'Colors', icon: Palette },
@@ -1120,6 +1353,9 @@ export default function QrGenerator() {
             >
               <tab.icon className="w-3.5 h-3.5" />
               <span>{tab.label}</span>
+              {tab.id === 'security' && isEncrypted && (
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              )}
             </button>
           ))}
         </div>
@@ -1190,6 +1426,237 @@ export default function QrGenerator() {
               </div>
               <div className="mt-4">
                 {renderQrInputs()}
+              </div>
+
+              {/* Quick Password Encryption Toggle in Content Tab */}
+              <div className="p-3.5 rounded-2xl border border-border bg-bg-secondary/40 space-y-2 mt-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${
+                      isEncrypted ? 'bg-amber-500 text-white shadow-xs' : 'bg-surface text-text-muted border border-border'
+                    }`}>
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-text-primary flex items-center gap-1.5">
+                        Password Encrypted QR
+                        {isEncrypted && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                            AES-256
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-text-muted">Require a password to reveal QR code content</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !isEncrypted;
+                      setIsEncrypted(next);
+                      if (next && !qrPassword) {
+                        setActiveSidebarTab('security');
+                      }
+                    }}
+                    className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer shrink-0 ${isEncrypted ? 'bg-amber-500' : 'bg-border'}`}
+                  >
+                    <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-xs transition-transform ${isEncrypted ? 'translate-x-5' : ''}`} />
+                  </button>
+                </div>
+
+                {isEncrypted && (
+                  <div className="pt-2 border-t border-border flex items-center justify-between text-[11px]">
+                    <span className="text-text-muted truncate">
+                      {qrPassword.trim() ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Active & Protected
+                        </span>
+                      ) : (
+                        <span className="text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" /> Set password in Security
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveSidebarTab('security')}
+                      className="font-bold text-accent hover:underline flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <Key className="w-3 h-3" /> Configure Password
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: SECURITY / PASSWORD ENCRYPTION */}
+          {activeSidebarTab === 'security' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-black text-[10px] uppercase tracking-widest flex items-center gap-2 text-text-muted">
+                  <Lock className="w-4 h-4 text-amber-500" /> Password Protection (AES-256)
+                </h3>
+                <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                  Client-Side Military Grade
+                </span>
+              </div>
+
+              {/* Main Enable Switch */}
+              <div className="p-4 rounded-2xl bg-surface border border-border shadow-2xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-xs font-black text-text-primary block">
+                      Enable Password Encryption
+                    </label>
+                    <p className="text-[10px] text-text-muted mt-0.5">
+                      Content is encrypted before encoding into QR. Scanners need the password to view.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsEncrypted(!isEncrypted)}
+                    className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer shrink-0 ${isEncrypted ? 'bg-amber-500' : 'bg-border'}`}
+                  >
+                    <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-xs transition-transform ${isEncrypted ? 'translate-x-5' : ''}`} />
+                  </button>
+                </div>
+
+                {isEncrypted && (
+                  <div className="pt-3 border-t border-border space-y-3">
+                    {/* Password Input */}
+                    <div className="fg">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="fl flex items-center gap-1.5">
+                          <Key className="w-3.5 h-3.5 text-amber-500" /> Secret Encryption Password *
+                        </label>
+                        {qrPassword.trim() && (
+                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
+                            <Check className="w-3 h-3" /> Ready
+                          </span>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <input
+                          type={showQrPassword ? 'text' : 'password'}
+                          value={qrPassword}
+                          onChange={(e) => setQrPassword(e.target.value)}
+                          placeholder="Enter strong password (e.g. MySecret#98)"
+                          className="fi text-xs pr-10 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowQrPassword(!showQrPassword)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary cursor-pointer p-1"
+                          title={showQrPassword ? 'Hide password' : 'Show password'}
+                        >
+                          {showQrPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-text-muted mt-1">
+                        Encrypted with PBKDF2 (100,000 rounds) + AES-GCM 256-bit directly in your browser.
+                      </p>
+                    </div>
+
+                    {/* Optional Password Hint */}
+                    <div className="fg">
+                      <label className="fl flex items-center gap-1.5">
+                        <HelpCircle className="w-3.5 h-3.5 text-text-muted" /> Password Hint for Recipients (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={passwordHint}
+                        onChange={(e) => setPasswordHint(e.target.value)}
+                        placeholder="e.g. My pet's name, or Room 402 Wi-Fi key"
+                        className="fi text-xs"
+                        maxLength={60}
+                      />
+                      <p className="text-[10px] text-text-muted mt-1">
+                        The hint is visible to anyone scanning the code to help them remember the password.
+                      </p>
+                    </div>
+
+                    {/* Recipient Delivery Mode */}
+                    <div className="p-3 rounded-xl bg-bg-secondary/60 border border-border space-y-2">
+                      <label className="text-xs font-bold text-text-secondary block">
+                        Recipient Scanning Experience:
+                      </label>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setEncryptionDelivery('web-unlock')}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
+                            encryptionDelivery === 'web-unlock'
+                              ? 'border-accent bg-accent/10 ring-1 ring-accent'
+                              : 'border-border bg-surface hover:bg-bg-secondary'
+                          }`}
+                        >
+                          <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 ${
+                            encryptionDelivery === 'web-unlock' ? 'bg-accent text-white' : 'bg-bg-secondary text-text-muted'
+                          }`}>
+                            <ExternalLink className="w-3 h-3" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-text-primary flex items-center gap-1.5">
+                              Mobile Camera Web Unlock (Recommended)
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold">Best</span>
+                            </div>
+                            <div className="text-[10px] text-text-muted mt-0.5 leading-snug">
+                              Standard iPhone/Android camera opens a built-in instant unlock page to enter password and reveal content.
+                            </div>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setEncryptionDelivery('raw-cipher')}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex items-start gap-2.5 ${
+                            encryptionDelivery === 'raw-cipher'
+                              ? 'border-accent bg-accent/10 ring-1 ring-accent'
+                              : 'border-border bg-surface hover:bg-bg-secondary'
+                          }`}
+                        >
+                          <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 ${
+                            encryptionDelivery === 'raw-cipher' ? 'bg-accent text-white' : 'bg-bg-secondary text-text-muted'
+                          }`}>
+                            <Key className="w-3 h-3" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-text-primary">
+                              Raw Encrypted Cipher (ENCRYPTED:...)
+                            </div>
+                            <div className="text-[10px] text-text-muted mt-0.5 leading-snug">
+                              Direct Base64 encrypted cipher string. For internal systems or offline decryption apps.
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Test Decryption Trigger */}
+                    <div className="pt-2 flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={handleOpenTestUnlock}
+                        disabled={!qrPassword.trim() || !value.trim() || isEncrypting}
+                        className="btn bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 gap-1.5 text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        <Unlock className="w-3.5 h-3.5" /> Test Recipient Unlock
+                      </button>
+                      <span className="text-[10px] text-text-muted">
+                        {isEncrypting ? 'Encrypting...' : 'Cipher Ready'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Zero-Knowledge Privacy Note */}
+              <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 flex items-start gap-2.5">
+                <ShieldCheck className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+                <div className="text-[10px] text-text-secondary leading-snug">
+                  <strong className="text-text-primary font-bold">100% Client-Side Privacy:</strong> Encryption uses the browser's native Web Crypto API (<code className="font-mono">SubtleCrypto</code>). Your data and password never leave your device.
+                </div>
               </div>
             </div>
           )}
@@ -1908,6 +2375,11 @@ export default function QrGenerator() {
                 <QrCode className="w-3.5 h-3.5 text-accent" />
                 <span>QR Code Preview</span>
               </span>
+              {isEncrypted && (
+                <span className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold text-[10px] border border-amber-500/20 flex items-center gap-1">
+                  <Lock className="w-3 h-3" /> Password Protected (AES-256)
+                </span>
+              )}
               {frameStyle !== 'none' && (
                 <span className="px-2.5 py-1 rounded-full bg-accent/10 text-accent font-bold text-[10px] border border-accent/20">
                   Frame: {FRAME_OPTIONS.find(f => f.id === frameStyle)?.name}
@@ -2139,24 +2611,44 @@ export default function QrGenerator() {
               />
             </div>
 
-            {/* Encoded Payload Inspector with Copy */}
+            {/* Encoded Payload Inspector with Copy & Test Decrypt */}
             <div className="mt-3 w-full max-w-md bg-surface p-3 rounded-xl border border-border shadow-2xs">
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted flex items-center gap-1">
-                  <ShieldCheck className="w-3 h-3 text-emerald-500" />
-                  Live Encoded Payload
-                </span>
-                <button
-                  type="button"
-                  onClick={handleCopyPayload}
-                  className="text-[10px] font-bold text-accent hover:underline flex items-center gap-1 cursor-pointer"
-                >
-                  {copiedPayload ? <CheckCheck className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                  {copiedPayload ? "Copied" : "Copy Payload"}
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-emerald-500" />
+                    {isEncrypted ? "Encrypted Payload (AES-256)" : "Live Encoded Payload"}
+                  </span>
+                  {isEncrypted && (
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                      Locked
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {isEncrypted && (
+                    <button
+                      type="button"
+                      onClick={handleOpenTestUnlock}
+                      className="text-[10px] font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Unlock className="w-3 h-3" /> Test Unlock
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleCopyPayload}
+                    className="text-[10px] font-bold text-accent hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedPayload ? <CheckCheck className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                    {copiedPayload ? "Copied" : "Copy"}
+                  </button>
+                </div>
               </div>
               <div className="p-2 rounded-lg bg-bg-secondary text-[11px] font-mono text-text-secondary break-all max-h-16 overflow-y-auto custom-scrollbar">
-                {value || "<Empty>"}
+                {isEncrypted
+                  ? (encryptedPayload || (qrPassword ? "Encrypting..." : "⚠️ Enter password in Security tab to generate encrypted QR"))
+                  : (value || "<Empty>")}
               </div>
             </div>
           </div>
@@ -2170,8 +2662,176 @@ export default function QrGenerator() {
         title="Designed QR Code Print Sheet"
         itemImageSrc={printModalItemImage}
         itemType="qr"
-        initialQrValue={value}
+        initialQrValue={isEncrypted && encryptedPayload ? encryptedPayload : value}
       />
+
+      {/* Decryption / Unlock Modal (For recipients scanning or live testing) */}
+      {unlockModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-surface border border-border rounded-3xl max-w-md w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-border bg-bg-secondary/40 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20 flex items-center justify-center">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-text-primary">Unlock Protected QR Code</h3>
+                  <p className="text-[11px] text-text-muted">Enter secret password to decrypt contents</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setUnlockModalOpen(false);
+                  setUnlockError('');
+                  setDecryptedResult(null);
+                }}
+                className="w-8 h-8 rounded-full bg-surface hover:bg-bg-secondary border border-border flex items-center justify-center text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar">
+              {/* Optional Password Hint */}
+              {unlockHintText && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-start gap-2.5">
+                  <span className="text-base">💡</span>
+                  <div>
+                    <div className="text-[11px] font-bold text-amber-600 dark:text-amber-400">Password Hint:</div>
+                    <div className="text-xs text-text-primary font-medium mt-0.5">{unlockHintText}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Password Input View */}
+              {!decryptedResult && (
+                <div className="space-y-3">
+                  <div className="fg">
+                    <label className="fl flex items-center gap-1.5">
+                      <Key className="w-3.5 h-3.5 text-accent" /> Secret Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showUnlockPassword ? 'text' : 'password'}
+                        value={unlockPasswordInput}
+                        onChange={(e) => {
+                          setUnlockPasswordInput(e.target.value);
+                          if (unlockError) setUnlockError('');
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            handlePerformUnlock();
+                          }
+                        }}
+                        placeholder="Enter password..."
+                        className="fi pr-10 text-xs font-mono"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowUnlockPassword(!showUnlockPassword)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary cursor-pointer p-1"
+                      >
+                        {showUnlockPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {unlockError && (
+                    <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/25 flex items-center gap-2 text-xs text-red-600 dark:text-red-400 font-bold">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{unlockError}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handlePerformUnlock()}
+                    disabled={isDecryptingQr || !unlockPasswordInput.trim()}
+                    className="btn bp w-full py-2.5 text-xs font-bold gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {isDecryptingQr ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Decrypting...
+                      </>
+                    ) : (
+                      <>
+                        <Unlock className="w-3.5 h-3.5" /> Decrypt & View
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Decrypted Result View */}
+              {decryptedResult && (
+                <div className="space-y-3 animate-in fade-in zoom-in-95 duration-200">
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center gap-2 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>Successfully Decrypted (AES-256-GCM)</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-bg-secondary border border-border">
+                    <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider block mb-1">
+                      Decrypted Content:
+                    </span>
+                    <div className="text-xs font-mono text-text-primary break-all max-h-40 overflow-y-auto custom-scrollbar select-all">
+                      {decryptedResult}
+                    </div>
+                  </div>
+
+                  {/* Actions for decrypted content */}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(decryptedResult);
+                        setCopiedDecrypted(true);
+                        setTimeout(() => setCopiedDecrypted(false), 2000);
+                      }}
+                      className="btn bs flex-1 py-2 text-xs font-bold gap-1.5 cursor-pointer"
+                    >
+                      {copiedDecrypted ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-accent" />}
+                      <span>{copiedDecrypted ? 'Copied!' : 'Copy Content'}</span>
+                    </button>
+
+                    {(decryptedResult.startsWith('http://') || decryptedResult.startsWith('https://')) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const target = decryptedResult.startsWith('http') ? decryptedResult : `https://${decryptedResult}`;
+                          window.open(target, '_blank', 'noopener,noreferrer');
+                        }}
+                        className="btn bp flex-1 py-2 text-xs font-bold gap-1.5 cursor-pointer"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Open Link</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-border flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDecryptedResult(null);
+                        setUnlockPasswordInput('');
+                        setUnlockError('');
+                      }}
+                      className="text-xs font-bold text-text-muted hover:text-text-primary underline cursor-pointer"
+                    >
+                      Lock again / Enter another password
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

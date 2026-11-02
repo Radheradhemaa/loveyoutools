@@ -731,6 +731,8 @@ const PdfEditorWorkspace = React.forwardRef(
     const imageInputRef = useRef<HTMLInputElement>(null);
     const replaceImageInputRef = useRef<HTMLInputElement>(null);
     const originalDimensions = useRef({ width: 0, height: 0 });
+    const userAdjustedZoomRef = useRef(false);
+    const [showMobileThumbnails, setShowMobileThumbnails] = useState(false);
 
     const stateRef = useRef(state);
     useEffect(() => {
@@ -1002,7 +1004,15 @@ const PdfEditorWorkspace = React.forwardRef(
     };
 
     const renderPage = async (pageNum: number) => {
-      if (!pdfDocRef.current || !canvasRef.current) return;
+      if (!pdfDocRef.current) return;
+      if (!canvasRef.current) {
+        requestAnimationFrame(() => {
+          if (canvasRef.current && pdfDocRef.current) {
+            renderPage(pageNum);
+          }
+        });
+        return;
+      }
 
       // Prevent duplicate concurrent render tasks by cancelling the previous one
       if (activeRenderTaskRef.current) {
@@ -1051,32 +1061,43 @@ const PdfEditorWorkspace = React.forwardRef(
           }
         }
 
+        const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+        const targetDpr = Math.max(dpr, 2.0);
+        // Ultra-sharp rendering scale matching physical screen pixels at current zoom
+        const renderScale = Math.max(2.5, stateRef.current.zoom * targetDpr);
+
         const canvas = new Canvas(canvasRef.current, {
           width: baseViewport.width * stateRef.current.zoom,
           height: baseViewport.height * stateRef.current.zoom,
           backgroundColor: "white",
           imageSmoothingEnabled: true,
+          enableRetinaScaling: true,
           allowTouchScrolling: true,
         });
 
-        // Use appropriate sharp internal render scale based on device pixel ratio and zoom
-        // Multiply by 4.0 as a baseline multiplier for crystal clear text parsing, and scale with native PR
-        const dpr = typeof window !== 'undefined' ? window.devicePixelRatio : 1;
-        const renderScale = Math.max(4.0, dpr * 2.5);
-        canvas.setZoom(stateRef.current.zoom);
+        if (canvas.contextContainer) {
+          canvas.contextContainer.imageSmoothingEnabled = true;
+          canvas.contextContainer.imageSmoothingQuality = "high";
+        }
+        if (canvas.contextTop) {
+          canvas.contextTop.imageSmoothingEnabled = true;
+          canvas.contextTop.imageSmoothingQuality = "high";
+        }
 
+        canvas.setZoom(stateRef.current.zoom);
         fabricCanvas.current = canvas;
 
         const renderViewport = page.getViewport({ scale: renderScale });
 
         const tempCanvas = document.createElement("canvas");
-        const context = tempCanvas.getContext("2d");
+        const context = tempCanvas.getContext("2d", { alpha: false });
         if (context) {
-          tempCanvas.width = renderViewport.width;
-          tempCanvas.height = renderViewport.height;
+          tempCanvas.width = Math.round(renderViewport.width);
+          tempCanvas.height = Math.round(renderViewport.height);
           context.imageSmoothingEnabled = true;
           context.imageSmoothingQuality = "high";
-          context.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+          context.fillStyle = "#ffffff";
+          context.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
 
           // Image extraction removed as per user request to avoid duplicates and ensure pixel-perfect preview
 
@@ -1162,26 +1183,37 @@ const PdfEditorWorkspace = React.forwardRef(
 
           if (currentCallId !== renderPageRef.current) return;
 
-          const bgImage = await FabricImage.fromURL(
-            tempCanvas.toDataURL("image/png"),
-          );
-          
-          tempCanvas.width = 0;
-          tempCanvas.height = 0;
-          
-          if (currentCallId !== renderPageRef.current) return;
-          bgImage.set({
-            selectable: false,
-            evented: false,
-            scaleX: 1 / renderScale,
-            scaleY: 1 / renderScale,
-            left: 0,
-            top: 0,
-            originX: "left",
-            originY: "top",
-            objectCaching: false,
-            data: { isBackground: true },
-          });
+          let bgImage: any;
+          try {
+            bgImage = new FabricImage(tempCanvas, {
+              selectable: false,
+              evented: false,
+              scaleX: 1 / renderScale,
+              scaleY: 1 / renderScale,
+              left: 0,
+              top: 0,
+              originX: "left",
+              originY: "top",
+              objectCaching: false,
+              data: { isBackground: true },
+            });
+          } catch {
+            bgImage = await FabricImage.fromURL(
+              tempCanvas.toDataURL("image/png"),
+            );
+            bgImage.set({
+              selectable: false,
+              evented: false,
+              scaleX: 1 / renderScale,
+              scaleY: 1 / renderScale,
+              left: 0,
+              top: 0,
+              originX: "left",
+              originY: "top",
+              objectCaching: false,
+              data: { isBackground: true },
+            });
+          }
 
           // Helper to inject the extracted layers
           // (Disabled image extraction rendering to prevent duplicates and keep original raster assets)
@@ -1780,15 +1812,17 @@ const PdfEditorWorkspace = React.forwardRef(
             cMapPacked: true,
           });
 
-          // Wire up the onPassword callback so PDF.js worker receives the candidate password cleanly
+          let tried = false;
           loadingTask.onPassword = (
             updatePassword: (p: string | Error) => void,
             reason: number
           ) => {
-            if (pwd) {
-              updatePassword(pwd);
+            // reason === 1: NEED_PASSWORD, reason === 2: INCORRECT_PASSWORD
+            if (reason === 2 || tried || !pwd) {
+              updatePassword(new Error("Incorrect password"));
             } else {
-              updatePassword(new Error("Password required"));
+              tried = true;
+              updatePassword(pwd);
             }
           };
 
@@ -1830,46 +1864,68 @@ const PdfEditorWorkspace = React.forwardRef(
 
           const order = Array.from({ length: pdf.numPages }, (_, i) => i + 1);
 
-          // Generate thumbnails safely without letting any thumbnail error block the document
+          // Generate page 1 thumbnail immediately so editor opens without delay
           const newThumbnails: string[] = [];
           try {
-            for (let i = 1; i <= pdf.numPages; i++) {
-              const page = await pdf.getPage(i);
-              const viewport = page.getPageViewport ? page.getPageViewport({ scale: 1.5 }) : page.getViewport({ scale: 1.5 });
-              const canvas = document.createElement("canvas");
-              canvas.width = viewport.width;
-              canvas.height = viewport.height;
-              const ctx = canvas.getContext("2d");
-              if (!ctx) continue;
-              ctx.imageSmoothingEnabled = true;
-              ctx.imageSmoothingQuality = "high";
-              await (page as any).render({
-                canvasContext: ctx,
-                viewport,
-              }).promise;
-              newThumbnails.push(canvas.toDataURL());
-              
-              // Explicitly release canvas memory
-              canvas.width = 0;
-              canvas.height = 0;
+            const page1 = await pdf.getPage(1);
+            const vp1 = page1.getPageViewport ? page1.getPageViewport({ scale: 0.5 }) : page1.getViewport({ scale: 0.5 });
+            const c1 = document.createElement("canvas");
+            c1.width = vp1.width;
+            c1.height = vp1.height;
+            const ctx1 = c1.getContext("2d");
+            if (ctx1) {
+              await (page1 as any).render({ canvasContext: ctx1, viewport: vp1 }).promise;
+              newThumbnails.push(c1.toDataURL("image/jpeg", 0.8));
+              c1.width = 0;
+              c1.height = 0;
             }
-          } catch (thumbErr) {
-            console.warn("Non-fatal error generating thumbnails:", thumbErr);
+          } catch (tErr) {
+            console.warn("Non-fatal first thumbnail error:", tErr);
+          }
+
+          // Asynchronously render remaining thumbnails for multi-page documents so all pages are visible
+          if (pdf.numPages > 1) {
+            setTimeout(async () => {
+              for (let pageIdx = 2; pageIdx <= pdf.numPages; pageIdx++) {
+                try {
+                  const p = await pdf.getPage(pageIdx);
+                  const vp = p.getViewport({ scale: 0.35 });
+                  const tc = document.createElement("canvas");
+                  tc.width = vp.width;
+                  tc.height = vp.height;
+                  const tCtx = tc.getContext("2d");
+                  if (tCtx) {
+                    await (p as any).render({ canvasContext: tCtx, viewport: vp }).promise;
+                    const thumbUrl = tc.toDataURL("image/jpeg", 0.75);
+                    setState((prev) => {
+                      const updated = [...prev.thumbnails];
+                      updated[pageIdx - 1] = thumbUrl;
+                      return { ...prev, thumbnails: updated };
+                    });
+                    tc.width = 0;
+                    tc.height = 0;
+                  }
+                } catch (e) {
+                  // Non-fatal thumbnail error
+                }
+              }
+            }, 80);
           }
 
           let initialZoom = 1;
+          userAdjustedZoomRef.current = false;
           try {
             if (wrapperRef.current) {
-              const containerWidth = Math.min(900, wrapperRef.current.clientWidth) - 48;
-              const containerHeight = wrapperRef.current.clientHeight - 48;
-              const firstPage = await pdf.getPage(1);
-              const firstPageViewport = firstPage.getViewport({ scale: 1.0 });
-              if (firstPageViewport.width > 0 && firstPageViewport.height > 0) {
-                const scaleWidth = containerWidth / firstPageViewport.width;
-                const scaleHeight = containerHeight / firstPageViewport.height;
-                initialZoom = Math.max(0.1, Math.min(scaleWidth, scaleHeight));
-                // Round to 2 decimals
-                initialZoom = Math.floor(initialZoom * 100) / 100;
+              const wrapperWidth = wrapperRef.current.clientWidth;
+              if (wrapperWidth > 150) {
+                const containerWidth = Math.min(950, wrapperWidth) - 48;
+                const firstPage = await pdf.getPage(1);
+                const firstPageViewport = firstPage.getViewport({ scale: 1.0 });
+                if (firstPageViewport.width > 0) {
+                  const scaleWidth = containerWidth / firstPageViewport.width;
+                  // Comfortably fit page width to enable full natural vertical scrolling
+                  initialZoom = Math.min(1.2, Math.max(0.65, Math.floor(scaleWidth * 100) / 100));
+                }
               }
             }
           } catch (zoomErr) {
@@ -2668,14 +2724,17 @@ const PdfEditorWorkspace = React.forwardRef(
           }
 
           if (!isPageVectorCopied) {
-            // Decrypted high-resolution export for encrypted/protected PDFs or unsupported formats
+            // Decrypted high-resolution export for encrypted/protected PDFs or unsupported formats (300 DPI Lossless)
             copiedPage = finalPdfDoc.addPage([viewport.width, viewport.height]);
-            const renderScale = 3.0; // 216 DPI, sharp, crystal clear
+            const renderScale = 4.0; // 300 DPI, ultra-sharp vector-grade clarity
             const renderViewport = pdfjsPage.getViewport({ scale: renderScale });
             const tempCanvas = document.createElement("canvas");
             const tempCtx = tempCanvas.getContext("2d", { willReadFrequently: true })!;
             tempCanvas.width = renderViewport.width;
             tempCanvas.height = renderViewport.height;
+
+            tempCtx.imageSmoothingEnabled = true;
+            tempCtx.imageSmoothingQuality = "high";
 
             // Fill solid white background so transparency doesn't produce black background
             tempCtx.fillStyle = "#ffffff";
@@ -2706,8 +2765,8 @@ const PdfEditorWorkspace = React.forwardRef(
               }
             }
 
-            const imgData = tempCanvas.toDataURL("image/jpeg", 0.95);
-            const img = await finalPdfDoc.embedJpg(imgData);
+            const imgData = tempCanvas.toDataURL("image/png");
+            const img = await finalPdfDoc.embedPng(imgData);
             copiedPage.drawImage(img, {
               x: 0,
               y: 0,

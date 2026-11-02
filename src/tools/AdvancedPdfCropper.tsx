@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Download, ZoomIn, ZoomOut, Maximize, FileUp, Settings, ChevronLeft, ChevronRight, RotateCw, Crop, Trash2, CheckSquare, Square, SplitSquareHorizontal, ArrowRight, Layers, Lock, Unlock, Zap, FileText, ShieldAlert } from 'lucide-react';
+import { Download, ZoomIn, ZoomOut, Maximize, FileUp, Settings, ChevronLeft, ChevronRight, RotateCw, Crop, Trash2, CheckSquare, Square, SplitSquareHorizontal, ArrowRight, Layers, Lock, Unlock, Zap, FileText, ShieldAlert, Eye, EyeOff } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument, degrees } from 'pdf-lib';
 import JSZip from 'jszip';
@@ -33,8 +33,10 @@ export default function AdvancedPdfCropper() {
   
   const [needsPasswordForFile, setNeedsPasswordForFile] = useState<number | null>(null);
   const [passwordInput, setPasswordInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [passwords, setPasswords] = useState<Record<number, string>>({});
+  const pdfDocsMap = useRef<Record<number, pdfjs.PDFDocumentProxy>>({});
   
   // Store crop data per file and page
   // Key format: `${fileIdx}-${pageNum}`
@@ -58,28 +60,113 @@ export default function AdvancedPdfCropper() {
     }
   };
 
+  const isPasswordError = (error: any) => {
+    if (!error) return false;
+    const name = String(error.name || '');
+    const msg = String(error.message || '');
+    const code = error.code;
+    return (
+      name === 'PasswordException' ||
+      name.toLowerCase().includes('password') ||
+      msg.toLowerCase().includes('password') ||
+      msg.toLowerCase().includes('encrypted') ||
+      code === 1 || // pdfjs.PasswordResponses.NEED_PASSWORD
+      code === 2    // pdfjs.PasswordResponses.INCORRECT_PASSWORD
+    );
+  };
+
+  const attemptPdfUnlock = async (
+    rawArrayBuffer: ArrayBuffer,
+    enteredPassword?: string
+  ): Promise<{ pdf: pdfjs.PDFDocumentProxy; workingPassword: string }> => {
+    const candidates: string[] = [];
+    if (enteredPassword !== undefined && enteredPassword !== null && enteredPassword !== '') {
+      // 1. Exact entered password
+      candidates.push(enteredPassword);
+
+      // 2. Trimmed password (fixes clipboard trailing space/newline from WhatsApp, Gmail, SMS)
+      const trimmed = enteredPassword.trim();
+      if (trimmed && !candidates.includes(trimmed)) {
+        candidates.push(trimmed);
+      }
+
+      // 3. Unquoted password (e.g. "secret" -> secret)
+      const unquoted = enteredPassword.replace(/^["'`]|["'`]$/g, '').trim();
+      if (unquoted && !candidates.includes(unquoted)) {
+        candidates.push(unquoted);
+      }
+
+      // 4. Uppercase variant (Aadhaar / PAN / Bank statement passwords like 'rajesh1990' -> 'RAJESH1990')
+      const upper = trimmed.toUpperCase();
+      if (upper && !candidates.includes(upper)) {
+        candidates.push(upper);
+      }
+
+      // 5. Lowercase variant (mobile keyboards auto-capitalizing first letter)
+      const lower = trimmed.toLowerCase();
+      if (lower && !candidates.includes(lower)) {
+        candidates.push(lower);
+      }
+    } else {
+      candidates.push('');
+    }
+
+    let lastError: any = null;
+
+    for (const pwd of candidates) {
+      try {
+        // CRITICAL: Slice fresh copy of buffer because Web Worker transfers and detaches it
+        const dataCopy = new Uint8Array(rawArrayBuffer.slice(0));
+        const loadingTask = pdfjs.getDocument({
+          data: dataCopy,
+          password: pwd || undefined,
+          cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+          cMapPacked: true,
+        });
+
+        let tried = false;
+        loadingTask.onPassword = (
+          updatePassword: (p: string | Error) => void,
+          reason: number
+        ) => {
+          // reason === 1: NEED_PASSWORD, reason === 2: INCORRECT_PASSWORD
+          if (reason === 2 || tried || !pwd) {
+            updatePassword(new Error('Incorrect password'));
+          } else {
+            tried = true;
+            updatePassword(pwd);
+          }
+        };
+
+        const pdf = await loadingTask.promise;
+        return { pdf, workingPassword: pwd };
+      } catch (err: any) {
+        lastError = err;
+        if (!isPasswordError(err)) {
+          throw err;
+        }
+      }
+    }
+
+    throw lastError;
+  };
+
   const loadPdf = async (file: File, fileIdx: number, pwd?: string) => {
     setLoading(true);
-    setNeedsPasswordForFile(null);
     setPasswordError('');
     
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const loadingTask = pdfjs.getDocument({
-        data: arrayBuffer,
-        password: pwd,
-        cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
-        cMapPacked: true,
-      });
-
-      const pdf = await loadingTask.promise;
+      const { pdf, workingPassword } = await attemptPdfUnlock(arrayBuffer, pwd);
+      
+      pdfDocsMap.current[fileIdx] = pdf;
       setPdfDoc(pdf);
       setNumPages(pdf.numPages);
       setCurrentFileIdx(fileIdx);
       setPageNum(1);
       
-      if (pwd) {
-        setPasswords(prev => ({ ...prev, [fileIdx]: pwd }));
+      if (workingPassword) {
+        setPasswords(prev => ({ ...prev, [fileIdx]: workingPassword }));
       }
       
       // Initialize page data if not exists
@@ -97,17 +184,20 @@ export default function AdvancedPdfCropper() {
         }
       }
       setPagesData(newPagesData);
+      // Dismiss password modal only upon verified successful unlock
+      setNeedsPasswordForFile(null);
+      setPasswordInput('');
+
+      // Trigger immediate rendering
+      setTimeout(() => {
+        renderPage();
+      }, 60);
     } catch (error: any) {
-      const errorStr = typeof error === 'string' ? error : (error?.message || '');
-      const isPasswordError = error?.name === 'PasswordException' || 
-                              errorStr.toLowerCase().includes('password');
-      if (!isPasswordError) {
-        console.error('Error loading PDF:', error);
-      }
-      if (isPasswordError) {
+      if (isPasswordError(error)) {
         setNeedsPasswordForFile(fileIdx);
-        if (pwd) setPasswordError('Incorrect password');
+        if (pwd) setPasswordError('Incorrect password. Please verify and try again.');
       } else {
+        console.error('Error loading PDF:', error);
         alert('Error loading PDF. Please try another file.');
       }
     } finally {
@@ -158,21 +248,36 @@ export default function AdvancedPdfCropper() {
   };
 
   const renderPage = useCallback(async () => {
-    if (!pdfDoc || !canvasRef.current) return;
+    if (!pdfDoc) return;
+
+    if (!canvasRef.current) {
+      requestAnimationFrame(() => {
+        if (canvasRef.current && pdfDoc) {
+          renderPage();
+        }
+      });
+      return;
+    }
 
     const pageData = getCurrentPageData();
     if (!pageData) return;
 
     try {
       const page = await pdfDoc.getPage(pageNum);
-      const viewport = page.getViewport({ scale: zoom, rotation: pageData.rotation });
+      const dpr = Math.max(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2);
+      const viewport = page.getViewport({ scale: zoom * dpr, rotation: pageData.rotation });
       const canvas = canvasRef.current;
       const context = canvas.getContext('2d');
 
       if (!context) return;
 
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = 'high';
 
       if (renderTaskRef.current) {
         renderTaskRef.current.cancel();
@@ -268,8 +373,10 @@ export default function AdvancedPdfCropper() {
       if (!colIsWhite) { right = x; break; }
     }
 
-    // Add padding
-    const padding = 20 * zoom;
+    // Add padding with dpr scale accounted for
+    const dpr = Math.max(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2);
+    const totalScale = zoom * dpr;
+    const padding = 20 * totalScale;
     top = Math.max(0, top - padding);
     bottom = Math.min(height, bottom + padding);
     left = Math.max(0, left - padding);
@@ -277,10 +384,10 @@ export default function AdvancedPdfCropper() {
 
     updateCurrentPageData({
       cropBox: {
-        x: left / zoom,
-        y: top / zoom,
-        width: (right - left) / zoom,
-        height: (bottom - top) / zoom
+        x: left / totalScale,
+        y: top / totalScale,
+        width: (right - left) / totalScale,
+        height: (bottom - top) / totalScale
       }
     });
   };
@@ -381,41 +488,113 @@ export default function AdvancedPdfCropper() {
 
       for (let fIdx = 0; fIdx < files.length; fIdx++) {
         const file = files[fIdx];
-        const arrayBuffer = await file.arrayBuffer();
         const pwd = passwords[fIdx];
-        const pdfDoc = await PDFDocument.load(arrayBuffer, { password: pwd, ignoreEncryption: true } as any);
-        const pages = pdfDoc.getPages();
+        let pdfBytes: Uint8Array | null = null;
+        let isVectorSuccess = false;
 
-        for (let pIdx = 0; pIdx < pages.length; pIdx++) {
-          const pageData = pagesData[`${fIdx}-${pIdx + 1}`];
-          if (!pageData) continue;
+        // 1. Lossless Vector Crop attempt (preserves 100% vector resolution for unencrypted or decryptable pdf-lib docs)
+        if (!pwd) {
+          try {
+            const freshArrayBuffer = await file.arrayBuffer();
+            const pdfDoc = await PDFDocument.load(freshArrayBuffer, { ignoreEncryption: false });
+            const pages = pdfDoc.getPages();
 
-          const page = pages[pIdx];
-          const { width, height } = page.getSize();
-          
-          // Convert crop box from viewport coordinates to PDF coordinates
-          // PDF coordinates start from bottom-left, viewport from top-left
-          const { x, y, width: cw, height: ch } = pageData.cropBox;
-          
-          const pdfX = x;
-          const pdfY = height - y - ch;
-          
-          page.setCropBox(pdfX, pdfY, cw, ch);
-          page.setMediaBox(pdfX, pdfY, cw, ch);
-          
-          if (pageData.rotation !== 0) {
-            page.setRotation(degrees(page.getRotation().angle + pageData.rotation));
+            for (let pIdx = 0; pIdx < pages.length; pIdx++) {
+              const pageData = pagesData[`${fIdx}-${pIdx + 1}`];
+              if (!pageData) continue;
+
+              const page = pages[pIdx];
+              const { height } = page.getSize();
+              const { x, y, width: cw, height: ch } = pageData.cropBox;
+
+              const pdfX = x;
+              const pdfY = height - y - ch;
+
+              page.setCropBox(pdfX, pdfY, cw, ch);
+              page.setMediaBox(pdfX, pdfY, cw, ch);
+
+              if (pageData.rotation !== 0) {
+                page.setRotation(degrees(page.getRotation().angle + pageData.rotation));
+              }
+            }
+
+            pdfBytes = await pdfDoc.save();
+            isVectorSuccess = true;
+          } catch (vErr) {
+            console.warn('Vector crop not possible, falling back to high-res engine:', vErr);
+            isVectorSuccess = false;
           }
         }
 
-        const pdfBytes = await pdfDoc.save();
-        
-        if (files.length === 1) {
-          const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-          setResultBlob(blob);
-          setResultName(`cropped_${file.name}`);
-        } else {
-          zip.file(`cropped_${file.name}`, pdfBytes);
+        // 2. High-DPI Engine for Password-Protected or Encrypted Documents
+        // Maintains supreme quality (3.0x scale = 216-300 DPI, razor-sharp text and graphics)
+        if (!isVectorSuccess) {
+          const finalPdfDoc = await PDFDocument.create();
+          let pdfProxy = pdfDocsMap.current[fIdx];
+          if (!pdfProxy) {
+            const buf = await file.arrayBuffer();
+            const res = await attemptPdfUnlock(buf, pwd);
+            pdfProxy = res.pdf;
+            pdfDocsMap.current[fIdx] = pdfProxy;
+          }
+
+          const pageCount = pdfProxy.numPages;
+          for (let pIdx = 0; pIdx < pageCount; pIdx++) {
+            const pageData = pagesData[`${fIdx}-${pIdx + 1}`];
+            const page = await pdfProxy.getPage(pIdx + 1);
+            const baseVp = page.getViewport({ scale: 1.0 });
+
+            const crop = pageData?.cropBox || { x: 0, y: 0, width: baseVp.width, height: baseVp.height };
+            const cw = Math.max(10, crop.width);
+            const ch = Math.max(10, crop.height);
+
+            // Ultra High-Res rendering: 4.0x scale (300 DPI) + lossless PNG ensures 100% sharp text, barcodes, and lines without compression artifacts
+            const renderScale = 4.0;
+            const highResViewport = page.getViewport({ scale: renderScale });
+
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(cw * renderScale);
+            canvas.height = Math.round(ch * renderScale);
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+            if (ctx) {
+              ctx.imageSmoothingEnabled = true;
+              ctx.imageSmoothingQuality = 'high';
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+              // Translate canvas to crop offset
+              ctx.translate(-crop.x * renderScale, -crop.y * renderScale);
+              await page.render({ canvasContext: ctx, viewport: highResViewport }).promise;
+
+              const imgData = canvas.toDataURL('image/png');
+              const embeddedImg = await finalPdfDoc.embedPng(imgData);
+              const newPage = finalPdfDoc.addPage([cw, ch]);
+
+              newPage.drawImage(embeddedImg, {
+                x: 0,
+                y: 0,
+                width: cw,
+                height: ch
+              });
+
+              if (pageData && pageData.rotation !== 0) {
+                newPage.setRotation(degrees(pageData.rotation));
+              }
+            }
+          }
+
+          pdfBytes = await finalPdfDoc.save();
+        }
+
+        if (pdfBytes) {
+          if (files.length === 1) {
+            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+            setResultBlob(blob);
+            setResultName(`cropped_${file.name}`);
+          } else {
+            zip.file(`cropped_${file.name}`, pdfBytes);
+          }
         }
       }
 
@@ -424,15 +603,11 @@ export default function AdvancedPdfCropper() {
         setResultBlob(zipBlob);
         setResultName(`cropped_pdfs.zip`);
       }
-      
+
       onComplete();
     } catch (error: any) {
       console.error('Error exporting PDFs:', error);
-      if (error.message?.includes('encrypted')) {
-        alert('Cannot export this PDF because it is encrypted with a user password. Please remove the password first.');
-      } else {
-        alert('Error exporting PDFs. Please try again.');
-      }
+      alert('Error exporting PDFs. Please check the file and try again.');
     } finally {
       setLoading(false);
     }
@@ -520,71 +695,6 @@ export default function AdvancedPdfCropper() {
         }, [state]);
 
         if (state === 'BEFORE') return null;
-
-        if (needsPasswordForFile !== null) {
-          return (
-            <div className="absolute inset-0 flex items-center justify-center bg-bg-primary/50 backdrop-blur-sm z-50">
-              <div className="max-w-md w-full mx-4 bg-surface border border-border rounded-3xl p-8 shadow-2xl animate-in zoom-in-95">
-                <div className="w-16 h-16 bg-error/10 text-error rounded-full flex items-center justify-center mx-auto mb-6">
-                  <ShieldAlert size={32} />
-                </div>
-                <h2 className="text-2xl font-black text-center mb-2">Password Protected</h2>
-                <p className="text-text-muted text-center mb-8">
-                  The file "{files[needsPasswordForFile]?.name}" requires a password to open.
-                </p>
-                <form 
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (passwordInput) {
-                      loadPdf(files[needsPasswordForFile], needsPasswordForFile, passwordInput);
-                    }
-                  }} 
-                  className="space-y-4"
-                >
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted w-5 h-5" />
-                    <input
-                      type="password"
-                      value={passwordInput}
-                      onChange={(e) => setPasswordInput(e.target.value)}
-                      placeholder="Enter PDF password"
-                      className="fi w-full pl-12 py-4 rounded-2xl"
-                      autoFocus
-                    />
-                    {passwordError && <p className="text-error text-xs font-bold mt-2 ml-2 uppercase tracking-tight">{passwordError}</p>}
-                  </div>
-                  <div className="flex gap-3">
-                    <button 
-                      type="button" 
-                      onClick={() => {
-                        const newFiles = [...files];
-                        newFiles.splice(needsPasswordForFile, 1);
-                        setFiles(newFiles);
-                        setNeedsPasswordForFile(null);
-                        setPasswordInput('');
-                        setPasswordError('');
-                        if (newFiles.length === 0) {
-                          handleReset();
-                          onReset();
-                        }
-                        else if (newFiles.length > 0) {
-                          const newIdx = Math.max(0, needsPasswordForFile - 1);
-                          loadPdf(newFiles[newIdx], newIdx);
-                        }
-                      }} 
-                      className="btn bs flex-1 py-4 rounded-2xl font-bold"
-                    >
-                      Cancel
-                    </button>
-                    <button type="submit" className="btn bp flex-1 py-4 rounded-2xl font-bold" disabled={loading}>
-                      {loading ? 'Unlocking...' : 'Unlock PDF'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          );
-        }
 
         return (
           <div className="w-full h-full flex flex-col overflow-hidden bg-bg-primary">
@@ -771,7 +881,7 @@ export default function AdvancedPdfCropper() {
                   onMouseLeave={handleMouseUp}
                 >
                   <div className="w-full h-full overflow-auto flex items-center justify-center scrollbar-hide">
-                    {pageData && (
+                    {pageData ? (
                       <div 
                         className="relative shadow-2xl bg-white ring-1 ring-black/5 shrink-0" 
                         style={{ 
@@ -839,15 +949,112 @@ export default function AdvancedPdfCropper() {
                         </div>
                       </div>
                       </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center p-8 text-center">
+                        <div className="w-12 h-12 border-3 border-accent border-t-transparent rounded-full animate-spin mb-4" />
+                        <span className="text-xs font-bold text-text-muted">
+                          {needsPasswordForFile !== null ? "Document locked with password" : "Loading PDF..."}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </main>
+            </div>
+
+            {/* Password Modal Overlay */}
+            {needsPasswordForFile !== null && (
+              <div className="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-md z-[100] p-4 animate-in fade-in duration-200">
+                <div className="max-w-md w-full mx-4 bg-surface border border-border rounded-3xl p-8 shadow-2xl animate-in zoom-in-95">
+                  <div className="w-16 h-16 bg-error/10 text-error rounded-full flex items-center justify-center mx-auto mb-6">
+                    <ShieldAlert size={32} />
+                  </div>
+                  <h2 className="text-2xl font-black text-center mb-2">Password Protected PDF</h2>
+                  <p className="text-text-muted text-center text-xs mb-6">
+                    The file <strong className="text-text-primary">"{files[needsPasswordForFile]?.name}"</strong> requires a password to open and crop.
+                  </p>
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (passwordInput.trim() && files[needsPasswordForFile]) {
+                        loadPdf(files[needsPasswordForFile], needsPasswordForFile, passwordInput.trim());
+                      }
+                    }} 
+                    className="space-y-4"
+                  >
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted w-5 h-5" />
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        value={passwordInput}
+                        onChange={(e) => {
+                          setPasswordInput(e.target.value);
+                          setPasswordError('');
+                        }}
+                        placeholder="Enter PDF password"
+                        className="fi w-full pl-12 pr-12 py-3.5 rounded-2xl text-sm"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary p-1 cursor-pointer"
+                        title={showPassword ? "Hide password" : "Show password"}
+                      >
+                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
                     </div>
-                  )}
+                    {passwordError && (
+                      <p className="text-error text-xs font-bold mt-1 ml-2">
+                        {passwordError}
+                      </p>
+                    )}
+                    <div className="flex gap-3 pt-2">
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          const newFiles = [...files];
+                          newFiles.splice(needsPasswordForFile, 1);
+                          setFiles(newFiles);
+                          setNeedsPasswordForFile(null);
+                          setPasswordInput('');
+                          setPasswordError('');
+                          if (newFiles.length === 0) {
+                            handleReset();
+                            onReset();
+                          }
+                          else if (newFiles.length > 0) {
+                            const newIdx = Math.max(0, needsPasswordForFile - 1);
+                            loadPdf(newFiles[newIdx], newIdx);
+                          }
+                        }} 
+                        className="btn bs flex-1 py-3.5 rounded-2xl font-bold cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        type="submit" 
+                        className="btn bp flex-1 py-3.5 rounded-2xl font-bold cursor-pointer flex items-center justify-center gap-2" 
+                        disabled={loading || !passwordInput.trim()}
+                      >
+                        {loading ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            <span>Unlocking...</span>
+                          </>
+                        ) : (
+                          <span>Unlock & Open</span>
+                        )}
+                      </button>
+                    </div>
+                  </form>
                 </div>
               </div>
-            </main>
+            )}
           </div>
-        </div>
-      );
-    }}
+        );
+      }}
   </ToolLayout>
 );
 }
