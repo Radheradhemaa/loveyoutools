@@ -326,28 +326,59 @@ export default function AdvancedPdfEditor() {
 
 const getFontFamilyForText = (text: string, originalFamily: string, rawFontName?: string): string => {
   const fonts: string[] = [];
+  const rawLower = (rawFontName || "").toLowerCase();
+  const familyLower = (originalFamily || "").toLowerCase();
+  const combined = `${rawLower} ${familyLower}`;
+
   if (rawFontName) {
-    // If pdf.js registered the font face in the stylesheet, use it first
     fonts.push(`"${rawFontName}"`);
   }
-  if (originalFamily) {
-    fonts.push(originalFamily);
-  } else {
-    fonts.push("sans-serif");
+
+  // Devanagari / Hindi script support
+  if (/[\u0900-\u097F]/.test(text || "")) {
+    const isSerif = combined.includes("serif") || 
+                    combined.includes("aparajita") || 
+                    combined.includes("times") || 
+                    combined.includes("mangal") || 
+                    combined.includes("devanagari-serif");
+    if (isSerif) {
+      fonts.push('"Aparajita"', '"Noto Serif Devanagari"');
+    } else {
+      fonts.push('"Mangal"', '"Noto Sans Devanagari"');
+    }
   }
 
-  if (/[\u0900-\u097F]/.test(text || "")) {
-    const familyLower = (originalFamily || "").toLowerCase();
-    const isSerif = familyLower.includes("serif") || 
-                    familyLower.includes("aparajita") || 
-                    familyLower.includes("times") || 
-                    familyLower.includes("mangal") || 
-                    familyLower.includes("devanagari-serif");
-    if (isSerif) {
-      fonts.unshift('"Aparajita"', '"Noto Serif Devanagari"');
-    } else {
-      fonts.unshift('"Mangal"', '"Noto Sans Devanagari"');
-    }
+  // Intelligent matching of standard font families
+  if (combined.includes("calibri") || combined.includes("carlito")) {
+    fonts.push('"Calibri"', '"Carlito"', '"Segoe UI"', 'sans-serif');
+  } else if (combined.includes("cambria") || combined.includes("caladea")) {
+    fonts.push('"Cambria"', '"Caladea"', '"Georgia"', 'serif');
+  } else if (combined.includes("times") || combined.includes("georgia") || combined.includes("garamond") || combined.includes("minion") || combined.includes("serif")) {
+    fonts.push('"Times New Roman"', '"Times"', '"Georgia"', '"Garamond"', 'serif');
+  } else if (combined.includes("courier") || combined.includes("mono") || combined.includes("consolas")) {
+    fonts.push('"Courier New"', '"Courier"', '"Consolas"', '"Liberation Mono"', 'monospace');
+  } else if (combined.includes("arial") || combined.includes("helvet") || combined.includes("liberation")) {
+    fonts.push('"Arial"', '"Helvetica Neue"', '"Helvetica"', '"Liberation Sans"', 'sans-serif');
+  } else if (combined.includes("segoe")) {
+    fonts.push('"Segoe UI"', '"Segoe"', 'sans-serif');
+  } else if (combined.includes("roboto")) {
+    fonts.push('"Roboto"', 'sans-serif');
+  } else if (combined.includes("open") && combined.includes("sans")) {
+    fonts.push('"Open Sans"', 'sans-serif');
+  } else if (combined.includes("tahoma")) {
+    fonts.push('"Tahoma"', '"Verdana"', 'sans-serif');
+  } else if (combined.includes("verdana")) {
+    fonts.push('"Verdana"', '"Geneva"', 'sans-serif');
+  } else if (combined.includes("trebuchet")) {
+    fonts.push('"Trebuchet MS"', 'sans-serif');
+  } else if (originalFamily) {
+    fonts.push(originalFamily);
+  } else {
+    fonts.push('sans-serif');
+  }
+
+  if (originalFamily && !fonts.includes(originalFamily)) {
+    fonts.push(originalFamily);
   }
 
   const uniqueFonts = Array.from(new Set(fonts));
@@ -418,17 +449,14 @@ const PixelPerfectBlock = ({
   const targetWidth = block.width * state.zoom;
 
   let letterSpacing = 0;
-  if (naturalWidth > 0 && textLength > 1 && !isModified) {
-    const rawSpacing = (targetWidth - naturalWidth) / (textLength - 1);
-    // Avoid extreme stretches
-    const maxSpacing = Math.min(1.5, Math.max(0, block.fontSize * state.zoom * 0.04));
-    const minSpacing = -1.5;
-    letterSpacing = Math.max(minSpacing, Math.min(maxSpacing, rawSpacing));
+  if (naturalWidth > 0 && textLength > 1) {
+    if (!isModified || Math.abs(textLength - originalLength) <= Math.max(1, Math.round(originalLength * 0.4))) {
+      const rawSpacing = (targetWidth - naturalWidth) / (textLength - 1);
+      const maxSpacing = Math.min(2.0, Math.max(0, block.fontSize * state.zoom * 0.06));
+      const minSpacing = -1.5;
+      letterSpacing = Math.max(minSpacing, Math.min(maxSpacing, rawSpacing));
+    }
   }
-  
-  // When modified or editing, we don't try to stretch it to original width bounds
-  // We just let it render naturally, but keep original letterSpacing if possible, or 0.
-  // Actually, setting to 0 when modified prevents weird jumps.
   
   const getWeightNumber = (w: any) => {
     if (!w) return 400;
@@ -436,22 +464,18 @@ const PixelPerfectBlock = ({
     const num = parseInt(w, 10);
     if (!isNaN(num)) return num;
     const s = String(w).toLowerCase();
-    if (s === "bold") return 700;
-    if (s === "normal") return 400;
+    if (s === "bold" || s === "700") return 700;
+    if (s === "normal" || s === "400") return 400;
     if (s === "semibold" || s === "medium" || s === "500" || s === "600") return 600;
+    if (s === "black" || s === "heavy" || s === "900") return 900;
     return 400;
   };
-
-  // Exact styling variables to clone original typography perfectly
-  const isOriginalWeight = block.fontWeight === block.originalFontWeight;
-  const isOriginalStyle = block.fontStyle === block.originalFontStyle;
-  const isOriginalFontFamily = !block.fontFamily || block.fontFamily === block.originalFontName;
 
   const fontStyleObj = {
     fontFamily: getFontFamilyForText(text, block.fontFamily, block.originalFontName),
     fontSize: block.fontSize * state.zoom,
-    fontWeight: (block.isOriginal && isOriginalWeight && isOriginalFontFamily) ? 400 : getWeightNumber(block.fontWeight),
-    fontStyle: (block.isOriginal && isOriginalStyle && isOriginalFontFamily) ? "normal" : (block.fontStyle || "normal"),
+    fontWeight: getWeightNumber(block.fontWeight),
+    fontStyle: block.fontStyle || "normal",
   };
 
   // Transform matrix from original block if preserved
@@ -630,12 +654,16 @@ const PixelPerfectBlock = ({
       
       {(block.isDeleted || isModified || isEditing) && block.isOriginal && (
         <div style={{
-          ...commonStyle,
-          width: targetWidth,
-          backgroundColor: block.bgColor || "white",
+          position: "absolute",
+          left: (block.left - 0.5) * state.zoom,
+          top: (block.top - 1) * state.zoom,
+          width: targetWidth + 1.5 * state.zoom,
+          height: (block.fontSize * 1.25) * state.zoom,
+          backgroundColor: block.bgColor || "#ffffff",
           color: "transparent",
           pointerEvents: "none",
-          zIndex: 1, // put it behind the actual text which has zIndex: 3
+          zIndex: 1,
+          borderRadius: "1px",
         }} />
       )}
     </>
@@ -1491,12 +1519,16 @@ const PdfEditorWorkspace = React.forwardRef(
               .replace(/ps.*/i, "");
 
             let resolvedFont = `"${cleanedFontName}", sans-serif`;
-            if (
+            if (fontNameLower.includes("calibri") || fontNameLower.includes("carlito")) {
+              resolvedFont = `"${cleanedFontName}", "Calibri", "Carlito", "Segoe UI", sans-serif`;
+            } else if (fontNameLower.includes("cambria") || fontNameLower.includes("caladea")) {
+              resolvedFont = `"${cleanedFontName}", "Cambria", "Caladea", "Georgia", serif`;
+            } else if (
               fontNameLower.includes("arial") ||
               fontNameLower.includes("helvet") ||
               fontNameLower.includes("verdana")
             ) {
-              resolvedFont = `"${cleanedFontName}", Arial, Helvetica, sans-serif`;
+              resolvedFont = `"${cleanedFontName}", Arial, "Helvetica Neue", Helvetica, sans-serif`;
             } else if (
               fontNameLower.includes("times") ||
               fontNameLower.includes("georgia") ||
@@ -1508,6 +1540,10 @@ const PdfEditorWorkspace = React.forwardRef(
               fontNameLower.includes("mono")
             ) {
               resolvedFont = `"${cleanedFontName}", "Courier New", Courier, monospace`;
+            } else if (fontNameLower.includes("segoe")) {
+              resolvedFont = `"${cleanedFontName}", "Segoe UI", "Segoe", sans-serif`;
+            } else if (fontNameLower.includes("roboto")) {
+              resolvedFont = `"${cleanedFontName}", Roboto, sans-serif`;
             }
 
             let color = "#000000";
@@ -1520,23 +1556,62 @@ const PdfEditorWorkspace = React.forwardRef(
             } else if (item.g !== undefined) {
               const gVal = item.g <= 1 && item.g > 0 ? Math.round(item.g * 255) : Math.round(item.g);
               color = `rgb(${gVal}, ${gVal}, ${gVal})`;
+            } else if (context) {
+              // Direct high-res sampling of original text color from rendered canvas
+              try {
+                const sampleStartX = Math.round((x + Math.min(textWidth * 0.25, 20)) * renderScale);
+                const sampleStartY = Math.round((y - fontSize * 0.45) * renderScale);
+                if (sampleStartX >= 0 && sampleStartX < tempCanvas.width - 4 && sampleStartY >= 0 && sampleStartY < tempCanvas.height - 4) {
+                  const sampleData = context.getImageData(sampleStartX, sampleStartY, 4, 4).data;
+                  let darkest = 999;
+                  let targetR = 0, targetG = 0, targetB = 0;
+                  for (let i = 0; i < sampleData.length; i += 4) {
+                    const r = sampleData[i];
+                    const g = sampleData[i + 1];
+                    const b = sampleData[i + 2];
+                    const a = sampleData[i + 3];
+                    if (a > 120) {
+                      const lum = (r * 299 + g * 587 + b * 114) / 1000;
+                      if (lum < darkest) {
+                        darkest = lum;
+                        targetR = r;
+                        targetG = g;
+                        targetB = b;
+                      }
+                    }
+                  }
+                  if (darkest < 220) {
+                    color = `rgb(${targetR}, ${targetG}, ${targetB})`;
+                  }
+                }
+              } catch {
+                // Ignore canvas context read errors
+              }
             }
 
             const textWidth = item.textWidth;
             const blockId = Math.random().toString(36).substring(7);
 
+            // Multi-point sampling around the text block to get true paper/background color
             let sampledBgColor = "#ffffff";
             if (context) {
-              const sampleX = Math.round((x - 1.5) * renderScale);
-              const sampleY = Math.round((y - fontSize - 1.5) * renderScale);
-              if (sampleX >= 0 && sampleX < tempCanvas.width && sampleY >= 0 && sampleY < tempCanvas.height) {
-                try {
-                  const pixel = context.getImageData(sampleX, sampleY, 1, 1).data;
-                  if (pixel[3] > 0) {
-                    sampledBgColor = `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
+              const checkPoints = [
+                { sx: Math.round((x - 2) * renderScale), sy: Math.round((y - fontSize - 2) * renderScale) },
+                { sx: Math.round((x + textWidth + 2) * renderScale), sy: Math.round((y - fontSize - 2) * renderScale) },
+                { sx: Math.round((x - 2) * renderScale), sy: Math.round((y + 2) * renderScale) },
+              ];
+              for (const pt of checkPoints) {
+                if (pt.sx >= 0 && pt.sx < tempCanvas.width && pt.sy >= 0 && pt.sy < tempCanvas.height) {
+                  try {
+                    const pixel = context.getImageData(pt.sx, pt.sy, 1, 1).data;
+                    const lum = (pixel[0] * 299 + pixel[1] * 587 + pixel[2] * 114) / 1000;
+                    if (lum > 190 && pixel[3] > 0) {
+                      sampledBgColor = `rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`;
+                      break;
+                    }
+                  } catch {
+                    // Ignore canvas sampling errors
                   }
-                } catch (e) {
-                  sampledBgColor = "#ffffff";
                 }
               }
             }
@@ -2687,6 +2762,16 @@ const PdfEditorWorkspace = React.forwardRef(
         const helveticaObliqueFont = await finalPdfDoc.embedFont(StandardFonts.HelveticaOblique);
         const helveticaBoldObliqueFont = await finalPdfDoc.embedFont(StandardFonts.HelveticaBoldOblique);
 
+        const timesRomanFont = await finalPdfDoc.embedFont(StandardFonts.TimesRoman);
+        const timesRomanBoldFont = await finalPdfDoc.embedFont(StandardFonts.TimesRomanBold);
+        const timesRomanItalicFont = await finalPdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+        const timesRomanBoldItalicFont = await finalPdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic);
+
+        const courierFont = await finalPdfDoc.embedFont(StandardFonts.Courier);
+        const courierBoldFont = await finalPdfDoc.embedFont(StandardFonts.CourierBold);
+        const courierObliqueFont = await finalPdfDoc.embedFont(StandardFonts.CourierOblique);
+        const courierBoldObliqueFont = await finalPdfDoc.embedFont(StandardFonts.CourierBoldOblique);
+
         const fontCache: Record<string, any> = {};
 
         const detectFontUrl = (text: string, isRegularOrBold?: boolean, fontFamily?: string): string | null => {
@@ -2889,9 +2974,37 @@ const PdfEditorWorkspace = React.forwardRef(
                  }
                } else {
                  const isItalic = textBlock.fontStyle === "italic" || textBlock.fontStyle === "oblique";
-                 if (isBold && isItalic) fontToUse = helveticaBoldObliqueFont;
-                 else if (isBold) fontToUse = helveticaBoldFont;
-                 else if (isItalic) fontToUse = helveticaObliqueFont;
+                 const famLower = (textBlock.fontFamily || "").toLowerCase();
+                 const isSerif = famLower.includes("times") || 
+                                 famLower.includes("serif") || 
+                                 famLower.includes("cambria") || 
+                                 famLower.includes("georgia") || 
+                                 famLower.includes("garamond") || 
+                                 famLower.includes("caladea") || 
+                                 famLower.includes("roman") || 
+                                 famLower.includes("minion");
+                 const isMono = famLower.includes("courier") || 
+                                famLower.includes("mono") || 
+                                famLower.includes("consolas") || 
+                                famLower.includes("code") || 
+                                famLower.includes("typewriter");
+
+                 if (isSerif) {
+                   if (isBold && isItalic) fontToUse = timesRomanBoldItalicFont;
+                   else if (isBold) fontToUse = timesRomanBoldFont;
+                   else if (isItalic) fontToUse = timesRomanItalicFont;
+                   else fontToUse = timesRomanFont;
+                 } else if (isMono) {
+                   if (isBold && isItalic) fontToUse = courierBoldObliqueFont;
+                   else if (isBold) fontToUse = courierBoldFont;
+                   else if (isItalic) fontToUse = courierObliqueFont;
+                   else fontToUse = courierFont;
+                 } else {
+                   if (isBold && isItalic) fontToUse = helveticaBoldObliqueFont;
+                   else if (isBold) fontToUse = helveticaBoldFont;
+                   else if (isItalic) fontToUse = helveticaObliqueFont;
+                   else fontToUse = helveticaFont;
+                 }
                }
 
                let r = 0, g = 0, b = 0;
