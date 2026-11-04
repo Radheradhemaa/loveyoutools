@@ -20,6 +20,8 @@ import {
   Replace,
   Image as ImageIcon,
   CheckCircle2,
+  Check,
+  Minus,
   X,
   ChevronLeft,
   ChevronRight,
@@ -500,7 +502,8 @@ const PixelPerfectBlock = ({
 
       {!block.isDeleted && (
         isEditing ? (
-          <textarea
+          <input
+            type="text"
             autoFocus
             spellCheck={false}
             autoComplete="off"
@@ -513,16 +516,23 @@ const PixelPerfectBlock = ({
             data-spellcheck="false"
             data-page-number={state.currentPage}
             data-block-id={block.id}
-            className="editable-text absolute bg-transparent outline-none ring-0 focus:ring-0 focus:outline-none shadow-none resize-none"
+            className="editable-text absolute outline-none rounded-md transition-shadow"
             style={{
-              ...commonStyle,
-              zIndex: 3,
+              position: "absolute",
+              left: block.left * state.zoom,
+              top: block.top * state.zoom,
+              minWidth: Math.max(targetWidth + 24, 70),
+              height: Math.max(block.fontSize * state.zoom * 1.35, 24),
+              lineHeight: "1.25",
+              padding: "2px 6px",
+              zIndex: 100,
               color: block.color || "#000000",
               caretColor: block.color || "#000000",
               cursor: "text",
               pointerEvents: "auto",
-              boxShadow: "0 0 0 2px rgba(59, 130, 246, 0.8)",
+              boxShadow: "0 0 0 2px #2563eb, 0 4px 14px rgba(0,0,0,0.18)",
               backgroundColor: "#ffffff",
+              border: "1px solid #3b82f6",
               ...fontStyleObj,
             }}
             value={text}
@@ -556,7 +566,7 @@ const PixelPerfectBlock = ({
                 if (textObj) {
                   textObj.set({
                     text: val,
-                    visible: false, // keep it hidden while actively editing via textarea to avoid overlapping text
+                    visible: false,
                   });
                 }
                 fabricCanvas.current.renderAll();
@@ -565,7 +575,6 @@ const PixelPerfectBlock = ({
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                // Deselect or just stop the newline
                 (e.currentTarget as HTMLElement).blur();
               }
             }}
@@ -678,10 +687,12 @@ const PdfEditorWorkspace = React.forwardRef(
              fabricCanvas.current?.remove(prev.editingText.targetObj);
           } else {
              const fabricUpdates: any = {};
+             if (updates.text !== undefined) fabricUpdates.text = updates.text;
              if (updates.color !== undefined) fabricUpdates.fill = updates.color;
              if (updates.fontSize !== undefined) fabricUpdates.fontSize = updates.fontSize;
              if (updates.fontWeight !== undefined) fabricUpdates.fontWeight = updates.fontWeight;
              if (updates.fontStyle !== undefined) fabricUpdates.fontStyle = updates.fontStyle;
+             if (updates.fontFamily !== undefined) fabricUpdates.fontFamily = updates.fontFamily;
              prev.editingText.targetObj.set(fabricUpdates);
           }
           fabricCanvas.current?.renderAll();
@@ -739,46 +750,7 @@ const PdfEditorWorkspace = React.forwardRef(
       stateRef.current = state;
     }, [state]);
 
-    useEffect(() => {
-      const handleClickOutside = (e: MouseEvent) => {
-        if (!state.editingText) return;
-        
-        const target = e.target as HTMLElement;
-        if (!target) return;
-        
-        const isInsideTextarea = target.classList.contains("editable-text") || target.tagName === "TEXTAREA";
-        const isInsideToolbar = target.closest(".floating-text-toolbar") || target.classList.contains("floating-text-toolbar");
-        
-        if (!isInsideTextarea && !isInsideToolbar) {
-          setState((prev) => {
-            if (!prev.editingText) return prev;
-            if (fabricCanvas.current && prev.editingText.blockId) {
-              const blockId = prev.editingText.blockId;
-              const pageBlocks = prev.textData[prev.currentPage] || [];
-              const block = pageBlocks.find((b: any) => b.id === blockId);
-              if (block) {
-                const isModifiedNow = block.isDeleted || 
-                                      block.text !== block.originalText || 
-                                      block.color !== block.originalColor || 
-                                      block.fontSize !== (block.originalFontSize || block.fontSize) ||
-                                      block.fontWeight !== (block.originalFontWeight || block.fontWeight) ||
-                                      block.fontStyle !== (block.originalFontStyle || block.fontStyle);
 
-                const rect = fabricCanvas.current.getObjects().find((o: any) => o.type === "rect" && o.data?.blockId === blockId && o.data?.isWhiteout);
-                if (rect) {
-                  rect.set({ visible: isModifiedNow });
-                }
-                fabricCanvas.current.renderAll();
-              }
-            }
-            return { ...prev, editingText: null };
-          });
-        }
-      };
-      
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [state.editingText, state.currentPage]);
 
     const sensors = useSensors(
       useSensor(PointerSensor),
@@ -827,6 +799,89 @@ const PdfEditorWorkspace = React.forwardRef(
         });
       }, 0);
     }, [state.currentPage]);
+
+    const commitAndCloseEditing = useCallback(() => {
+      setState((prev) => {
+        if (!prev.editingText) return prev;
+        if (fabricCanvas.current && prev.editingText.targetObj) {
+          prev.editingText.targetObj.set({
+            visible: true,
+            text: prev.editingText.text || "",
+          });
+          fabricCanvas.current.renderAll();
+        }
+        if (fabricCanvas.current && prev.editingText.blockId) {
+          const blockId = prev.editingText.blockId;
+          const pageBlocks = prev.textData[prev.currentPage] || [];
+          const block = pageBlocks.find((b: any) => b.id === blockId);
+          if (block) {
+            const isModifiedNow = block.isDeleted || 
+                                  block.text !== block.originalText || 
+                                  block.color !== block.originalColor || 
+                                  block.fontSize !== (block.originalFontSize || block.fontSize) ||
+                                  block.fontWeight !== (block.originalFontWeight || block.fontWeight) ||
+                                  block.fontStyle !== (block.originalFontStyle || block.fontStyle);
+
+            const rect = fabricCanvas.current.getObjects().find((o: any) => o.type === "rect" && o.data?.blockId === blockId && o.data?.isWhiteout);
+            if (rect) {
+              rect.set({ visible: isModifiedNow });
+            }
+            fabricCanvas.current.renderAll();
+          }
+        }
+        return { ...prev, editingText: null };
+      });
+      savePageState();
+    }, [savePageState]);
+
+    const deleteActiveText = useCallback(() => {
+      setState((prev) => {
+        if (!prev.editingText) return prev;
+        if (fabricCanvas.current && prev.editingText.targetObj) {
+          fabricCanvas.current.remove(prev.editingText.targetObj);
+          fabricCanvas.current.renderAll();
+          return { ...prev, editingText: null, selectedObject: null, showFloatingMenu: false };
+        }
+        if (prev.editingText.blockId) {
+          const newTextData = { ...prev.textData };
+          const pageBlocks = [...(newTextData[prev.currentPage] || [])];
+          const idx = pageBlocks.findIndex(b => b.id === prev.editingText?.blockId);
+          if (idx > -1) {
+            pageBlocks[idx] = { ...pageBlocks[idx], isDeleted: true, text: "" };
+            if (fabricCanvas.current) {
+              const rect = fabricCanvas.current.getObjects().find((o: any) => o.type === "rect" && o.data?.blockId === prev.editingText.blockId && o.data?.isWhiteout);
+              if (rect) {
+                rect.set({ visible: true });
+              }
+              fabricCanvas.current.renderAll();
+            }
+          }
+          newTextData[prev.currentPage] = pageBlocks;
+          return { ...prev, textData: newTextData, editingText: null };
+        }
+        return { ...prev, editingText: null };
+      });
+      savePageState();
+    }, [savePageState]);
+
+    useEffect(() => {
+      const handleClickOutside = (e: MouseEvent) => {
+        if (!state.editingText) return;
+        
+        const target = e.target as HTMLElement;
+        if (!target) return;
+        
+        const isInsideTextarea = target.classList.contains("editable-text") || target.tagName === "TEXTAREA" || target.tagName === "INPUT";
+        const isInsideToolbar = target.closest(".floating-text-toolbar") || target.classList.contains("floating-text-toolbar");
+        
+        if (!isInsideTextarea && !isInsideToolbar) {
+          commitAndCloseEditing();
+        }
+      };
+      
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [state.editingText, commitAndCloseEditing]);
 
     const undo = async () => {
       if (state.historyIndex <= 0) return;
@@ -2015,24 +2070,20 @@ const PdfEditorWorkspace = React.forwardRef(
           clearTimeout(resizeTimeout);
           resizeTimeout = setTimeout(() => {
             if (originalDimensions.current.width > 0 && originalDimensions.current.height > 0) {
-              const wrapperWidth = entry.contentRect.width; 
-              const wrapperHeight = entry.contentRect.height;
-              const containerWidth = Math.min(900, wrapperWidth) - 48; // max-w-[900px] and padding
-              const containerHeight = wrapperHeight - 48;
-              
-              if (containerWidth > 0 && containerHeight > 0) {
-                const scaleWidth = containerWidth / originalDimensions.current.width;
-                const scaleHeight = containerHeight / originalDimensions.current.height;
-                const scale = Math.min(scaleWidth, scaleHeight);
-                setState(prev => {
-                  // Round to 3 decimal places to avoid infinite loops and micro-adjustments
-                  const roundedNewScale = Math.round(scale * 1000) / 1000;
-                  const roundedPrevScale = Math.round(prev.zoom * 1000) / 1000;
-                  if (Math.abs(roundedNewScale - roundedPrevScale) > 0.005) {
-                    return { ...prev, zoom: roundedNewScale };
-                  }
-                  return prev;
-                });
+              // Only auto-fit width if the user has not manually adjusted zoom
+              if (!userAdjustedZoomRef.current) {
+                const wrapperWidth = entry.contentRect.width;
+                const containerWidth = Math.min(950, wrapperWidth) - 48;
+                if (containerWidth > 0) {
+                  const scaleWidth = containerWidth / originalDimensions.current.width;
+                  const scale = Math.min(1.2, Math.max(0.65, Math.round(scaleWidth * 100) / 100));
+                  setState((prev) => {
+                    if (Math.abs(scale - prev.zoom) > 0.04) {
+                      return { ...prev, zoom: scale };
+                    }
+                    return prev;
+                  });
+                }
               }
             }
           }, 150);
@@ -3256,13 +3307,14 @@ const PdfEditorWorkspace = React.forwardRef(
 
             <div className="hidden sm:flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200">
               <button
-                onClick={() =>
+                onClick={() => {
+                  userAdjustedZoomRef.current = true;
                   setState((prev) => ({
                     ...prev,
-                    zoom: Math.max(0.3, prev.zoom - 0.1),
-                  }))
-                }
-                className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all"
+                    zoom: Math.max(0.3, Math.round((prev.zoom - 0.1) * 100) / 100),
+                  }));
+                }}
+                className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all cursor-pointer"
                 title="Zoom Out"
               >
                 <ZoomOut className="w-4 h-4" />
@@ -3270,12 +3322,13 @@ const PdfEditorWorkspace = React.forwardRef(
               
               <button
                 onClick={() => {
+                  userAdjustedZoomRef.current = true;
                   if (wrapperRef.current && originalDimensions.current.width > 0) {
-                    const widthScale = (wrapperRef.current.clientWidth - 48) / originalDimensions.current.width;
-                    setState(prev => ({ ...prev, zoom: Math.round(widthScale * 100) / 100 }));
+                    const widthScale = (wrapperRef.current.clientWidth - 64) / originalDimensions.current.width;
+                    setState(prev => ({ ...prev, zoom: Math.max(0.3, Math.min(3.0, Math.round(widthScale * 100) / 100)) }));
                   }
                 }}
-                className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all"
+                className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all cursor-pointer"
                 title="Fit Width"
               >
                 <Maximize2 className="w-4 h-4" />
@@ -3283,35 +3336,40 @@ const PdfEditorWorkspace = React.forwardRef(
               
               <button
                 onClick={() => {
+                  userAdjustedZoomRef.current = true;
                   if (wrapperRef.current && originalDimensions.current.width > 0 && originalDimensions.current.height > 0) {
-                    const widthScale = (wrapperRef.current.clientWidth - 48) / originalDimensions.current.width;
-                    const heightScale = (wrapperRef.current.clientHeight - 48) / originalDimensions.current.height;
+                    const widthScale = (wrapperRef.current.clientWidth - 64) / originalDimensions.current.width;
+                    const heightScale = (wrapperRef.current.clientHeight - 64) / originalDimensions.current.height;
                     const scale = Math.min(widthScale, heightScale);
-                    setState(prev => ({ ...prev, zoom: Math.round(scale * 100) / 100 }));
+                    setState(prev => ({ ...prev, zoom: Math.max(0.3, Math.min(3.0, Math.round(scale * 100) / 100)) }));
                   }
                 }}
-                className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all"
+                className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all cursor-pointer"
                 title="Fit Page"
               >
                 <Minimize2 className="w-4 h-4" />
               </button>
 
               <button
-                onClick={() => setState(prev => ({ ...prev, zoom: 1 }))}
-                className="px-2 font-black text-[10px] w-12 text-center text-gray-600 hover:text-black transition-all"
+                onClick={() => {
+                  userAdjustedZoomRef.current = true;
+                  setState(prev => ({ ...prev, zoom: 1 }));
+                }}
+                className="px-2 font-black text-[10px] w-12 text-center text-gray-600 hover:text-black transition-all cursor-pointer"
                 title="100% Zoom"
               >
                 {Math.round(state.zoom * 100)}%
               </button>
 
               <button
-                onClick={() =>
+                onClick={() => {
+                  userAdjustedZoomRef.current = true;
                   setState((prev) => ({
                     ...prev,
-                    zoom: Math.min(3.0, prev.zoom + 0.1),
-                  }))
-                }
-                className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all"
+                    zoom: Math.min(3.0, Math.round((prev.zoom + 0.1) * 100) / 100),
+                  }));
+                }}
+                className="p-1.5 hover:bg-white rounded-lg shadow-none hover:shadow-sm text-gray-600 transition-all cursor-pointer"
                 title="Zoom In"
               >
                 <ZoomIn className="w-4 h-4" />
@@ -3515,12 +3573,34 @@ const PdfEditorWorkspace = React.forwardRef(
           </aside>
 
           {/* Canvas Workspace */}
-          <div ref={wrapperRef} className="preview-wrapper flex-1 w-full h-full overflow-auto bg-[#e9ecef] relative p-4 sm:p-8 custom-scrollbar text-center whitespace-nowrap">
-            <span className="inline-block h-full align-middle" aria-hidden="true"></span>
-            <div
-              ref={containerRef}
-              className="preview-container inline-block align-middle whitespace-normal text-left relative"
-            >
+          <div 
+            ref={wrapperRef} 
+            className="preview-wrapper flex-1 w-full h-full overflow-auto bg-[#e4e7eb] dark:bg-[#111315] relative custom-scrollbar p-4 sm:p-6 md:p-8 select-none outline-none"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+              if (e.key === "PageDown" || (e.key === "ArrowDown" && e.altKey)) {
+                if (state.currentPage < state.pageOrder.length) {
+                  e.preventDefault();
+                  userAdjustedZoomRef.current = true;
+                  setState(prev => ({ ...prev, currentPage: prev.currentPage + 1 }));
+                  wrapperRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                }
+              } else if (e.key === "PageUp" || (e.key === "ArrowUp" && e.altKey)) {
+                if (state.currentPage > 1) {
+                  e.preventDefault();
+                  userAdjustedZoomRef.current = true;
+                  setState(prev => ({ ...prev, currentPage: prev.currentPage - 1 }));
+                  wrapperRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                }
+              }
+            }}
+          >
+            <div className="w-max min-w-full min-h-full flex flex-col items-center justify-start pb-28">
+              <div
+                ref={containerRef}
+                className="preview-container relative flex flex-col items-center shrink-0 py-2 text-left"
+              >
               {/* Context Floating Menu */}
             <AnimatePresence>
               {state.showFloatingMenu && (
@@ -3530,8 +3610,8 @@ const PdfEditorWorkspace = React.forwardRef(
                   exit={{ opacity: 0, y: 10, scale: 0.95 }}
                   style={{
                     position: "absolute",
-                    left: `clamp(0px, ${state.floatingMenuPos.x + 200}px, calc(100% - 300px))`,
-                    top: `clamp(0px, ${state.floatingMenuPos.y + 150}px, calc(100% - 100px))`,
+                    left: `clamp(10px, ${state.floatingMenuPos.x}px, calc(100% - 240px))`,
+                    top: `clamp(10px, ${state.floatingMenuPos.y > 50 ? state.floatingMenuPos.y : state.floatingMenuPos.y + 60}px, calc(100% - 70px))`,
                     zIndex: 100,
                   }}
                   className="flex items-center gap-1 bg-white border border-gray-200 shadow-[0_20px_50px_rgba(0,0,0,0.2)] rounded-2xl p-2 ring-1 ring-black/5 backdrop-blur-md"
@@ -3671,108 +3751,257 @@ const PdfEditorWorkspace = React.forwardRef(
                   </div>
                 )}
 
+                {/* In-place editor for targetObj (Fabric text objects) */}
+                {state.editingText && state.editingText.visible && state.editingText.targetObj && (
+                  <input
+                    type="text"
+                    autoFocus
+                    value={state.editingText.text || ""}
+                    onChange={(e) => updateActiveTextData({ text: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitAndCloseEditing();
+                      }
+                    }}
+                    className="editable-text absolute outline-none rounded-md transition-shadow font-medium"
+                    style={{
+                      position: "absolute",
+                      left: state.editingText.left,
+                      top: state.editingText.top,
+                      minWidth: Math.max(state.editingText.width + 24, 80),
+                      height: Math.max(state.editingText.height || 26, 26),
+                      lineHeight: "1.25",
+                      padding: "2px 6px",
+                      zIndex: 100,
+                      color: state.editingText.color || "#000000",
+                      caretColor: state.editingText.color || "#000000",
+                      cursor: "text",
+                      pointerEvents: "auto",
+                      boxShadow: "0 0 0 2px #2563eb, 0 4px 14px rgba(0,0,0,0.18)",
+                      backgroundColor: "#ffffff",
+                      border: "1px solid #3b82f6",
+                      fontSize: state.editingText.fontSize,
+                      fontFamily: state.editingText.fontFamily,
+                      fontWeight: state.editingText.fontWeight,
+                      fontStyle: state.editingText.fontStyle,
+                    }}
+                  />
+                )}
+
+                {/* Floating Rich Text Editor Window */}
                 {state.editingText && state.editingText.visible && (
                   <div
                     style={(() => {
-                      const isRightHalf = state.editingText.left > (originalDimensions.current.width * state.zoom) / 2;
-                      const baseTop = Math.max(state.editingText.top - 50, 0);
-                      if (isRightHalf) {
-                        return {
-                          position: "absolute",
-                          right: Math.max((originalDimensions.current.width * state.zoom) - state.editingText.left - state.editingText.width, 0),
-                          top: baseTop,
-                          zIndex: 1001,
-                        };
-                      }
+                      const pageWidth = originalDimensions.current.width * state.zoom;
+                      const toolbarWidth = 470;
+                      const textTop = state.editingText.top;
+                      const textLeft = state.editingText.left;
+                      const textHeight = state.editingText.height || 26;
+
+                      // Position above if there is space, otherwise place safely below the text
+                      const shouldPlaceBelow = textTop < 125;
+                      const calculatedTop = shouldPlaceBelow 
+                        ? textTop + textHeight + 14 
+                        : Math.max(10, textTop - 118);
+
+                      // Ensure toolbar stays within horizontal canvas bounds
+                      const calculatedLeft = Math.max(10, Math.min(textLeft - 10, Math.max(10, pageWidth - toolbarWidth - 10)));
+
                       return {
-                        position: "absolute",
-                        left: Math.max(state.editingText.left, 0),
-                        top: baseTop,
-                        zIndex: 1001,
+                        position: "absolute" as const,
+                        left: calculatedLeft,
+                        top: calculatedTop,
+                        zIndex: 1000,
+                        width: "min(470px, calc(100vw - 40px))",
                       };
                     })()}
-                    className="floating-text-toolbar flex items-center gap-1 bg-white border border-gray-200 shadow-xl rounded-lg p-1"
+                    className="floating-text-toolbar bg-white dark:bg-gray-900 border border-gray-200/90 dark:border-gray-700/90 shadow-[0_16px_48px_rgba(0,0,0,0.22)] rounded-2xl p-3 ring-1 ring-black/10 backdrop-blur-md flex flex-col gap-2.5 animate-in fade-in zoom-in-95 duration-150"
                   >
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        const weight = state.editingText?.fontWeight;
-                        const isOriginalBold = weight === "bold" || 
-                                               weight === "semibold" || 
-                                               weight === "medium" || 
-                                               weight === "700" || 
-                                               weight === "600" || 
-                                               weight === "500" || 
-                                               (typeof weight === "number" && weight > 400);
-                        const newWeight = isOriginalBold ? "normal" : "bold";
-                        updateActiveTextData({ fontWeight: newWeight });
-                      }}
-                      className={`p-1.5 rounded hover:bg-gray-100 ${(state.editingText.fontWeight === "bold" || state.editingText.fontWeight === "semibold" || state.editingText.fontWeight === "medium" || (typeof state.editingText.fontWeight === "number" && state.editingText.fontWeight > 400)) ? "bg-gray-200" : ""}`}
-                      title="Quick Bold Toggle"
-                    >
-                      <Bold className="w-4 h-4 text-gray-700" />
-                    </button>
-                    {/* Granular Font Weight / Boldness Slider */}
-                    <div className="flex items-center gap-1.5 px-2 bg-gray-50 rounded border border-gray-100/90 h-8 text-[11px] text-gray-600 font-medium select-none shrink-0" title="Adjust Font Weight / Boldness">
-                      <span className="font-bold tracking-tight text-[9px] uppercase text-gray-400">Weight</span>
-                      <input
-                        type="range"
-                        min="100"
-                        max="900"
-                        step="10"
-                        value={
-                          state.editingText.fontWeight === "bold"
-                            ? 700
-                            : state.editingText.fontWeight === "normal"
-                            ? 400
-                            : (typeof state.editingText.fontWeight === "number"
-                               ? state.editingText.fontWeight
-                               : parseInt(state.editingText.fontWeight, 10) || 400)
-                        }
-                        onChange={(e) => {
-                          updateActiveTextData({ fontWeight: Number(e.target.value) });
-                        }}
-                        className="w-16 h-1 bg-gray-200 rounded-lg cursor-pointer accent-blue-600"
-                      />
-                      <span className="font-mono text-[9px] font-black text-blue-600 bg-blue-50 px-1 rounded min-w-[20px] text-center">
-                        {
-                          state.editingText.fontWeight === "bold"
-                            ? 700
-                            : state.editingText.fontWeight === "normal"
-                            ? 400
-                            : (typeof state.editingText.fontWeight === "number"
-                               ? state.editingText.fontWeight
-                               : parseInt(state.editingText.fontWeight, 10) || 400)
-                        }
-                      </span>
+                    {/* Top Row: Direct Text Edit Field + Done / Delete / Close Actions */}
+                    <div className="flex items-center gap-1.5 w-full">
+                      <div className="flex items-center gap-2 flex-1 bg-gray-50 dark:bg-gray-800/80 rounded-xl px-2.5 py-1.5 border border-gray-200/80 dark:border-gray-700 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all">
+                        <TypeIcon className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <input
+                          type="text"
+                          value={state.editingText.text || ""}
+                          onChange={(e) => updateActiveTextData({ text: e.target.value })}
+                          placeholder="Type or edit text here..."
+                          className="w-full bg-transparent text-xs font-semibold text-gray-800 dark:text-gray-100 outline-none placeholder:text-gray-400"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitAndCloseEditing();
+                            } else if (e.key === "Escape") {
+                              e.preventDefault();
+                              commitAndCloseEditing();
+                            }
+                          }}
+                        />
+                      </div>
+
+                      {/* Done / Save Button */}
+                      <button
+                        onClick={commitAndCloseEditing}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer shrink-0"
+                        title="Done (Commit changes)"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Done</span>
+                      </button>
+
+                      {/* Delete Button */}
+                      <button
+                        onClick={deleteActiveText}
+                        className="p-1.5 rounded-xl text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 transition-all cursor-pointer shrink-0"
+                        title="Delete this text block"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Close (X) */}
+                      <button
+                        onClick={commitAndCloseEditing}
+                        className="p-1.5 rounded-xl text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer shrink-0"
+                        title="Close editor"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        const newStyle = state.editingText?.fontStyle === "italic" ? "normal" : "italic";
-                        updateActiveTextData({ fontStyle: newStyle });
-                      }}
-                      className={`p-1.5 rounded hover:bg-gray-100 ${state.editingText.fontStyle === "italic" ? "bg-gray-200" : ""}`}
-                      title="Italic"
-                    >
-                      <Italic className="w-4 h-4 text-gray-700" />
-                    </button>
-                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                    <input
-                      type="color"
-                      value={state.editingText.color || "#000000"}
-                      onChange={(e) => updateActiveTextData({ color: e.target.value })}
-                      className="w-6 h-6 p-0 border-0 rounded cursor-pointer"
-                      title="Text Color"
-                    />
-                    <div className="w-px h-4 bg-gray-300 mx-1"></div>
-                    <input
-                      type="number"
-                      value={Math.round(state.editingText.fontSize / state.zoom)}
-                      onChange={(e) => updateActiveTextData({ fontSize: Number(e.target.value) })}
-                      className="w-12 text-xs border rounded p-1"
-                      title="Font Size"
-                    />
+
+                    {/* Bottom Row: Typography Controls (Font Size, Weight, Italic, Color, Family) */}
+                    <div className="flex items-center flex-wrap gap-1.5 pt-1 border-t border-gray-100 dark:border-gray-800/80 text-xs">
+                      {/* Font Size decrease / input / increase */}
+                      <div className="flex items-center bg-gray-50 dark:bg-gray-800 rounded-xl border border-gray-200/80 dark:border-gray-700 p-0.5">
+                        <button
+                          onClick={() => {
+                            const curSize = Math.round(state.editingText.fontSize / state.zoom);
+                            updateActiveTextData({ fontSize: Math.max(6, curSize - 1) * state.zoom });
+                          }}
+                          className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg text-gray-600 dark:text-gray-300 transition-colors cursor-pointer"
+                          title="Decrease Font Size"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <input
+                          type="number"
+                          value={Math.round(state.editingText.fontSize / state.zoom)}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            if (!isNaN(val) && val > 0) {
+                              updateActiveTextData({ fontSize: val * state.zoom });
+                            }
+                          }}
+                          className="w-8 text-center bg-transparent font-mono text-[11px] font-bold text-gray-700 dark:text-gray-200 outline-none"
+                          title="Font Size"
+                        />
+                        <button
+                          onClick={() => {
+                            const curSize = Math.round(state.editingText.fontSize / state.zoom);
+                            updateActiveTextData({ fontSize: (curSize + 1) * state.zoom });
+                          }}
+                          className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg text-gray-600 dark:text-gray-300 transition-colors cursor-pointer"
+                          title="Increase Font Size"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      <div className="h-5 w-px bg-gray-200 dark:bg-gray-700 mx-0.5" />
+
+                      {/* Quick Bold Toggle */}
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          const weight = state.editingText?.fontWeight;
+                          const isOriginalBold = weight === "bold" || 
+                                                 weight === "semibold" || 
+                                                 weight === "medium" || 
+                                                 weight === "700" || 
+                                                 weight === "600" || 
+                                                 weight === "500" || 
+                                                 (typeof weight === "number" && weight > 400);
+                          const newWeight = isOriginalBold ? "normal" : "bold";
+                          updateActiveTextData({ fontWeight: newWeight });
+                        }}
+                        className={`p-1.5 rounded-xl font-black transition-all cursor-pointer ${
+                          (state.editingText.fontWeight === "bold" || 
+                           state.editingText.fontWeight === "700" || 
+                           (typeof state.editingText.fontWeight === "number" && state.editingText.fontWeight > 400))
+                            ? "bg-blue-600 text-white shadow-sm"
+                            : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        }`}
+                        title="Toggle Bold"
+                      >
+                        <Bold className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Quick Italic Toggle */}
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          const newStyle = state.editingText?.fontStyle === "italic" ? "normal" : "italic";
+                          updateActiveTextData({ fontStyle: newStyle });
+                        }}
+                        className={`p-1.5 rounded-xl transition-all cursor-pointer ${
+                          state.editingText.fontStyle === "italic"
+                            ? "bg-blue-600 text-white shadow-sm"
+                            : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        }`}
+                        title="Toggle Italic"
+                      >
+                        <Italic className="w-3.5 h-3.5" />
+                      </button>
+
+                      <div className="h-5 w-px bg-gray-200 dark:bg-gray-700 mx-0.5" />
+
+                      {/* Text Color Picker & Presets */}
+                      <div className="flex items-center gap-1 bg-gray-50 dark:bg-gray-800 p-1 rounded-xl border border-gray-200/80 dark:border-gray-700">
+                        <label className="relative cursor-pointer flex items-center justify-center w-5 h-5 rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 shadow-xs" title="Custom Text Color">
+                          <input
+                            type="color"
+                            value={state.editingText.color || "#000000"}
+                            onChange={(e) => updateActiveTextData({ color: e.target.value })}
+                            className="absolute -top-2 -left-2 w-10 h-10 opacity-0 cursor-pointer"
+                          />
+                          <span 
+                            className="w-full h-full block" 
+                            style={{ backgroundColor: state.editingText.color || "#000000" }} 
+                          />
+                        </label>
+                        {/* Quick Presets */}
+                        {["#000000", "#dc2626", "#2563eb", "#16a34a"].map((preset) => (
+                          <button
+                            key={preset}
+                            onClick={() => updateActiveTextData({ color: preset })}
+                            className={`w-3.5 h-3.5 rounded-full border transition-transform hover:scale-110 cursor-pointer ${
+                              (state.editingText.color || "#000000").toLowerCase() === preset.toLowerCase()
+                                ? "ring-2 ring-blue-500 scale-105 border-white"
+                                : "border-gray-300 dark:border-gray-600"
+                            }`}
+                            style={{ backgroundColor: preset }}
+                            title={preset}
+                          />
+                        ))}
+                      </div>
+
+                      <div className="h-5 w-px bg-gray-200 dark:bg-gray-700 mx-0.5" />
+
+                      {/* Font Family selector */}
+                      <select
+                        value={state.editingText.fontFamily || "sans-serif"}
+                        onChange={(e) => updateActiveTextData({ fontFamily: e.target.value })}
+                        className="text-[11px] font-medium bg-gray-50 dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700 rounded-xl px-2 py-1 text-gray-700 dark:text-gray-200 outline-none cursor-pointer max-w-[110px] truncate"
+                        title="Font Family"
+                      >
+                        <option value="sans-serif">Sans-serif</option>
+                        <option value="Arial, sans-serif">Arial</option>
+                        <option value="Times New Roman, serif">Times New Roman</option>
+                        <option value="Courier New, monospace">Courier New</option>
+                        <option value="Georgia, serif">Georgia</option>
+                        <option value="Helvetica, sans-serif">Helvetica</option>
+                      </select>
+                    </div>
                   </div>
                 )}
 
@@ -3801,10 +4030,230 @@ const PdfEditorWorkspace = React.forwardRef(
               </div>
             </div>
 
+              </div>
+              <div className="h-16 shrink-0" />
             </div>
-            <div className="h-32 shrink-0" />
           </div>
         </div>
+
+        {/* Floating Bottom Page & Zoom Controller */}
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 sm:gap-2.5 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md px-3 sm:px-4 py-2 rounded-2xl shadow-[0_12px_36px_rgba(0,0,0,0.18)] border border-gray-200/90 dark:border-gray-800 ring-1 ring-black/5 animate-in fade-in slide-in-from-bottom-3 duration-300">
+          {/* Previous Page Button */}
+          <button
+            onClick={() => {
+              if (state.currentPage > 1) {
+                userAdjustedZoomRef.current = true;
+                setState((prev) => ({ ...prev, currentPage: prev.currentPage - 1 }));
+                wrapperRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+              }
+            }}
+            disabled={state.currentPage <= 1 || state.isProcessing}
+            className="p-1.5 sm:p-2 rounded-xl text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95 cursor-pointer"
+            title="Previous Page (PageUp)"
+          >
+            <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
+
+          {/* Page Indicator & Direct Jump */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-50 dark:bg-gray-800/80 rounded-xl border border-gray-200/70 dark:border-gray-700 text-xs font-bold text-gray-700 dark:text-gray-200">
+            <span className="text-[10px] uppercase font-black tracking-wider text-gray-400">Page</span>
+            <input
+              type="number"
+              min="1"
+              max={state.pageOrder.length || 1}
+              value={state.currentPage}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                if (!isNaN(val) && val >= 1 && val <= state.pageOrder.length) {
+                  userAdjustedZoomRef.current = true;
+                  setState((prev) => ({ ...prev, currentPage: val }));
+                  wrapperRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                }
+              }}
+              className="w-10 text-center bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg py-0.5 font-mono text-xs font-black text-[#ff4b4b] outline-none focus:ring-1 focus:ring-[#ff4b4b]"
+            />
+            <span className="text-gray-400 font-medium">/</span>
+            <span className="font-mono text-xs font-bold text-gray-500 dark:text-gray-400">
+              {state.pageOrder.length || 1}
+            </span>
+          </div>
+
+          {/* Next Page Button */}
+          <button
+            onClick={() => {
+              if (state.currentPage < state.pageOrder.length) {
+                userAdjustedZoomRef.current = true;
+                setState((prev) => ({ ...prev, currentPage: prev.currentPage + 1 }));
+                wrapperRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+              }
+            }}
+            disabled={state.currentPage >= state.pageOrder.length || state.isProcessing}
+            className="p-1.5 sm:p-2 rounded-xl text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-all active:scale-95 cursor-pointer"
+            title="Next Page (PageDown)"
+          >
+            <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
+
+          <div className="h-6 w-px bg-gray-200 dark:bg-gray-700 mx-0.5 sm:mx-1" />
+
+          {/* Zoom Out */}
+          <button
+            onClick={() => {
+              userAdjustedZoomRef.current = true;
+              setState((prev) => ({ ...prev, zoom: Math.max(0.3, Math.round((prev.zoom - 0.1) * 100) / 100) }));
+            }}
+            className="p-1.5 sm:p-2 rounded-xl text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all active:scale-95 cursor-pointer"
+            title="Zoom Out"
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+
+          {/* Zoom Percentage */}
+          <button
+            onClick={() => {
+              userAdjustedZoomRef.current = true;
+              setState((prev) => ({ ...prev, zoom: 1 }));
+            }}
+            className="px-2 py-1 rounded-lg text-xs font-mono font-black text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer min-w-[50px] text-center"
+            title="Click to reset to 100% Zoom"
+          >
+            {Math.round(state.zoom * 100)}%
+          </button>
+
+          {/* Zoom In */}
+          <button
+            onClick={() => {
+              userAdjustedZoomRef.current = true;
+              setState((prev) => ({ ...prev, zoom: Math.min(3.0, Math.round((prev.zoom + 0.1) * 100) / 100) }));
+            }}
+            className="p-1.5 sm:p-2 rounded-xl text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all active:scale-95 cursor-pointer"
+            title="Zoom In"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+
+          <div className="h-6 w-px bg-gray-200 dark:bg-gray-700 mx-0.5 sm:mx-1 hidden sm:block" />
+
+          {/* Fit Width */}
+          <button
+            onClick={() => {
+              userAdjustedZoomRef.current = true;
+              if (wrapperRef.current && originalDimensions.current.width > 0) {
+                const widthScale = (wrapperRef.current.clientWidth - 64) / originalDimensions.current.width;
+                setState((prev) => ({ ...prev, zoom: Math.max(0.3, Math.min(3.0, Math.round(widthScale * 100) / 100)) }));
+              }
+            }}
+            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer"
+            title="Fit to Page Width"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+            <span>Fit Width</span>
+          </button>
+
+          {/* Fit Page */}
+          <button
+            onClick={() => {
+              userAdjustedZoomRef.current = true;
+              if (wrapperRef.current && originalDimensions.current.width > 0 && originalDimensions.current.height > 0) {
+                const widthScale = (wrapperRef.current.clientWidth - 64) / originalDimensions.current.width;
+                const heightScale = (wrapperRef.current.clientHeight - 64) / originalDimensions.current.height;
+                const scale = Math.min(widthScale, heightScale);
+                setState((prev) => ({ ...prev, zoom: Math.max(0.3, Math.min(3.0, Math.round(scale * 100) / 100)) }));
+              }
+            }}
+            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer"
+            title="Fit Full Page"
+          >
+            <Minimize2 className="w-3.5 h-3.5" />
+            <span>Fit Page</span>
+          </button>
+
+          {/* Mobile / Tablet Thumbnails Drawer Toggle */}
+          <button
+            onClick={() => setShowMobileThumbnails(prev => !prev)}
+            className="flex lg:hidden items-center gap-1 px-2.5 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 rounded-xl text-gray-700 dark:text-gray-200 text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ml-1"
+            title="View All Pages"
+          >
+            <Layers className="w-3.5 h-3.5 text-[#ff4b4b]" />
+            <span>Pages</span>
+          </button>
+        </div>
+
+        {/* Mobile Thumbnails Slide-Over Modal */}
+        <AnimatePresence>
+          {showMobileThumbnails && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex justify-end lg:hidden"
+              onClick={() => setShowMobileThumbnails(false)}
+            >
+              <motion.div
+                initial={{ x: "100%" }}
+                animate={{ x: 0 }}
+                exit={{ x: "100%" }}
+                transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                className="w-72 max-w-[85vw] h-full bg-white dark:bg-gray-900 shadow-2xl flex flex-col p-4 z-50"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-[#ff4b4b]" />
+                    <span className="text-xs font-black uppercase tracking-widest text-gray-700 dark:text-gray-200">
+                      All Pages ({state.pageOrder.length})
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setShowMobileThumbnails(false)}
+                    className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-700"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto py-4 space-y-4 custom-scrollbar">
+                  {state.pageOrder.map((id) => (
+                    <div
+                      key={`mobile-thumb-${id}`}
+                      onClick={() => {
+                        userAdjustedZoomRef.current = true;
+                        setState((prev) => ({ ...prev, currentPage: id }));
+                        setShowMobileThumbnails(false);
+                        wrapperRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                      }}
+                      className={`p-2 rounded-2xl border-2 transition-all cursor-pointer ${
+                        state.currentPage === id
+                          ? "border-[#ff4b4b] bg-red-50/50 dark:bg-red-950/20 shadow-md"
+                          : "border-gray-200 dark:border-gray-800 hover:border-gray-300 bg-gray-50/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-[10px] font-black uppercase text-gray-500">Page {id}</span>
+                        {state.currentPage === id && (
+                          <span className="w-2 h-2 rounded-full bg-[#ff4b4b]" />
+                        )}
+                      </div>
+                      <div className="w-full aspect-[1/1.4] bg-white rounded-lg shadow-sm overflow-hidden flex items-center justify-center border border-gray-100">
+                        {state.thumbnails[id - 1] ? (
+                          <img
+                            src={state.thumbnails[id - 1]}
+                            alt={`Thumbnail page ${id}`}
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center gap-1 text-gray-300">
+                            <FileText className="w-6 h-6" />
+                            <span className="text-[9px] font-bold">Page {id}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Global UI Overlays */}
         <input

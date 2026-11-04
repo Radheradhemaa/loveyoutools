@@ -742,13 +742,27 @@ export default function AdvancedPdfCropper() {
 
                 <div className="h-6 w-px bg-border"></div>
 
-                <div className="flex items-center gap-2 bg-bg-secondary p-1 rounded-xl border border-border">
-                  <button onClick={() => setZoom(Math.max(0.25, zoom - 0.25))} className="p-1.5 hover:bg-surface rounded-lg transition-colors">
+                <div className="flex items-center gap-1 sm:gap-2 bg-bg-secondary p-1 rounded-xl border border-border">
+                  <button onClick={() => setZoom(Math.max(0.25, Math.round((zoom - 0.25) * 100) / 100))} className="p-1.5 hover:bg-surface rounded-lg transition-colors cursor-pointer" title="Zoom Out">
                     <ZoomOut size={16} />
                   </button>
-                  <span className="text-[10px] font-black w-12 text-center">{Math.round(zoom * 100)}%</span>
-                  <button onClick={() => setZoom(Math.min(3, zoom + 0.25))} className="p-1.5 hover:bg-surface rounded-lg transition-colors">
+                  <button onClick={() => setZoom(1.0)} className="text-[10px] font-black w-12 text-center hover:text-accent transition-colors cursor-pointer" title="Reset to 100% Zoom">
+                    {Math.round(zoom * 100)}%
+                  </button>
+                  <button onClick={() => setZoom(Math.min(3, Math.round((zoom + 0.25) * 100) / 100))} className="p-1.5 hover:bg-surface rounded-lg transition-colors cursor-pointer" title="Zoom In">
                     <ZoomIn size={16} />
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (pageData && pageData.viewport.width > 0) {
+                        const mainW = window.innerWidth > 1024 ? (window.innerWidth * 0.7 - 80) : (window.innerWidth - 64);
+                        setZoom(Math.max(0.25, Math.min(2.5, Math.round((mainW / pageData.viewport.width) * 100) / 100)));
+                      }
+                    }} 
+                    className="p-1.5 hover:bg-surface rounded-lg text-[9px] font-black uppercase text-text-muted hover:text-text-primary transition-colors hidden sm:block cursor-pointer px-2"
+                    title="Fit to Page Width"
+                  >
+                    Fit Width
                   </button>
                 </div>
               </div>
@@ -875,12 +889,13 @@ export default function AdvancedPdfCropper() {
               {/* Main Workspace - 3/4 width */}
               <main className="flex-1 lg:flex-[3] bg-bg-secondary/20 flex flex-col order-1 lg:order-2 overflow-hidden relative min-h-[40vh] lg:min-h-0">
                 <div 
-                  className="flex-1 relative overflow-hidden flex flex-col items-center justify-center p-8"
+                  className="flex-1 relative overflow-hidden flex flex-col w-full h-full"
                   onMouseMove={handleMouseMove}
                   onMouseUp={handleMouseUp}
                   onMouseLeave={handleMouseUp}
                 >
-                  <div className="w-full h-full overflow-auto flex items-center justify-center scrollbar-hide">
+                  <div className="w-full h-full overflow-auto p-4 sm:p-8 custom-scrollbar">
+                    <div className="w-max min-w-full min-h-full flex flex-col items-center justify-start py-6 px-4">
                     {pageData ? (
                       <div 
                         className="relative shadow-2xl bg-white ring-1 ring-black/5 shrink-0" 
@@ -958,6 +973,7 @@ export default function AdvancedPdfCropper() {
                         </span>
                       </div>
                     )}
+                    </div>
                   </div>
                 </div>
               </main>
