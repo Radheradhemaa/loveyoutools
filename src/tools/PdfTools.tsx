@@ -3,6 +3,7 @@ import { Upload, FileText, Download, Settings, RefreshCw, File as FileIcon, Lock
 import { PDFDocument, rgb, degrees } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 import JSZip from 'jszip';
+import { getDecryptedPdfBytes, checkIsPdfEncrypted, encryptPdf } from '../utils/pdfDecryption';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
@@ -44,32 +45,30 @@ export default function PdfTools({ toolId }: { toolId: string }) {
     if (e.target.files) {
       const selectedFiles = Array.from(e.target.files) as File[];
       
-      // Check if the first PDF is encrypted
-      const firstFile = selectedFiles[0];
-      const isPdf = firstFile && (firstFile.type === 'application/pdf' || firstFile.name.toLowerCase().endsWith('.pdf'));
-      if (isPdf) {
-        try {
-          const arrayBuffer = await firstFile.arrayBuffer();
-          await pdfjsLib.getDocument({ 
-            data: arrayBuffer,
-            cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
-            cMapPacked: true,
-          }).promise;
-          setIsEncrypted(false);
-          setWarning(null);
-        } catch (err: any) {
-          const errStr = typeof err === 'string' ? err : (err?.message || '');
-          const isPasswordError = err?.name === 'PasswordException' || 
-                                  err?.name?.toLowerCase().includes('password') ||
-                                  errStr.toLowerCase().includes('password') ||
-                                  errStr.toLowerCase().includes('encrypted') ||
-                                  err?.code === 1 ||
-                                  err?.code === 2;
-          if (isPasswordError) {
-            setIsEncrypted(true);
-            setWarning("This PDF is password protected. Please enter the password in the Settings panel to process it.");
+      // Check if any uploaded PDF is encrypted
+      let anyEncrypted = false;
+      for (const file of selectedFiles) {
+        const isPdf = file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'));
+        if (isPdf) {
+          try {
+            const arrayBuffer = await file.arrayBuffer();
+            const encrypted = await checkIsPdfEncrypted(arrayBuffer);
+            if (encrypted) {
+              anyEncrypted = true;
+              break;
+            }
+          } catch {
+            // ignore
           }
         }
+      }
+
+      if (anyEncrypted) {
+        setIsEncrypted(true);
+        setWarning("This PDF is password protected. Please enter the password in the Settings panel to process it.");
+      } else {
+        setIsEncrypted(false);
+        setWarning(null);
       }
 
       if (['merge-pdf', 'jpg-to-pdf', 'png-to-pdf'].includes(toolId)) {
@@ -150,39 +149,13 @@ export default function PdfTools({ toolId }: { toolId: string }) {
       // Handle PDF to Image/Text conversions (requires pdfjs)
       if (['pdf-to-jpg', 'pdf-to-png', 'pdf-to-text', 'pdf-to-zip'].includes(toolId)) {
         const fileBuffer = await files[0].arrayBuffer();
-        const pwdCandidates = [
-          documentPassword,
-          documentPassword?.trim(),
-          documentPassword?.trim().toUpperCase(),
-          documentPassword?.trim().toLowerCase(),
-        ].filter(Boolean) as string[];
-
-        let pdf: any = null;
-        let lastErr: any = null;
-        for (const pwd of (pwdCandidates.length > 0 ? pwdCandidates : [undefined])) {
-          try {
-            const loadingTask = pdfjsLib.getDocument({ 
-              data: new Uint8Array(fileBuffer.slice(0)),
-              password: pwd,
-              cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
-              cMapPacked: true,
-            });
-            let tried = false;
-            loadingTask.onPassword = (updatePassword: any, reason: number) => {
-              if (reason === 2 || tried || !pwd) {
-                updatePassword(new Error('Incorrect password'));
-              } else {
-                tried = true;
-                updatePassword(pwd);
-              }
-            };
-            pdf = await loadingTask.promise;
-            break;
-          } catch (e: any) {
-            lastErr = e;
-          }
-        }
-        if (!pdf) throw lastErr;
+        const { bytes: decryptedBytes } = await getDecryptedPdfBytes(fileBuffer, documentPassword);
+        const loadingTask = pdfjsLib.getDocument({ 
+          data: decryptedBytes,
+          cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
+          cMapPacked: true,
+        });
+        const pdf = await loadingTask.promise;
         const numPages = pdf.numPages;
         
         if (toolId === 'pdf-to-text') {
@@ -260,19 +233,15 @@ export default function PdfTools({ toolId }: { toolId: string }) {
         pdfDoc = await PDFDocument.create();
         for (const file of files) {
           const fileBuffer = await file.arrayBuffer();
-          const srcDoc = await PDFDocument.load(fileBuffer, { 
-            password: documentPassword || undefined,
-            ignoreEncryption: true 
-          } as any);
+          const { bytes: decryptedBytes } = await getDecryptedPdfBytes(fileBuffer, documentPassword);
+          const srcDoc = await PDFDocument.load(decryptedBytes);
           const copiedPages = await pdfDoc.copyPages(srcDoc, srcDoc.getPageIndices());
           copiedPages.forEach((page) => pdfDoc.addPage(page));
         }
       } else {
         const fileBuffer = await files[0].arrayBuffer();
-        pdfDoc = await PDFDocument.load(fileBuffer, { 
-          password: documentPassword || undefined,
-          ignoreEncryption: true 
-        } as any);
+        const { bytes: decryptedBytes } = await getDecryptedPdfBytes(fileBuffer, documentPassword);
+        pdfDoc = await PDFDocument.load(decryptedBytes);
 
         // Helper to parse page numbers
         const parsePages = (inputStr: string, maxPages: number) => {
@@ -430,8 +399,11 @@ export default function PdfTools({ toolId }: { toolId: string }) {
             break;
           }
           case 'pdf-password-protect': {
-            pdfDoc.setAuthor('Protected Document');
-            setWarning("Note: True encryption is not supported in the browser. The file will be saved without a password.");
+            if (!password || !password.trim()) {
+              setError("Please enter a password to protect this PDF document.");
+              setLoading(false);
+              return;
+            }
             break;
           }
           case 'compress-pdf': {
@@ -442,7 +414,11 @@ export default function PdfTools({ toolId }: { toolId: string }) {
         }
       }
 
-      const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
+      let pdfBytes = await pdfDoc.save({ useObjectStreams: true });
+      if (['pdf-password-protect', 'pdf-protect'].includes(toolId) && password && password.trim()) {
+        pdfBytes = await encryptPdf(pdfBytes, password.trim());
+      }
+
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       setOutput(url);
@@ -454,9 +430,7 @@ export default function PdfTools({ toolId }: { toolId: string }) {
         console.error(err);
       }
       if (isPasswordError) {
-        setError("Incorrect password. Please enter the correct password for this PDF.");
-      } else if (errStr.toLowerCase().includes('encrypted')) {
-        setError("This specific tool does not support editing encrypted PDFs. Please remove the password first.");
+        setError(err?.message || "Incorrect password. Please enter the correct password for this PDF.");
       } else {
         setError("Failed to process PDF. " + (errStr || "Please ensure the file is valid."));
       }

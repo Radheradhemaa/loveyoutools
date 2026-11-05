@@ -76,6 +76,7 @@ import {
 } from "fabric";
 import { PDFDocument, rgb, degrees, StandardFonts } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
+import { getDecryptedPdfBytes } from "../utils/pdfDecryption";
 import Tesseract from "tesseract.js";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -2740,19 +2741,10 @@ const PdfEditorWorkspace = React.forwardRef(
         const existingPdfBytes = await pdfFile.arrayBuffer();
         let pdfDoc: any = null;
         try {
-          pdfDoc = await PDFDocument.load(existingPdfBytes, {
-            ignoreEncryption: true, 
-          });
-          // CRITICAL: pdf-lib does NOT decrypt PDF streams when ignoreEncryption is true!
-          // Copying encrypted pages into an unencrypted PDFDocument causes PDF readers to fail parsing
-          // the ciphertext content stream, producing a 100% BLANK page.
-          // Therefore, if the document is encrypted, we MUST use PDF.js high-resolution decrypted rendering!
-          if (pdfDoc.isEncrypted) {
-            console.log("PDF is encrypted - switching to decrypted high-fidelity raster export");
-            pdfDoc = null;
-          }
+          const { bytes: decryptedBytes } = await getDecryptedPdfBytes(existingPdfBytes, state.password);
+          pdfDoc = await PDFDocument.load(decryptedBytes, { ignoreEncryption: false });
         } catch (e) {
-          console.warn("Could not load PDF with pdf-lib, falling back to PDF.js export:", e);
+          console.warn("Could not load decrypted PDF with pdf-lib, falling back to PDF.js export:", e);
           pdfDoc = null;
         }
         const finalPdfDoc = await PDFDocument.create();
@@ -2846,7 +2838,7 @@ const PdfEditorWorkspace = React.forwardRef(
           const viewport = pdfjsPage.getViewport({ scale: 1.0 });
 
           let isPageVectorCopied = false;
-          if (pdfDoc && !pdfDoc.isEncrypted) {
+          if (pdfDoc) {
             try {
               const [page] = await finalPdfDoc.copyPages(pdfDoc, [
                 pageNum - 1,

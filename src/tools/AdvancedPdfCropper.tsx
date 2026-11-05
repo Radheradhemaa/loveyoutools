@@ -4,6 +4,7 @@ import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument, degrees } from 'pdf-lib';
 import JSZip from 'jszip';
 import ToolLayout from '../components/tool-system/ToolLayout';
+import { getDecryptedPdfBytes } from '../utils/pdfDecryption';
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -492,38 +493,37 @@ export default function AdvancedPdfCropper() {
         let pdfBytes: Uint8Array | null = null;
         let isVectorSuccess = false;
 
-        // 1. Lossless Vector Crop attempt (preserves 100% vector resolution for unencrypted or decryptable pdf-lib docs)
-        if (!pwd) {
-          try {
-            const freshArrayBuffer = await file.arrayBuffer();
-            const pdfDoc = await PDFDocument.load(freshArrayBuffer, { ignoreEncryption: false });
-            const pages = pdfDoc.getPages();
+        // 1. Lossless Vector Crop attempt with true decryption (100% sharp vector preservation)
+        try {
+          const freshArrayBuffer = await file.arrayBuffer();
+          const { bytes: decryptedBytes } = await getDecryptedPdfBytes(freshArrayBuffer, pwd);
+          const pdfDoc = await PDFDocument.load(decryptedBytes, { ignoreEncryption: false });
+          const pages = pdfDoc.getPages();
 
-            for (let pIdx = 0; pIdx < pages.length; pIdx++) {
-              const pageData = pagesData[`${fIdx}-${pIdx + 1}`];
-              if (!pageData) continue;
+          for (let pIdx = 0; pIdx < pages.length; pIdx++) {
+            const pageData = pagesData[`${fIdx}-${pIdx + 1}`];
+            if (!pageData) continue;
 
-              const page = pages[pIdx];
-              const { height } = page.getSize();
-              const { x, y, width: cw, height: ch } = pageData.cropBox;
+            const page = pages[pIdx];
+            const { height } = page.getSize();
+            const { x, y, width: cw, height: ch } = pageData.cropBox;
 
-              const pdfX = x;
-              const pdfY = height - y - ch;
+            const pdfX = x;
+            const pdfY = height - y - ch;
 
-              page.setCropBox(pdfX, pdfY, cw, ch);
-              page.setMediaBox(pdfX, pdfY, cw, ch);
+            page.setCropBox(pdfX, pdfY, cw, ch);
+            page.setMediaBox(pdfX, pdfY, cw, ch);
 
-              if (pageData.rotation !== 0) {
-                page.setRotation(degrees(page.getRotation().angle + pageData.rotation));
-              }
+            if (pageData.rotation !== 0) {
+              page.setRotation(degrees(page.getRotation().angle + pageData.rotation));
             }
-
-            pdfBytes = await pdfDoc.save();
-            isVectorSuccess = true;
-          } catch (vErr) {
-            console.warn('Vector crop not possible, falling back to high-res engine:', vErr);
-            isVectorSuccess = false;
           }
+
+          pdfBytes = await pdfDoc.save();
+          isVectorSuccess = true;
+        } catch (vErr) {
+          console.warn('Vector crop not possible, falling back to high-res engine:', vErr);
+          isVectorSuccess = false;
         }
 
         // 2. High-DPI Engine for Password-Protected or Encrypted Documents
