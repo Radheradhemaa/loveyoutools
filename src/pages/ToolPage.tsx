@@ -48,6 +48,8 @@ const PregnancyWeightGainCalculator = lazy(() => import('../tools/PregnancyWeigh
 const PregnancyConceptionCalculator = lazy(() => import('../tools/PregnancyConceptionCalculator'));
 const ConceptionCalculator = lazy(() => import('../tools/ConceptionCalculator'));
 const SalaryCalculator = lazy(() => import('../tools/SalaryCalculator'));
+const AiTextHumanizer = lazy(() => import('../tools/AiTextHumanizer'));
+const ResumeMaker = lazy(() => import('../tools/ResumeMaker'));
 
 const ToolLoader = () => (
   <div className="flex flex-col items-center justify-center py-20 animate-pulse">
@@ -107,6 +109,8 @@ export default function ToolPage() {
   // Render specific tool component based on ID or Category
   const renderTool = () => {
     // Specific overrides
+    if (tool.id === 'ai-text-humanizer') return <AiTextHumanizer />;
+    if (tool.id === 'resume-maker') return <ResumeMaker />;
     if (tool.id === 'word-counter') return <WordCounter />;
     if (tool.id === 'json-formatter-validator') return <JsonFormatter />;
     if (tool.id === 'age-calculator') return <AgeCalculator />;

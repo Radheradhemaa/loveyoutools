@@ -79,6 +79,8 @@ export const tools = [
   { id: 'seo-description-generator', c: 'seo', n: 'SEO Description Generator', d: 'Generate meta descriptions.', i: '📋', b: '#d1fae5' },
 
   // TEXT TOOLS (bg: #ede9fe)
+  { id: 'ai-text-humanizer', c: 'text', n: 'AI Text Humanizer', d: 'Transform stiff AI-generated text into natural, human-sounding content with customizable tone, bypass metrics, and zero AI or APIs.', i: '✍️', b: '#ede9fe', popular: true },
+  { id: 'resume-maker', c: 'text', n: 'Resume Maker', d: 'Build professional, ATS-friendly resumes with live preview, multiple templates, score checker, and instant PDF download without AI or API.', i: '📄', b: '#ede9fe', popular: true },
   { id: 'word-counter', c: 'text', n: 'Word Counter', d: 'Count words, characters, and more.', i: '📊', b: '#ede9fe', popular: true },
   { id: 'case-converter', c: 'text', n: 'Case Converter', d: 'Convert text case formats.', i: 'Aa', b: '#ede9fe', popular: true },
   { id: 'remove-duplicate-lines', c: 'text', n: 'Remove Duplicate Lines', d: 'Clean up duplicate text lines.', i: '🧹', b: '#ede9fe' },
