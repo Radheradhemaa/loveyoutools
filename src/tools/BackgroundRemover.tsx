@@ -54,6 +54,7 @@ export default function BackgroundRemover() {
   const [objectStrictness, setObjectStrictness] = useState(75);
   const [severTouchingObjects, setSeverTouchingObjects] = useState(false);
   const [removeBackgroundNoise, setRemoveBackgroundNoise] = useState(true);
+  const [autoExtendLeftShoulder, setAutoExtendLeftShoulder] = useState(true);
 
   // AI Shoulder Restoration State
   const [extendAmount, setExtendAmount] = useState(50);
@@ -410,6 +411,8 @@ export default function BackgroundRemover() {
         objectStrictness,
         severTouchingObjects,
         removeBackgroundNoise,
+        preserveEarsAndShoulders: true,
+        extendLeftShoulder: autoExtendLeftShoulder,
         ...customOptions
       };
 
@@ -1328,19 +1331,37 @@ export default function BackgroundRemover() {
                               </div>
                             </div>
 
-                            <div className="flex items-center justify-between pt-1">
-                              <label className="text-[10px] font-bold text-text-muted flex items-center gap-1 cursor-pointer">
-                                <input 
-                                  type="checkbox" 
-                                  checked={severTouchingObjects} 
-                                  onChange={(e) => {
-                                    setSeverTouchingObjects(e.target.checked);
-                                    if (imageSrc) removeBackground(imageSrc, { severTouchingObjects: e.target.checked });
-                                  }}
-                                  className="accent-accent w-3.5 h-3.5 rounded"
-                                />
-                                Sever Touching Objects (Chairs, Desks)
-                              </label>
+                            <div className="space-y-1.5 pt-1">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-bold text-text-muted flex items-center gap-1.5 cursor-pointer">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={autoExtendLeftShoulder} 
+                                    onChange={(e) => {
+                                      setAutoExtendLeftShoulder(e.target.checked);
+                                      if (imageSrc) removeBackground(imageSrc, { extendLeftShoulder: e.target.checked });
+                                    }}
+                                    className="accent-accent w-3.5 h-3.5 rounded"
+                                  />
+                                  Auto Extend Left Shoulder (White Check Shirt Fix)
+                                </label>
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 font-bold border border-emerald-500/20">AI Active</span>
+                              </div>
+
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-bold text-text-muted flex items-center gap-1 cursor-pointer">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={severTouchingObjects} 
+                                    onChange={(e) => {
+                                      setSeverTouchingObjects(e.target.checked);
+                                      if (imageSrc) removeBackground(imageSrc, { severTouchingObjects: e.target.checked });
+                                    }}
+                                    className="accent-accent w-3.5 h-3.5 rounded"
+                                  />
+                                  Sever Touching Objects (Chairs, Desks)
+                                </label>
+                              </div>
                             </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">

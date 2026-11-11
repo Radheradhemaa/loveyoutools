@@ -534,6 +534,7 @@ export default function PassportPhotoMaker() {
           removeBackgroundNoise: false,
           severTouchingObjects: false,
           preserveEarsAndShoulders: true,
+          extendLeftShoulder: true,
           decontaminateHalos: true,
         }
       );
