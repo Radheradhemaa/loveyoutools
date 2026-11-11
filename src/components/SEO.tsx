@@ -11,8 +11,9 @@ interface SEOProps {
 }
 
 export default function SEO({ title, description, keywords, url, image = '/social-preview/og-image.png?v=2', type = 'website', schema }: SEOProps) {
-  const siteName = 'LoveYouTools';
-  const fullTitle = `${title} | ${siteName}`;
+  const siteName = 'LoveYouTools (Love You Tools)';
+  const cleanTitle = title.replace(/\s*[-|]\s*LoveYouTools.*$/i, '').trim();
+  const fullTitle = `${cleanTitle} – LoveYouTools (Love You Tools)`;
 
   // Ensure canonical URL always uses the .in domain
   const baseUrl = 'https://loveyoutools.in';
@@ -30,12 +31,18 @@ export default function SEO({ title, description, keywords, url, image = '/socia
     canonicalUrl = `${baseUrl}${path}`;
   }
 
+  const finalKeywords = keywords 
+    ? `LoveYouTools, love you tools, love you, loveyoutools in, love you online tools, ${keywords}`
+    : 'LoveYouTools, love you tools, love you, loveyoutools in, love you online tools, free online tools, online utilities';
+
+  const schemaArray = schema ? (Array.isArray(schema) ? schema : [schema]) : [];
+
   return (
     <Helmet>
       <title>{fullTitle}</title>
-      <meta name="robots" content="index, follow" />
+      <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
       <meta name="description" content={description} />
-      {keywords && <meta name="keywords" content={keywords} />}
+      <meta name="keywords" content={finalKeywords} />
       <link rel="canonical" href={canonicalUrl} />
 
       {/* Open Graph / Facebook */}
@@ -45,6 +52,7 @@ export default function SEO({ title, description, keywords, url, image = '/socia
       <meta property="og:description" content={description} />
       <meta property="og:image" content={image} />
       <meta property="og:site_name" content={siteName} />
+      <meta property="og:locale" content="en_US" />
 
       {/* Twitter */}
       <meta property="twitter:card" content="summary_large_image" />
@@ -54,11 +62,11 @@ export default function SEO({ title, description, keywords, url, image = '/socia
       <meta property="twitter:image" content={image} />
 
       {/* Structured Data */}
-      {schema && (
-        <script type="application/ld+json">
-          {JSON.stringify(schema)}
+      {schemaArray.map((s, idx) => (
+        <script key={idx} type="application/ld+json">
+          {JSON.stringify(s)}
         </script>
-      )}
+      ))}
     </Helmet>
   );
 }

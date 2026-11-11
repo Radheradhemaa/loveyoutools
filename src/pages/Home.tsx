@@ -71,23 +71,80 @@ export default function Home() {
   return (
     <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-12">
       <SEO 
-        title="LoveYouTools - Free Online Professional Multi-Tools Hub" 
-        description="LoveYouTools is a free online platform offering 100+ professional tools for image editing, PDF conversion, SEO analysis, and more with zero signup."
-        url={window.location.href}
+        title="LoveYouTools – Free Online Tools Hub | Love You Tools (100+ Free Web Tools)" 
+        description="LoveYouTools (Love You Tools) is India's leading 100% free online utility suite with 100+ browser-based tools for PDF editing, background removal, passport photos, resume maker, AI text humanizer, and calculators with zero signup."
+        keywords="LoveYouTools, love you tools, love you, loveyoutools in, love you online tools, free online tools, background remover, passport photo maker, pdf editor, resume maker, ai text humanizer, compress pdf, image compressor, age calculator"
+        url="https://loveyoutools.in/"
+        schema={[
+          {
+            "@context": "https://schema.org",
+            "@type": "WebSite",
+            "@id": "https://loveyoutools.in/#website",
+            "url": "https://loveyoutools.in/",
+            "name": "LoveYouTools",
+            "alternateName": ["Love You Tools", "Love You", "LoveYouTools.in", "loveyoutools", "Love You Online Tools", "loveyou tools"],
+            "potentialAction": {
+              "@type": "SearchAction",
+              "target": "https://loveyoutools.in/?search={search_term_string}",
+              "query-input": "required name=search_term_string"
+            }
+          },
+          {
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What is LoveYouTools (Love You Tools)?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "LoveYouTools (Love You Tools) is a free online platform offering 100+ digital utilities for image editing, PDF conversion, background removal, passport photo generation, resume building, AI text humanizing, calculations, and web development with zero signup."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is LoveYouTools 100% free to use?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, LoveYouTools is 100% free forever with no hidden subscriptions, no usage limits, and no credit card required."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is my data private and secure on LoveYouTools?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, LoveYouTools executes processing client-side in your browser via modern WebAssembly and HTML5 Canvas. Your images, documents, and files never leave your device."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What popular tools are available on LoveYouTools?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Popular tools include AI Background Remover, Passport Photo Maker, PDF Editor, Compress PDF, Resume Maker, AI Text Humanizer, Photo Sign Resizer, Image Compressor, and Age Calculator."
+                }
+              }
+            ]
+          }
+        ]}
       />
       {/* Hero Section */}
       <section className="text-center pt-2 pb-4 relative overflow-hidden mb-8">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,var(--color-accent)_0%,transparent_40%)] opacity-5 pointer-events-none"></div>
         
-        <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl xl:text-[2.4rem] 2xl:text-[2.6rem] font-extrabold tracking-tight text-text-primary mt-0 mb-6 w-full mx-auto leading-tight sm:whitespace-nowrap">
-          Professional Online Tools Designed to Simplify Your Digital Tasks
+        <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl xl:text-[2.4rem] 2xl:text-[2.6rem] font-extrabold tracking-tight text-text-primary mt-0 mb-3 w-full mx-auto leading-tight">
+          <span className="text-accent">LoveYouTools</span> – Free Online Tools Hub (Love You Tools)
         </h1>
+        <p className="text-sm sm:text-base text-text-secondary max-w-3xl mx-auto mb-6">
+          Welcome to <strong>LoveYouTools (Love You Tools)</strong> — 100+ free online digital tools designed to simplify your everyday tasks. Edit PDFs, remove image backgrounds, format text, build ATS resumes, and calculate anything directly in your browser with 100% privacy and zero sign-up.
+        </p>
 
         <div className="flex flex-wrap justify-center gap-6 text-sm font-medium text-text-muted">
-          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 100+ Tools</div>
-          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 8 Categories</div>
-          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> No Signup Required</div>
-          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 100% Free Forever</div>
+          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 100+ Free Tools</div>
+          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 8 Utility Categories</div>
+          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> Zero Signup Required</div>
+          <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-success" /> 100% Client-Side Privacy</div>
         </div>
       </section>
 
@@ -207,10 +264,68 @@ export default function Home() {
       </section>
 
       {/* SEO Content Block for Homepage */}
-      <section className="bg-surface border border-border rounded-[14px] p-8 md:p-12 mt-16 max-w-5xl mx-auto text-center prose prose-lg dark:prose-invert">
-        <h2 className="text-3xl font-extrabold mb-6">Why LoveYouTools is the #1 Digital Utility Platform</h2>
-        <p>LoveYouTools offers users around the globe unparalleled access to over 100+ fully-functional digital utilities absolutely free. Unlike traditional web services, the majority of our tools operate strictly on the client side—which means your processing happens directly in your browser without ever communicating with external servers. This leads to exceptional data privacy, no internet lag, and blistering fast processing times.</p>
-        <p>Whether you need to manipulate a PDF, compress high-resolution images, generate web-ready icons, format code, or quickly perform an SEO structure analysis, we have the precise tool tailored for your needs. We are constantly expanding our library of utilities to ensure you never have to sign up for expensive software suites again.</p>
+      <section className="bg-surface border border-border rounded-[14px] p-8 md:p-12 mt-16 max-w-5xl mx-auto prose prose-lg dark:prose-invert">
+        <h2 className="text-3xl font-extrabold mb-6 text-center">Why LoveYouTools (Love You Tools) is the #1 Free Digital Utility Hub</h2>
+        <p><strong>LoveYouTools (Love You Tools)</strong> offers users around the globe unparalleled access to over 100+ fully-functional digital utilities completely free of charge. Unlike traditional cloud services that upload your personal files to external servers, the vast majority of our tools operate strictly on the client side inside your web browser using HTML5 Canvas and WebAssembly. This delivers unmatched data security, complete confidentiality, zero latency, and blazing fast processing speeds.</p>
+        <p>Whether you are searching Google for <em>"love you tools"</em>, <em>"love you"</em>, <em>"loveyoutools"</em>, or specific utilities like background removal, PDF merging, resume building, AI text humanizing, or image resizing, <strong>LoveYouTools.in</strong> provides instant, free solutions without demanding software downloads, subscriptions, or intrusive account registrations.</p>
+        
+        <div className="not-prose mt-10 grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
+          <div className="bg-background/60 border border-border p-5 rounded-xl">
+            <h3 className="font-bold text-base text-text-primary mb-2 flex items-center gap-2">
+              <span className="text-accent text-lg">🔒</span> 100% Client-Side Privacy
+            </h3>
+            <p className="text-text-muted text-sm leading-relaxed">
+              Your photos, confidential PDF contracts, resumes, and personal documents never leave your browser. All computations happen locally on your computer or smartphone.
+            </p>
+          </div>
+          <div className="bg-background/60 border border-border p-5 rounded-xl">
+            <h3 className="font-bold text-base text-text-primary mb-2 flex items-center gap-2">
+              <span className="text-accent text-lg">⚡</span> Blazing Fast Performance
+            </h3>
+            <p className="text-text-muted text-sm leading-relaxed">
+              Zero server queue delays and zero upload/download wait times. Process multi-megabyte images and documents in milliseconds.
+            </p>
+          </div>
+          <div className="bg-background/60 border border-border p-5 rounded-xl">
+            <h3 className="font-bold text-base text-text-primary mb-2 flex items-center gap-2">
+              <span className="text-accent text-lg">🆓</span> 100% Free With Zero Signup
+            </h3>
+            <p className="text-text-muted text-sm leading-relaxed">
+              Every tool on LoveYouTools is permanently free with no daily limits, no hidden watermarks, and no sign-up forms required.
+            </p>
+          </div>
+          <div className="bg-background/60 border border-border p-5 rounded-xl">
+            <h3 className="font-bold text-base text-text-primary mb-2 flex items-center gap-2">
+              <span className="text-accent text-lg">📱</span> Cross-Device & Mobile PWA
+            </h3>
+            <p className="text-text-muted text-sm leading-relaxed">
+              Works seamlessly across all modern browsers — Chrome, Safari, Firefox, and Edge on Android, iOS, Windows, and Mac. Installable as a Progressive Web App.
+            </p>
+          </div>
+        </div>
+
+        {/* Frequently Asked Questions */}
+        <div className="not-prose mt-12 border-t border-border pt-8 text-left">
+          <h3 className="text-2xl font-bold text-text-primary mb-6 text-center">Frequently Asked Questions (FAQ)</h3>
+          <div className="space-y-4">
+            <div className="bg-background/80 border border-border rounded-xl p-5">
+              <h4 className="font-semibold text-text-primary text-base mb-1">What is LoveYouTools (Love You Tools)?</h4>
+              <p className="text-text-muted text-sm">LoveYouTools (Love You Tools) is an all-in-one free digital utility platform featuring 100+ browser-based tools for image editing, PDF management, resume building, AI humanizing, calculations, and web development with zero signup.</p>
+            </div>
+            <div className="bg-background/80 border border-border rounded-xl p-5">
+              <h4 className="font-semibold text-text-primary text-base mb-1">Is LoveYouTools 100% free forever?</h4>
+              <p className="text-text-muted text-sm">Yes, all 100+ utilities on LoveYouTools are 100% free with no hidden charges, no watermark on output files, and no subscription fees.</p>
+            </div>
+            <div className="bg-background/80 border border-border rounded-xl p-5">
+              <h4 className="font-semibold text-text-primary text-base mb-1">How can I find LoveYouTools on Google?</h4>
+              <p className="text-text-muted text-sm">You can search for "LoveYouTools", "Love You Tools", "Love You Tools in", or specific tools like "Love You background remover" or "Love You resume maker" to reach our official website at https://loveyoutools.in/.</p>
+            </div>
+            <div className="bg-background/80 border border-border rounded-xl p-5">
+              <h4 className="font-semibold text-text-primary text-base mb-1">Is my data safe when using LoveYouTools?</h4>
+              <p className="text-text-muted text-sm">Absolutely. Your files and photos are processed directly in your device's browser memory and are never uploaded to any cloud database or server.</p>
+            </div>
+          </div>
+        </div>
       </section>
       
       <AdSlot adSlot="home-bottom-section" className="mt-12" />

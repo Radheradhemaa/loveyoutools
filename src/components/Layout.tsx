@@ -36,13 +36,22 @@ export default function Layout() {
   return (
     <div className={`min-h-screen flex flex-col transition-all duration-500 ${isFocusMode ? 'bg-bg-primary' : ''}`}>
       <SEO 
-        title="LoveYouTools - Professional Multi-Tools Hub" 
-        description="A fully functional, professional, and production-ready multi-tools website. Free online tools for images, PDFs, SEO, and more."
-        url={typeof window !== 'undefined' ? window.location.href : ''}
+        title="LoveYouTools – Free Online Tools Hub | Love You Tools (100+ Web Tools)" 
+        description="LoveYouTools (Love You Tools) is a 100% free online utility platform with 100+ tools for background removal, PDF editing, passport photos, resume builder, AI text humanizer, and calculators."
+        keywords="LoveYouTools, love you tools, love you, loveyoutools in, love you online tools, free online tools, online utilities"
+        url={typeof window !== 'undefined' ? window.location.href : 'https://loveyoutools.in/'}
         schema={{
           "@context": "https://schema.org",
           "@type": "Organization",
           "name": "LoveYouTools",
+          "alternateName": [
+            "Love You Tools",
+            "Love You",
+            "loveyoutools",
+            "LoveYouTools.in",
+            "Love You Online Tools",
+            "loveyou tools"
+          ],
           "url": "https://loveyoutools.in/",
           "logo": "https://loveyoutools.in/logo.png?v=2",
           "sameAs": [

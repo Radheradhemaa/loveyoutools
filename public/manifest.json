@@ -1,7 +1,7 @@
 {
-  "name": "LoveTools",
-  "short_name": "LoveTools",
-  "description": "Free Online Tools Hub",
+  "name": "LoveYouTools – Free Online Tools Hub (Love You Tools)",
+  "short_name": "LoveYouTools",
+  "description": "LoveYouTools (Love You Tools) offers 100+ free online tools for PDF, background removal, passport photos, resume making, text humanizing, and calculators.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

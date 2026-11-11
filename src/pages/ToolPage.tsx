@@ -261,9 +261,9 @@ export default function ToolPage() {
     instagram: `https://www.instagram.com/`, // Instagram doesn't support direct URL sharing via web links
   };
 
-  let pageTitle = `${tool.n} - Free Online Tool`;
-  let pageDesc = `${tool.d} Fast, secure, and 100% free online ${tool.n.toLowerCase()}. No signup required.`;
-  let pageKeywords = keywords;
+  let pageTitle = `${tool.n} Online Free – LoveYouTools (Love You Tools)`;
+  let pageDesc = `${tool.d} Fast, secure, and 100% free online ${tool.n.toLowerCase()} on LoveYouTools (Love You Tools). No signup required.`;
+  let pageKeywords = `${tool.n}, ${tool.n} online, free ${tool.n.toLowerCase()}, LoveYouTools, love you tools, love you, loveyoutools in, ${keywords}`;
   
   let pageFaqSchema = faqSchema;
 
@@ -353,10 +353,8 @@ export default function ToolPage() {
         keywords={pageKeywords}
         url={toolUrl}
         type="SoftwareApplication"
+        schema={[softwareSchema, breadcrumbSchema, ...(pageFaqSchema ? [pageFaqSchema] : [])]}
       />
-      <script type="application/ld+json">{JSON.stringify(softwareSchema)}</script>
-      <script type="application/ld+json">{JSON.stringify(breadcrumbSchema)}</script>
-      <script type="application/ld+json">{JSON.stringify(pageFaqSchema)}</script>
 
       {/* Breadcrumb */}
       {!isFocusMode && (
