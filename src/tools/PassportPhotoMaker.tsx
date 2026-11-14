@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw, Trash2 } from 'lucide-react';
+import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw, Trash2, Upload } from 'lucide-react';
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded, removeChairFromImage, cleanEdgeHalosAndDeFringe } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded, removeChairFromImage, cleanEdgeHalosAndDeFringe } from '../lib/bgRemoval';
+import { drawSteppedHighQuality } from '../lib/touchupCanvas';
 
 // --- Configuration ---
 const PRESETS = [
@@ -28,11 +29,12 @@ const PAPER_SIZES = [
 ];
 
 const COLORS = [
-  { name: 'White', value: '#ffffff' },
-  { name: 'Blue', value: '#1e3a8a' },
+  { name: 'Pure White', value: '#ffffff' },
+  { name: 'Blue', value: '#0000ff' },
+  { name: 'Navy Blue', value: '#1e3a8a' },
   { name: 'Light Blue', value: '#E6F0FF' },
+  { name: 'Light Grey', value: '#eeeeee' },
   { name: 'Red', value: '#dc2626' },
-  { name: 'Gray', value: '#f3f4f6' },
   { name: 'Transparent', value: 'transparent' }
 ];
 
@@ -46,8 +48,6 @@ export default function PassportPhotoMaker() {
   // Preload AI on mount to make background removal instant later
   useEffect(() => {
     ensurePreloaded().catch(console.error);
-    ensureModnetLoaded().catch(console.error);
-    ensureIsnetLoaded().catch(console.error);
   }, []);
   
   // Image States
@@ -71,6 +71,9 @@ export default function PassportPhotoMaker() {
   const [selectedPreset, setSelectedPreset] = useState(PRESETS[1]); // Default 35x45
   const [bgColor, setBgColor] = useState(COLORS[0].value);
   const [customColor, setCustomColor] = useState('#ffffff');
+  const [customBgImage, setCustomBgImage] = useState<string | null>(null);
+  const customBgImgRef = useRef<HTMLImageElement | null>(null);
+  const bgUploadInputRef = useRef<HTMLInputElement>(null);
   const [dpi, setDpi] = useState(300);
   
   // Adjustments & Shoulder Extensions
@@ -82,7 +85,6 @@ export default function PassportPhotoMaker() {
   const [edgeSoftness, setEdgeSoftness] = useState(0);
   const [beautyFace, setBeautyFace] = useState(0);
   const [isUltraHD, setIsUltraHD] = useState(false);
-  const [aiEngine, setAiEngine] = useState<'rmbg' | 'modnet'>('rmbg');
   
   // Frame Border Controls
   const [borderThickness, setBorderThickness] = useState(2); // Standard 2px thin border
@@ -130,16 +132,20 @@ export default function PassportPhotoMaker() {
   };
 
   const updateCanvasFromSrc = (src: string | null) => {
-    const canvas = touchupCanvasRef.current;
-    if (!canvas || !croppedImageSrc) return;
-    const ctx = canvas.getContext('2d');
+    const workCanvas = workCanvasRef.current;
+    if (!workCanvas || !croppedImageSrc) return;
+    const ctx = workCanvas.getContext('2d');
     if (!ctx) return;
     const img = new Image();
     img.onload = () => {
       ctx.save();
-      ctx.globalCompositeOperation = 'copy'; // Replaces existing content including transparency
-      ctx.drawImage(img, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.clearRect(0, 0, workCanvas.width, workCanvas.height);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, workCanvas.width, workCanvas.height);
       ctx.restore();
+      syncDisplayCanvas(workCanvas.width, workCanvas.height);
     };
     img.src = src || croppedImageSrc;
   };
@@ -208,9 +214,57 @@ export default function PassportPhotoMaker() {
   const [brushSize, setBrushSize] = useState(25);
   const [isDrawing, setIsDrawing] = useState(false);
   const touchupCanvasRef = useRef<HTMLCanvasElement>(null);
+  const workCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const origImgRef = useRef<HTMLImageElement | null>(null);
+  const origDisplayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const originalPatternRef = useRef<CanvasPattern | null>(null);
+  const displayRestorePatternRef = useRef<CanvasPattern | null>(null);
   const lastPosRef = useRef<{x: number, y: number} | null>(null);
   const isDrawingUpdateRef = useRef(false);
+  const [canvasDims, setCanvasDims] = useState<{ width: number; height: number } | null>(null);
+
+  const getManualCanvasCssDims = (dims: { width: number; height: number } | null) => {
+    const baseEditH = typeof window !== 'undefined' ? Math.round(Math.min(540, Math.max(300, window.innerHeight * 0.58))) : 440;
+    const frameH = Math.max(60, Math.round(baseEditH * zoom));
+    const presetRatio = selectedPreset.id !== 'free'
+      ? selectedPreset.width / selectedPreset.height
+      : (dims ? dims.width / dims.height : (completedCrop && completedCrop.height ? completedCrop.width / completedCrop.height : 35 / 45));
+    const frameW = Math.max(60, Math.round(frameH * presetRatio));
+
+    let canvasCssW = frameW;
+    let canvasCssH = frameH;
+    if (dims && dims.width > 0 && dims.height > 0) {
+      const fitScale = Math.min(frameW / dims.width, frameH / dims.height);
+      canvasCssW = Math.max(1, Math.round(dims.width * fitScale));
+      canvasCssH = Math.max(1, Math.round(dims.height * fitScale));
+    }
+    return { frameW, frameH, canvasCssW, canvasCssH };
+  };
+
+  const syncDisplayCanvas = (nativeW?: number, nativeH?: number) => {
+    const displayCanvas = touchupCanvasRef.current;
+    const workCanvas = workCanvasRef.current;
+    if (!displayCanvas || !workCanvas || workCanvas.width === 0 || workCanvas.height === 0) return;
+
+    const dims = nativeW && nativeH ? { width: nativeW, height: nativeH } : { width: workCanvas.width, height: workCanvas.height };
+    const { canvasCssW, canvasCssH } = getManualCanvasCssDims(dims);
+    const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 3) : 1;
+    const targetW = Math.max(1, Math.round(canvasCssW * dpr));
+    const targetH = Math.max(1, Math.round(canvasCssH * dpr));
+
+    drawSteppedHighQuality(workCanvas, displayCanvas, targetW, targetH);
+
+    if (origImgRef.current && (origImgRef.current.naturalWidth || origImgRef.current.width) > 0) {
+      if (!origDisplayCanvasRef.current) {
+        origDisplayCanvasRef.current = document.createElement('canvas');
+      }
+      drawSteppedHighQuality(origImgRef.current, origDisplayCanvasRef.current, targetW, targetH);
+      const dCtx = displayCanvas.getContext('2d');
+      if (dCtx) {
+        displayRestorePatternRef.current = dCtx.createPattern(origDisplayCanvasRef.current, 'no-repeat');
+      }
+    }
+  };
 
   // Round Brush Cursor State for Desktop & Smart Phone Android
   const [touchupCursor, setTouchupCursor] = useState<{ x: number; y: number; isTouch: boolean } | null>(null);
@@ -220,9 +274,10 @@ export default function PassportPhotoMaker() {
     if (cursorFadeTimerRef.current) clearTimeout(cursorFadeTimerRef.current);
     let clientX: number, clientY: number;
     if ('touches' in e) {
-      if (e.touches.length === 0) return;
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
+      const touch = e.touches[0] || e.changedTouches[0];
+      if (!touch) return;
+      clientX = touch.clientX;
+      clientY = touch.clientY;
     } else {
       clientX = (e as React.MouseEvent).clientX;
       clientY = (e as React.MouseEvent).clientY;
@@ -232,9 +287,10 @@ export default function PassportPhotoMaker() {
 
   const getBrushRenderedDiameter = () => {
     const canvas = touchupCanvasRef.current;
+    const nativeW = workCanvasRef.current?.width || canvasDims?.width || canvas?.width || 1;
     if (!canvas) return Math.max(12, brushSize);
     const rect = canvas.getBoundingClientRect();
-    const scale = rect.width / (canvas.width || 1);
+    const scale = rect.width / nativeW;
     return Math.max(8, Math.round(brushSize * scale));
   };
 
@@ -248,10 +304,8 @@ export default function PassportPhotoMaker() {
       
       let isMounted = true;
       const initCanvas = async () => {
-        const canvas = touchupCanvasRef.current;
-        if (!canvas || !croppedImageSrc) return;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+        const displayCanvas = touchupCanvasRef.current;
+        if (!displayCanvas || !croppedImageSrc) return;
 
         const origImg = new Image();
         await new Promise((resolve) => {
@@ -263,11 +317,21 @@ export default function PassportPhotoMaker() {
         if (!isMounted) return;
         if (!origImg.complete || origImg.naturalWidth === 0) return;
 
-        canvas.width = origImg.width;
-        canvas.height = origImg.height;
+        const natW = origImg.naturalWidth || origImg.width;
+        const natH = origImg.naturalHeight || origImg.height;
+        origImgRef.current = origImg;
 
-        const pattern = ctx.createPattern(origImg, 'no-repeat');
-        originalPatternRef.current = pattern;
+        if (!workCanvasRef.current) {
+          workCanvasRef.current = document.createElement('canvas');
+        }
+        const workCanvas = workCanvasRef.current;
+        workCanvas.width = natW;
+        workCanvas.height = natH;
+        const workCtx = workCanvas.getContext('2d');
+        if (!workCtx) return;
+
+        setCanvasDims({ width: natW, height: natH });
+        originalPatternRef.current = workCtx.createPattern(origImg, 'no-repeat');
 
         const currentImgSrc = bgRemovedImageSrc || croppedImageSrc;
         const currentImg = new Image();
@@ -280,25 +344,43 @@ export default function PassportPhotoMaker() {
         if (!isMounted) return;
         if (!currentImg.complete || currentImg.naturalWidth === 0) return;
         
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(currentImg, 0, 0, canvas.width, canvas.height);
+        workCtx.save();
+        workCtx.globalCompositeOperation = 'source-over';
+        workCtx.clearRect(0, 0, natW, natH);
+        workCtx.imageSmoothingEnabled = true;
+        workCtx.imageSmoothingQuality = 'high';
+        workCtx.drawImage(currentImg, 0, 0, natW, natH);
+        workCtx.restore();
+
+        syncDisplayCanvas(natW, natH);
       };
       initCanvas();
       return () => { isMounted = false; };
     }
   }, [isManualMode, step, bgRemovedImageSrc]); // Now depends on bgRemovedImageSrc to update when AI finishes
 
+  // Keep visible HiDPI canvas razor-sharp when zooming or changing preset in manual mode
+  useEffect(() => {
+    if (isManualMode && step === 'edit' && workCanvasRef.current && workCanvasRef.current.width > 0) {
+      syncDisplayCanvas();
+    }
+  }, [zoom, selectedPreset, isManualMode, step]);
+
   const getCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = touchupCanvasRef.current;
-    if (!canvas) return null;
+    const workCanvas = workCanvasRef.current;
+    if (!canvas || !workCanvas || workCanvas.width === 0 || workCanvas.height === 0) return null;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    if (rect.width === 0 || rect.height === 0) return null;
+    const scaleX = workCanvas.width / rect.width;
+    const scaleY = workCanvas.height / rect.height;
     
-    let clientX, clientY;
+    let clientX: number, clientY: number;
     if ('touches' in e) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
+      const touch = e.touches[0] || e.changedTouches[0];
+      if (!touch) return null;
+      clientX = touch.clientX;
+      clientY = touch.clientY;
     } else {
       clientX = (e as React.MouseEvent).clientX;
       clientY = (e as React.MouseEvent).clientY;
@@ -310,72 +392,135 @@ export default function PassportPhotoMaker() {
     };
   };
 
+  const paintBrushDot = (
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    radius: number,
+    mode: 'erase' | 'restore',
+    pattern: CanvasPattern | null
+  ) => {
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    if (mode === 'erase') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,1)';
+      ctx.fill();
+    } else if (pattern) {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = pattern;
+      ctx.fill();
+    }
+  };
+
+  const paintBrushSegment = (
+    ctx: CanvasRenderingContext2D,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    lineW: number,
+    mode: 'erase' | 'restore',
+    pattern: CanvasPattern | null
+  ) => {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.lineWidth = lineW;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (mode === 'erase') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.strokeStyle = 'rgba(0,0,0,1)';
+      ctx.stroke();
+    } else if (pattern) {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = pattern;
+      ctx.stroke();
+    }
+  };
+
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
     if (e.cancelable) e.preventDefault();
     updateTouchupCursor(e, 'touches' in e);
-    setIsDrawing(true);
     const pos = getCoordinates(e);
+    if (!pos || !workCanvasRef.current || !touchupCanvasRef.current) return;
+    setIsDrawing(true);
     lastPosRef.current = pos;
 
-    if (pos && touchupCanvasRef.current) {
-      const ctx = touchupCanvasRef.current.getContext('2d');
-      if (ctx) {
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, brushSize / 2, 0, Math.PI * 2);
-        if (brushMode === 'erase') {
-          ctx.globalCompositeOperation = 'destination-out';
-          ctx.fillStyle = 'rgba(0,0,0,1)';
-          ctx.fill();
-        } else {
-          ctx.globalCompositeOperation = 'source-over';
-          if (originalPatternRef.current) {
-            ctx.fillStyle = originalPatternRef.current;
-            ctx.fill();
-          }
-        }
-      }
+    const workCanvas = workCanvasRef.current;
+    const displayCanvas = touchupCanvasRef.current;
+    const workCtx = workCanvas.getContext('2d');
+    const displayCtx = displayCanvas.getContext('2d');
+
+    if (workCtx) {
+      paintBrushDot(workCtx, pos.x, pos.y, brushSize / 2, brushMode, originalPatternRef.current);
+    }
+    if (displayCtx && workCanvas.width > 0 && workCanvas.height > 0) {
+      const dxScale = displayCanvas.width / workCanvas.width;
+      const dyScale = displayCanvas.height / workCanvas.height;
+      paintBrushDot(
+        displayCtx,
+        pos.x * dxScale,
+        pos.y * dyScale,
+        (brushSize / 2) * dxScale,
+        brushMode,
+        displayRestorePatternRef.current
+      );
     }
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
     if (e.cancelable) e.preventDefault();
     updateTouchupCursor(e, 'touches' in e);
-    if (!isDrawing || !lastPosRef.current || !touchupCanvasRef.current) return;
+    if (!isDrawing || !lastPosRef.current || !workCanvasRef.current || !touchupCanvasRef.current) return;
     
-    const ctx = touchupCanvasRef.current.getContext('2d');
-    if (!ctx) return;
+    const workCanvas = workCanvasRef.current;
+    const displayCanvas = touchupCanvasRef.current;
+    const workCtx = workCanvas.getContext('2d');
+    const displayCtx = displayCanvas.getContext('2d');
 
     const currentPos = getCoordinates(e);
     if (!currentPos) return;
 
-    ctx.beginPath();
-    ctx.moveTo(lastPosRef.current.x, lastPosRef.current.y);
-    ctx.lineTo(currentPos.x, currentPos.y);
-    
-    ctx.lineWidth = brushSize;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    if (brushMode === 'erase') {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.strokeStyle = 'rgba(0,0,0,1)';
-    } else {
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.strokeStyle = originalPatternRef.current || 'rgba(0,0,0,1)';
+    if (workCtx) {
+      paintBrushSegment(
+        workCtx,
+        lastPosRef.current.x,
+        lastPosRef.current.y,
+        currentPos.x,
+        currentPos.y,
+        brushSize,
+        brushMode,
+        originalPatternRef.current
+      );
     }
-
-    ctx.stroke();
+    if (displayCtx && workCanvas.width > 0 && workCanvas.height > 0) {
+      const dxScale = displayCanvas.width / workCanvas.width;
+      const dyScale = displayCanvas.height / workCanvas.height;
+      paintBrushSegment(
+        displayCtx,
+        lastPosRef.current.x * dxScale,
+        lastPosRef.current.y * dyScale,
+        currentPos.x * dxScale,
+        currentPos.y * dyScale,
+        Math.max(1, brushSize * dxScale),
+        brushMode,
+        displayRestorePatternRef.current
+      );
+    }
     lastPosRef.current = currentPos;
   };
 
   const stopDrawing = () => {
-    if (isDrawing && touchupCanvasRef.current) {
+    if (isDrawing && workCanvasRef.current) {
       setIsDrawing(false);
       lastPosRef.current = null;
-      const result = touchupCanvasRef.current.toDataURL('image/png', 1.0);
+      const result = workCanvasRef.current.toDataURL('image/png', 1.0);
       isDrawingUpdateRef.current = true;
       setBgRemovedImageSrc(result);
       addToHistory(result);
+      syncDisplayCanvas();
     }
     if (cursorFadeTimerRef.current) clearTimeout(cursorFadeTimerRef.current);
     cursorFadeTimerRef.current = setTimeout(() => {
@@ -496,6 +641,7 @@ export default function PassportPhotoMaker() {
     canvas.toBlob((blob) => {
       if (!blob) return;
       const croppedUrl = URL.createObjectURL(blob);
+      setCanvasDims({ width: targetWidth, height: targetHeight });
       setCroppedImageSrc(croppedUrl);
       setBgRemovedImageSrc(null);
       setFinalImageSrc(null);
@@ -530,9 +676,10 @@ export default function PassportPhotoMaker() {
         false, // forceWhiteBackground
         false, // highPrecisionBoundary
         {
-          engine: aiEngine,
-          removeBackgroundNoise: false,
-          severTouchingObjects: false,
+          engine: 'auto',
+          removeBackgroundNoise: true,
+          severTouchingObjects: true,
+          objectStrictness: 75,
           preserveEarsAndShoulders: true,
           extendLeftShoulder: true,
           decontaminateHalos: true,
@@ -615,7 +762,7 @@ export default function PassportPhotoMaker() {
     if (!targetSrc) return;
     try {
       setIsProcessing(true);
-      const cleaned = await removeChairFromImage(targetSrc, { objectStrictness: 45, severTouchingObjects: false });
+      const cleaned = await removeChairFromImage(targetSrc, { objectStrictness: 85, severTouchingObjects: true });
       if (bgRemovedImageSrc) {
         setBgRemovedImageSrc(cleaned);
       } else {
@@ -652,6 +799,7 @@ export default function PassportPhotoMaker() {
 
   // --- 4. Apply Adjustments & Background Color ---
   useEffect(() => {
+    if (isManualMode) return;
     const sourceImage = bgRemovedImageSrc || croppedImageSrc;
     if (!sourceImage) {
       setFinalImageSrc(null);
@@ -837,25 +985,32 @@ export default function PassportPhotoMaker() {
                 finalB = (finalB * (1 - skinWeight) + fB * skinWeight) | 0;
               }
 
-              // Clean edge preservation with 100% solid core for subject & clothing
-              let finalAlpha = alpha;
-              if (alpha > 180) {
-                finalAlpha = 255;
-              } else if (alpha <= 12) {
-                finalAlpha = 0;
-              } else {
-                finalAlpha = alpha;
-              }
-
+              // Preserve smooth natural sub-pixel hair & clothing alpha edges
+              const finalAlpha = alpha <= 2 ? 0 : alpha;
               dst[i] = finalR | (finalG << 8) | (finalB << 16) | (finalAlpha << 24);
             }
           }
           tempCtx.putImageData(output, 0, 0);
         }
 
-        // Now composite everything onto the final canvas
+        // Now composite everything onto the final canvas AFTER mask refinement
         // 1. Draw Background
-        if (bgColor !== 'transparent') {
+        if (bgColor === 'custom-image' && customBgImgRef.current) {
+          const bgImg = customBgImgRef.current;
+          const imgRatio = bgImg.width / Math.max(1, bgImg.height);
+          const targetRatio = canvas.width / Math.max(1, canvas.height);
+          let drawW = canvas.width, drawH = canvas.height, offsetX = 0, offsetY = 0;
+          if (imgRatio > targetRatio) {
+            drawH = canvas.height;
+            drawW = canvas.height * imgRatio;
+            offsetX = (canvas.width - drawW) / 2;
+          } else {
+            drawW = canvas.width;
+            drawH = canvas.width / imgRatio;
+            offsetY = (canvas.height - drawH) / 2;
+          }
+          ctx.drawImage(bgImg, offsetX, offsetY, drawW, drawH);
+        } else if (bgColor !== 'transparent') {
           ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
           ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
@@ -863,17 +1018,15 @@ export default function PassportPhotoMaker() {
         // 2. Draw the processed subject
         ctx.drawImage(tempCanvas, 0, 0);
 
-        // 3. Add Border if requested (Standard Thin Border)
-        if (hasBorder) {
+        // 3. Add Border if requested on opaque studio backgrounds (never stamp black border on transparent PNGs)
+        if (hasBorder && bgColor !== 'transparent') {
           ctx.strokeStyle = '#000000';
           const thickness = Math.max(1, Math.round((appliedAdjustments.borderThickness / 2) * Math.max(1, canvas.width / 350)));
           ctx.lineWidth = thickness;
-          // Draw rect slightly inside so the stroke isn't clipped
           ctx.strokeRect(thickness / 2, thickness / 2, canvas.width - thickness, canvas.height - thickness);
         }
         
         if (isMounted) {
-          // Use toBlob + createObjectURL for better performance on high-res images
           canvas.toBlob((blob) => {
             if (blob && isMounted) {
               const url = URL.createObjectURL(blob);
@@ -892,7 +1045,7 @@ export default function PassportPhotoMaker() {
     };
     img.src = sourceImage;
     return () => { isMounted = false; };
-  }, [croppedImageSrc, bgRemovedImageSrc, bgColor, customColor, appliedAdjustments, hasBorder]);
+  }, [croppedImageSrc, bgRemovedImageSrc, bgColor, customColor, customBgImage, appliedAdjustments, hasBorder, isManualMode]);
 
   useEffect(() => {
     if (!finalImageSrc) {
@@ -1319,35 +1472,6 @@ export default function PassportPhotoMaker() {
                           </button>
                         </div>
                       </div>
-                      
-                      {/* Engine Selector */}
-                      <div className="flex items-center justify-between mb-2 p-1.5 bg-gray-100 rounded-xl">
-                        <span className="text-[11px] font-semibold text-gray-500 pl-1.5">AI Engine:</span>
-                        <div className="flex gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setAiEngine('rmbg')}
-                            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all ${
-                              aiEngine === 'rmbg'
-                                ? 'bg-white text-gray-900 shadow-sm'
-                                : 'text-gray-500 hover:text-gray-900'
-                            }`}
-                          >
-                            RMBG-1.4 (Salient)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setAiEngine('modnet')}
-                            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all ${
-                              aiEngine === 'modnet'
-                                ? 'bg-white text-gray-900 shadow-sm'
-                                : 'text-gray-500 hover:text-gray-900'
-                            }`}
-                          >
-                            MODNet (Portrait)
-                          </button>
-                        </div>
-                      </div>
 
                       <div className="flex gap-2 mb-2">
                         <button
@@ -1479,7 +1603,7 @@ export default function PassportPhotoMaker() {
                         </div>
                       )}
                       
-                      <div className="grid grid-cols-4 gap-2">
+                      <div className="grid grid-cols-5 gap-2">
                         {COLORS.map(color => (
                           <button
                             key={color.name}
@@ -1490,11 +1614,11 @@ export default function PassportPhotoMaker() {
                             style={{ background: color.value === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : color.value }}
                             title={color.name}
                           >
-                            {bgColor === color.value && color.value !== '#ffffff' && color.value !== 'transparent' && <Check className="w-4 h-4 text-white" />}
-                            {bgColor === color.value && (color.value === '#ffffff' || color.value === 'transparent') && <Check className="w-4 h-4 text-gray-900" />}
+                            {bgColor === color.value && color.value !== '#ffffff' && color.value !== '#eeeeee' && color.value !== '#E6F0FF' && color.value !== 'transparent' && <Check className="w-4 h-4 text-white" />}
+                            {bgColor === color.value && (color.value === '#ffffff' || color.value === '#eeeeee' || color.value === '#E6F0FF' || color.value === 'transparent') && <Check className="w-4 h-4 text-gray-900" />}
                           </button>
                         ))}
-                        <div className="relative h-10 rounded-xl border-2 border-gray-200 overflow-hidden hover:border-gray-300 transition-all">
+                        <div className={`relative h-10 rounded-xl border-2 overflow-hidden transition-all ${bgColor === 'custom' ? 'border-[#e8501a] scale-105 shadow-md' : 'border-gray-200 hover:border-gray-300'}`}>
                           <input 
                             type="color" 
                             value={customColor} 
@@ -1503,7 +1627,70 @@ export default function PassportPhotoMaker() {
                             title="Custom Color"
                           />
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (customBgImage) setBgColor('custom-image');
+                            else bgUploadInputRef.current?.click();
+                          }}
+                          className={`h-10 rounded-xl border-2 transition-all flex items-center justify-center overflow-hidden ${
+                            bgColor === 'custom-image' ? 'border-[#e8501a] scale-105 shadow-md' : 'border-dashed border-gray-300 hover:border-[#e8501a] bg-gray-50'
+                          }`}
+                          style={customBgImage ? { backgroundImage: `url(${customBgImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                          title="Custom Background Image"
+                        >
+                          {!customBgImage && <Upload className="w-4 h-4 text-gray-600" />}
+                        </button>
                       </div>
+
+                      <input
+                        ref={bgUploadInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            const src = ev.target?.result as string;
+                            const img = new Image();
+                            img.onload = () => {
+                              customBgImgRef.current = img;
+                              setCustomBgImage(src);
+                              setBgColor('custom-image');
+                            };
+                            img.src = src;
+                          };
+                          reader.readAsDataURL(file);
+                          e.target.value = '';
+                        }}
+                      />
+
+                      {bgColor === 'custom-image' && (
+                        <div className="mt-2.5 p-2.5 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => bgUploadInputRef.current?.click()}
+                            className="text-xs font-bold text-gray-700 hover:text-[#e8501a] flex items-center gap-1.5"
+                          >
+                            <Upload className="w-3.5 h-3.5" /> {customBgImage ? 'Change BG Image' : 'Upload BG Image'}
+                          </button>
+                          {customBgImage && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCustomBgImage(null);
+                                customBgImgRef.current = null;
+                                setBgColor('#ffffff');
+                              }}
+                              className="text-[10px] font-bold text-red-500 hover:underline"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* Adjustments */}
@@ -1819,46 +2006,48 @@ export default function PassportPhotoMaker() {
               <div className="flex-1 w-full overflow-auto p-8 sm:p-12 min-h-0 bg-gray-200/50">
                 <div className="min-h-full flex items-center justify-center m-auto w-max min-w-full">
                   
-                  {step === 'crop' && imageSrc && (
-                    <ReactCrop
-                      crop={crop}
-                      onChange={(_, percentCrop) => setCrop(percentCrop)}
-                      onComplete={(c, pc) => {
-                        setCompletedCrop(c);
-                        setCompletedPercentCrop(pc);
-                      }}
-                      aspect={selectedPreset.id !== 'free' ? selectedPreset.width / selectedPreset.height : undefined}
-                      className="shadow-2xl rounded-sm bg-white border border-gray-300"
-                      style={{ zoom: zoom }}
-                    >
-                      <img 
-                        ref={imgRef}
-                        src={imageSrc} 
-                        alt="Upload" 
-                        onLoad={onImageLoad}
-                        style={{ 
-                          maxWidth: '100%', 
-                          maxHeight: '60vh',
-                          width: 'auto',
-                          height: 'auto',
-                          display: 'block', 
-                          imageRendering: 'high-quality',
-                          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.3)'
+                  {step === 'crop' && imageSrc && (() => {
+                    const baseCropH = typeof window !== 'undefined' ? Math.round(Math.min(540, Math.max(300, window.innerHeight * 0.58))) : 440;
+                    return (
+                      <ReactCrop
+                        crop={crop}
+                        onChange={(_, percentCrop) => setCrop(percentCrop)}
+                        onComplete={(c, pc) => {
+                          setCompletedCrop(c);
+                          setCompletedPercentCrop(pc);
                         }}
-                      />
-                    </ReactCrop>
-                  )}
+                        aspect={selectedPreset.id !== 'free' ? selectedPreset.width / selectedPreset.height : undefined}
+                        className="shadow-2xl rounded-sm bg-white border border-gray-300 shrink-0"
+                      >
+                        <img 
+                          ref={imgRef}
+                          src={imageSrc} 
+                          alt="Upload" 
+                          onLoad={onImageLoad}
+                          style={{ 
+                            height: `${Math.round(baseCropH * zoom)}px`,
+                            width: 'auto',
+                            maxWidth: 'none',
+                            maxHeight: 'none',
+                            display: 'block', 
+                            imageRendering: 'high-quality',
+                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.3)'
+                          }}
+                        />
+                      </ReactCrop>
+                    );
+                  })()}
 
-                  {step === 'edit' && (
+                  {step === 'edit' && (() => {
+                    const { frameW, frameH, canvasCssW, canvasCssH } = getManualCanvasCssDims(canvasDims);
+
+                    return (
                     <div 
-                      className="relative shadow-2xl rounded-sm overflow-hidden flex items-center justify-center"
+                      className="relative shadow-2xl rounded-sm overflow-hidden flex items-center justify-center shrink-0"
                       style={{
-                        aspectRatio: selectedPreset.id !== 'free' ? `${selectedPreset.width} / ${selectedPreset.height}` : (completedCrop ? `${completedCrop.width} / ${completedCrop.height}` : 'auto'),
-                        height: `60vh`,
-                        maxWidth: `100%`,
-                        transition: 'all 0.1s ease-out',
-                        zoom: zoom,
-                        backgroundColor: bgColor === 'transparent' ? 'transparent' : (bgColor === 'custom' ? customColor : bgColor),
+                        width: `${frameW}px`,
+                        height: `${frameH}px`,
+                        backgroundColor: bgColor === 'transparent' || bgColor === 'custom-image' ? 'transparent' : (bgColor === 'custom' ? customColor : bgColor),
                         backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : 'none',
                         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.3)'
                       }}
@@ -1870,6 +2059,9 @@ export default function PassportPhotoMaker() {
                           onMouseMove={(e) => updateTouchupCursor(e, false)}
                           onMouseLeave={() => setTouchupCursor(null)}
                         >
+                          {bgColor === 'custom-image' && customBgImage && (
+                            <img src={customBgImage} alt="" className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none" />
+                          )}
                           <canvas
                             ref={touchupCanvasRef}
                             onMouseDown={(e) => { updateTouchupCursor(e, false); startDrawing(e); }}
@@ -1879,45 +2071,15 @@ export default function PassportPhotoMaker() {
                             onTouchStart={(e) => { updateTouchupCursor(e, true); startDrawing(e); }}
                             onTouchMove={(e) => { updateTouchupCursor(e, true); draw(e); }}
                             onTouchEnd={stopDrawing}
-                            className="max-w-full max-h-full object-contain block cursor-none touch-none select-none"
+                            className="relative z-10 block cursor-none touch-none select-none shrink-0"
                             style={{
-                              filter: `brightness(${brightness}%) contrast(${contrast + (isUltraHD ? 15 : 0)}%) saturate(${saturation + (isUltraHD ? 20 : 0)}%) ${smoothness > 0 ? `blur(${smoothness / 20}px)` : ''}`,
-                              backgroundColor: bgColor === 'transparent' ? 'transparent' : (bgColor === 'custom' ? customColor : bgColor),
-                              backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : 'none'
+                              width: `${canvasCssW}px`,
+                              height: `${canvasCssH}px`,
+                              filter: `brightness(${brightness}%) contrast(${contrast + (isUltraHD ? 15 : 0)}%) saturate(${saturation + (isUltraHD ? 20 : 0)}%)`,
+                              backgroundColor: 'transparent',
+                              imageRendering: 'auto'
                             }}
                           />
-
-                          {/* Round Shape Brush Cursor Overlay for Desktop & Smart Phone Android */}
-                          {touchupCursor && (
-                            <div
-                              className="pointer-events-none fixed z-50 rounded-full -translate-x-1/2 -translate-y-1/2 select-none transition-transform duration-75"
-                              style={{
-                                left: `${touchupCursor.x}px`,
-                                top: `${touchupCursor.y}px`,
-                                width: `${getBrushRenderedDiameter()}px`,
-                                height: `${getBrushRenderedDiameter()}px`,
-                                border: '2px solid rgba(255, 255, 255, 0.95)',
-                                boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.8), 0 0 12px rgba(0, 0, 0, 0.4)',
-                                backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.35)' : 'rgba(59, 130, 246, 0.35)',
-                              }}
-                            >
-                              {/* Precise Center Point */}
-                              <div className="absolute inset-0 m-auto w-1.5 h-1.5 rounded-full bg-white shadow-xs ring-1 ring-black/70" />
-
-                              {/* Smart Phone Android Touch Alignment Guides */}
-                              {touchupCursor.isTouch && (
-                                <>
-                                  <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
-                                  <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
-                                  <div className="absolute -left-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
-                                  <div className="absolute -right-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
-                                  <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-black/85 text-white text-[9px] font-bold rounded-full shadow-md whitespace-nowrap border border-white/30 backdrop-blur-xs">
-                                    {brushSize}px
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                          )}
                         </div>
                       ) : (
                         <>
@@ -2042,12 +2204,42 @@ export default function PassportPhotoMaker() {
                         </div>
                       )}
                     </div>
-                  )}
+                    );
+                  })()}
 
                   {step === 'print' && renderPrintPreview()}
 
                 </div>
               </div>
+
+              {/* Round Shape Brush Cursor Overlay for Desktop & Mobile Touch (fixed viewport, unaffected by zoom/scroll) */}
+              {step === 'edit' && isManualMode && touchupCursor && (
+                <div
+                  className="pointer-events-none fixed z-50 rounded-full -translate-x-1/2 -translate-y-1/2 select-none transition-transform duration-75"
+                  style={{
+                    left: `${touchupCursor.x}px`,
+                    top: `${touchupCursor.y}px`,
+                    width: `${getBrushRenderedDiameter()}px`,
+                    height: `${getBrushRenderedDiameter()}px`,
+                    border: '2px solid rgba(255, 255, 255, 0.95)',
+                    boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.8), 0 0 12px rgba(0, 0, 0, 0.4)',
+                    backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.35)' : 'rgba(59, 130, 246, 0.35)',
+                  }}
+                >
+                  <div className="absolute inset-0 m-auto w-1.5 h-1.5 rounded-full bg-white shadow-xs ring-1 ring-black/70" />
+                  {touchupCursor.isTouch && (
+                    <>
+                      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
+                      <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
+                      <div className="absolute -left-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
+                      <div className="absolute -right-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
+                      <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-black/85 text-white text-[9px] font-bold rounded-full shadow-md whitespace-nowrap border border-white/30 backdrop-blur-xs">
+                        {brushSize}px
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* Exit Button */}
               <button 

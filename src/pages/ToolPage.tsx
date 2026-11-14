@@ -2,7 +2,7 @@ import { useParams, Link } from 'react-router-dom';
 import { ChevronRight, Share2, Copy, Twitter, Info, HelpCircle, CheckCircle2, Zap, Shield, Star, ThumbsUp, Users, Facebook, MessageCircle, Instagram, BookOpen } from 'lucide-react';
 import { tools, categories } from '../data/tools';
 import { blogPosts } from '../data/blog';
-import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense, type ComponentType } from 'react';
 import SEO from '../components/SEO';
 import { useFocusMode } from '../contexts/FocusModeContext';
 
@@ -11,45 +11,77 @@ import PdfEditorSeo from '../components/seo/PdfEditorSeo';
 import PassportPhotoMakerSeo from '../components/seo/PassportPhotoMakerSeo';
 import AdSlot from '../components/AdSlot';
 
+// Lazy load helper with automatic retry & stale-chunk recovery
+function lazyWithRetry<T extends ComponentType<any>>(
+  factory: () => Promise<{ default: T }>,
+  retries = 2
+) {
+  return lazy(async () => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await factory();
+      } catch (err) {
+        lastError = err;
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+        }
+      }
+    }
+    const reloadKey = 'chunk_reload_attempted';
+    try {
+      if (!sessionStorage.getItem(reloadKey)) {
+        sessionStorage.setItem(reloadKey, '1');
+        window.location.reload();
+        return new Promise<{ default: T }>(() => {});
+      }
+      sessionStorage.removeItem(reloadKey);
+    } catch {
+      // Ignore sessionStorage access restrictions
+    }
+    throw lastError;
+  });
+}
+
 // Lazy load tool components
-const WordCounter = lazy(() => import('../tools/WordCounter'));
-const JsonFormatter = lazy(() => import('../tools/JsonFormatter'));
-const AgeCalculator = lazy(() => import('../tools/AgeCalculator'));
-const QrGenerator = lazy(() => import('../tools/QrGenerator'));
-const BarcodeGenerator = lazy(() => import('../tools/BarcodeGenerator'));
-const ImageCompressor = lazy(() => import('../tools/ImageCompressor'));
-const BackgroundRemover = lazy(() => import('../tools/BackgroundRemover'));
-const PassportPhotoMaker = lazy(() => import('../tools/PassportPhotoMaker'));
-const GenericTool = lazy(() => import('../tools/GenericTool'));
-const TextTools = lazy(() => import('../tools/TextTools'));
-const DeveloperTools = lazy(() => import('../tools/DeveloperTools'));
-const CalculatorTools = lazy(() => import('../tools/CalculatorTools'));
-const GeneratorTools = lazy(() => import('../tools/GeneratorTools'));
-const SeoTools = lazy(() => import('../tools/SeoTools'));
-const SocialTools = lazy(() => import('../tools/SocialTools'));
-const ImageTools = lazy(() => import('../tools/ImageTools'));
-const PdfTools = lazy(() => import('../tools/PdfTools'));
-const PhotoSignResizer = lazy(() => import('../tools/PhotoSignResizer'));
-const AdvancedPdfEditor = lazy(() => import('../tools/AdvancedPdfEditor'));
-const AdvancedPdfCropper = lazy(() => import('../tools/AdvancedPdfCropper'));
-const ImageCropper = lazy(() => import('../tools/ImageCropper'));
-const ImageColorPicker = lazy(() => import('../tools/ImageColorPicker'));
-const GifMaker = lazy(() => import('../tools/GifMaker'));
-const FaviconGenerator = lazy(() => import('../tools/FaviconGenerator'));
-const SvgToPngConverter = lazy(() => import('../tools/SvgToPngConverter'));
-const DynamicPreviewer = lazy(() => import('../components/DynamicPreviewer'));
-const KeyboardShortcutGuide = lazy(() => import('../tools/KeyboardShortcutGuide'));
-const InternetSpeedTest = lazy(() => import('../tools/InternetSpeedTest'));
-const PregnancyCalculator = lazy(() => import('../tools/PregnancyCalculator'));
-const DueDateCalculator = lazy(() => import('../tools/DueDateCalculator'));
-const OvulationCalculator = lazy(() => import('../tools/OvulationCalculator'));
-const PeriodCalculator = lazy(() => import('../tools/PeriodCalculator'));
-const PregnancyWeightGainCalculator = lazy(() => import('../tools/PregnancyWeightGainCalculator'));
-const PregnancyConceptionCalculator = lazy(() => import('../tools/PregnancyConceptionCalculator'));
-const ConceptionCalculator = lazy(() => import('../tools/ConceptionCalculator'));
-const SalaryCalculator = lazy(() => import('../tools/SalaryCalculator'));
-const AiTextHumanizer = lazy(() => import('../tools/AiTextHumanizer'));
-const ResumeMaker = lazy(() => import('../tools/ResumeMaker'));
+const WordCounter = lazyWithRetry(() => import('../tools/WordCounter'));
+const JsonFormatter = lazyWithRetry(() => import('../tools/JsonFormatter'));
+const AgeCalculator = lazyWithRetry(() => import('../tools/AgeCalculator'));
+const QrGenerator = lazyWithRetry(() => import('../tools/QrGenerator'));
+const BarcodeGenerator = lazyWithRetry(() => import('../tools/BarcodeGenerator'));
+const ImageCompressor = lazyWithRetry(() => import('../tools/ImageCompressor'));
+const BackgroundRemover = lazyWithRetry(() => import('../tools/BackgroundRemover'));
+const PassportPhotoMaker = lazyWithRetry(() => import('../tools/PassportPhotoMaker'));
+const GenericTool = lazyWithRetry(() => import('../tools/GenericTool'));
+const TextTools = lazyWithRetry(() => import('../tools/TextTools'));
+const DeveloperTools = lazyWithRetry(() => import('../tools/DeveloperTools'));
+const CalculatorTools = lazyWithRetry(() => import('../tools/CalculatorTools'));
+const GeneratorTools = lazyWithRetry(() => import('../tools/GeneratorTools'));
+const SeoTools = lazyWithRetry(() => import('../tools/SeoTools'));
+const SocialTools = lazyWithRetry(() => import('../tools/SocialTools'));
+const ImageTools = lazyWithRetry(() => import('../tools/ImageTools'));
+const PdfTools = lazyWithRetry(() => import('../tools/PdfTools'));
+const PhotoSignResizer = lazyWithRetry(() => import('../tools/PhotoSignResizer'));
+const AdvancedPdfEditor = lazyWithRetry(() => import('../tools/AdvancedPdfEditor'));
+const AdvancedPdfCropper = lazyWithRetry(() => import('../tools/AdvancedPdfCropper'));
+const ImageCropper = lazyWithRetry(() => import('../tools/ImageCropper'));
+const ImageColorPicker = lazyWithRetry(() => import('../tools/ImageColorPicker'));
+const GifMaker = lazyWithRetry(() => import('../tools/GifMaker'));
+const FaviconGenerator = lazyWithRetry(() => import('../tools/FaviconGenerator'));
+const SvgToPngConverter = lazyWithRetry(() => import('../tools/SvgToPngConverter'));
+const DynamicPreviewer = lazyWithRetry(() => import('../components/DynamicPreviewer'));
+const KeyboardShortcutGuide = lazyWithRetry(() => import('../tools/KeyboardShortcutGuide'));
+const InternetSpeedTest = lazyWithRetry(() => import('../tools/InternetSpeedTest'));
+const PregnancyCalculator = lazyWithRetry(() => import('../tools/PregnancyCalculator'));
+const DueDateCalculator = lazyWithRetry(() => import('../tools/DueDateCalculator'));
+const OvulationCalculator = lazyWithRetry(() => import('../tools/OvulationCalculator'));
+const PeriodCalculator = lazyWithRetry(() => import('../tools/PeriodCalculator'));
+const PregnancyWeightGainCalculator = lazyWithRetry(() => import('../tools/PregnancyWeightGainCalculator'));
+const PregnancyConceptionCalculator = lazyWithRetry(() => import('../tools/PregnancyConceptionCalculator'));
+const ConceptionCalculator = lazyWithRetry(() => import('../tools/ConceptionCalculator'));
+const SalaryCalculator = lazyWithRetry(() => import('../tools/SalaryCalculator'));
+const AiTextHumanizer = lazyWithRetry(() => import('../tools/AiTextHumanizer'));
+const ResumeMaker = lazyWithRetry(() => import('../tools/ResumeMaker'));
 
 const ToolLoader = () => (
   <div className="flex flex-col items-center justify-center py-20 animate-pulse">

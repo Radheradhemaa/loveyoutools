@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut, Target, Layers, MousePointerClick, Scissors, ShieldCheck } from 'lucide-react';
+import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut, Target, MousePointerClick, Scissors } from 'lucide-react';
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval, ensurePreloaded, ensureModnetLoaded, ensureIsnetLoaded, magicEraseObjectAtPoint, removeChairFromImage, cleanEdgeHalosAndDeFringe, BgRemovalOptions } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded, magicEraseObjectAtPoint, removeChairFromImage, cleanEdgeHalosAndDeFringe, BgRemovalOptions } from '../lib/bgRemoval';
 import { reconstructLeftShoulder } from '../lib/shoulderReconstruction';
+import { drawSteppedHighQuality } from '../lib/touchupCanvas';
 
 export default function BackgroundRemover() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -44,15 +45,17 @@ export default function BackgroundRemover() {
     }
     return () => clearInterval(interval);
   }, [isProcessing]);
-  const [bgColor, setBgColor] = useState('#ffffff');
+  const [bgColor, setBgColor] = useState('transparent');
   const [customColor, setCustomColor] = useState('#ffffff');
+  const [customBgImage, setCustomBgImage] = useState<string | null>(null);
+  const customBgImgRef = useRef<HTMLImageElement | null>(null);
+  const bgUploadInputRef = useRef<HTMLInputElement>(null);
   const [blurAmount, setBlurAmount] = useState(10);
   
   // AI Subject Focus & Precision Engine Options
-  const [selectedEngine, setSelectedEngine] = useState<'strict_subject' | 'modnet' | 'rmbg' | 'isnet'>('rmbg');
   const [isolateMainSubject, setIsolateMainSubject] = useState(true);
   const [objectStrictness, setObjectStrictness] = useState(75);
-  const [severTouchingObjects, setSeverTouchingObjects] = useState(false);
+  const [severTouchingObjects, setSeverTouchingObjects] = useState(true);
   const [removeBackgroundNoise, setRemoveBackgroundNoise] = useState(true);
   const [autoExtendLeftShoulder, setAutoExtendLeftShoulder] = useState(true);
 
@@ -68,10 +71,11 @@ export default function BackgroundRemover() {
   const [brushMode, setBrushMode] = useState<'erase' | 'restore' | 'magic'>('erase');
   const [brushSize, setBrushSize] = useState(25);
   const [magicEraserTolerance, setMagicEraserTolerance] = useState(35);
-  const [zoom, setZoom] = useState(0.3);
-  const handleZoomIn = useCallback(() => setZoom(prev => Math.min(prev + 0.1, 4)), []);
-  const handleZoomOut = useCallback(() => setZoom(prev => Math.max(prev - 0.1, 0.1)), []);
-  const handleZoomReset = useCallback(() => setZoom(0.3), []);
+  const [zoom, setZoom] = useState(1);
+  const [imageDims, setImageDims] = useState<{ width: number; height: number } | null>(null);
+  const handleZoomIn = useCallback(() => setZoom(prev => Math.min(Number((prev + 0.1).toFixed(2)), 4)), []);
+  const handleZoomOut = useCallback(() => setZoom(prev => Math.max(Number((prev - 0.1).toFixed(2)), 0.1)), []);
+  const handleZoomReset = useCallback(() => setZoom(1), []);
 
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
@@ -98,6 +102,10 @@ export default function BackgroundRemover() {
 
   const [isDrawing, setIsDrawing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const workCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const origDisplayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const workRestorePatternRef = useRef<CanvasPattern | null>(null);
+  const displayRestorePatternRef = useRef<CanvasPattern | null>(null);
   const originalImgRef = useRef<HTMLImageElement | null>(null);
   const lastPosRef = useRef<{x: number, y: number} | null>(null);
   const isDrawingUpdateRef = useRef(false);
@@ -253,19 +261,15 @@ export default function BackgroundRemover() {
     }
     
     let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
-    if (smoothness > 0) {
-      filterString += ` blur(${smoothness / 100}px)`;
-    }
     if (beautyFace > 0) {
-      const beautyBlur = beautyFace / 80;
       const beautyBright = 100 + (beautyFace / 15);
-      const beautyContrast = 100 - (beautyFace / 20);
+      const beautyContrast = 100 - (beautyFace / 25);
       const beautySaturate = 100 + (beautyFace / 20);
-      filterString += ` blur(${beautyBlur}px) brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
+      filterString += ` brightness(${beautyBright}%) contrast(${beautyContrast}%) saturate(${beautySaturate}%)`;
     }
     if (edgeSoftness > 0) {
-      const edgeBlur = edgeSoftness / 50;
-      filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
+      const edgeFeather = edgeSoftness / 50;
+      filterString += ` drop-shadow(0 0 ${edgeFeather}px rgba(0,0,0,0.12))`;
     }
     
     const finalSharpness = isUltraHD ? (sharpness + 35) : sharpness;
@@ -318,15 +322,54 @@ export default function BackgroundRemover() {
 
   // Removed redundant preload
 
+  const getManualDisplayDims = (dims: { width: number; height: number } | null) => {
+    const d = dims || { width: 500, height: 500 };
+    const baseScale = Math.min(460 / d.height, 640 / d.width, 1);
+    const displayW = Math.max(40, Math.round(d.width * baseScale * zoom));
+    const displayH = Math.max(40, Math.round(d.height * baseScale * zoom));
+    return { displayW, displayH };
+  };
+
+  const syncDisplayCanvas = (nativeW?: number, nativeH?: number) => {
+    const displayCanvas = canvasRef.current;
+    const workCanvas = workCanvasRef.current;
+    if (!displayCanvas || !workCanvas || workCanvas.width === 0 || workCanvas.height === 0) return;
+
+    const dims = nativeW && nativeH ? { width: nativeW, height: nativeH } : { width: workCanvas.width, height: workCanvas.height };
+    const { displayW, displayH } = getManualDisplayDims(dims);
+    const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 3) : 1;
+    const targetW = Math.max(1, Math.round(displayW * dpr));
+    const targetH = Math.max(1, Math.round(displayH * dpr));
+
+    drawSteppedHighQuality(workCanvas, displayCanvas, targetW, targetH);
+
+    if (originalImgRef.current && (originalImgRef.current.naturalWidth || originalImgRef.current.width) > 0) {
+      if (!origDisplayCanvasRef.current) {
+        origDisplayCanvasRef.current = document.createElement('canvas');
+      }
+      drawSteppedHighQuality(originalImgRef.current, origDisplayCanvasRef.current, targetW, targetH);
+      const dCtx = displayCanvas.getContext('2d');
+      if (dCtx) {
+        displayRestorePatternRef.current = dCtx.createPattern(origDisplayCanvasRef.current, 'no-repeat');
+      }
+    }
+  };
+
   const updateCanvasFromSrc = (src: string | null) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const workCanvas = workCanvasRef.current;
+    if (!workCanvas) return;
+    const ctx = workCanvas.getContext('2d');
     if (!ctx) return;
     const img = new Image();
     img.onload = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.clearRect(0, 0, workCanvas.width, workCanvas.height);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, workCanvas.width, workCanvas.height);
+      ctx.restore();
+      syncDisplayCanvas(workCanvas.width, workCanvas.height);
     };
     img.src = src || imageSrc || '';
   };
@@ -346,11 +389,12 @@ export default function BackgroundRemover() {
       setIsManualMode(false);
       setIsCropping(false); // Direct to instant result
       setHasCropped(false);
-      setZoom(0.3); // Reset zoom to 30%
+      setZoom(1); // Reset zoom to 100%
       
       const img = new Image();
       img.onload = () => { 
         originalImgRef.current = img; 
+        setImageDims({ width: img.width, height: img.height });
         // Auto-trigger background removal for "instant" feel
         removeBackground(src);
       };
@@ -406,7 +450,7 @@ export default function BackgroundRemover() {
     
     try {
       const options: BgRemovalOptions = {
-        engine: selectedEngine,
+        engine: 'auto',
         isolateMainSubject,
         objectStrictness,
         severTouchingObjects,
@@ -423,11 +467,6 @@ export default function BackgroundRemover() {
       const url = URL.createObjectURL(rawBlob);
       setResultImage(url);
       addToHistory(url);
-      
-      // Update original image ref for manual mode
-      const resultImg = new Image();
-      resultImg.onload = () => { originalImgRef.current = resultImg; };
-      resultImg.src = url;
 
       const duration = (Date.now() - startTime) / 1000;
       console.log(`UI: BG Removal took ${duration}s`);
@@ -500,8 +539,14 @@ export default function BackgroundRemover() {
 
     const target = e.currentTarget;
     const rect = target.getBoundingClientRect();
-    const clickX = ((e.clientX - rect.left) / rect.width) * (target instanceof HTMLImageElement ? target.naturalWidth : target.width);
-    const clickY = ((e.clientY - rect.top) / rect.height) * (target instanceof HTMLImageElement ? target.naturalHeight : target.height);
+    const nativeW = target instanceof HTMLImageElement
+      ? target.naturalWidth
+      : (workCanvasRef.current?.width || imageDims?.width || target.width);
+    const nativeH = target instanceof HTMLImageElement
+      ? target.naturalHeight
+      : (workCanvasRef.current?.height || imageDims?.height || target.height);
+    const clickX = ((e.clientX - rect.left) / rect.width) * nativeW;
+    const clickY = ((e.clientY - rect.top) / rect.height) * nativeH;
 
     try {
       const updatedUrl = await magicEraseObjectAtPoint(resultImage, clickX, clickY, magicEraserTolerance);
@@ -520,25 +565,64 @@ export default function BackgroundRemover() {
         return;
       }
       
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      let isMounted = true;
+      const initTouchup = async () => {
+        const displayCanvas = canvasRef.current;
+        if (!displayCanvas) return;
 
-      const img = new Image();
-      img.onload = async () => {
-        // Always use original image dimensions for the canvas to avoid shifts
         const origImg = new Image();
-        origImg.src = imageSrc || '';
-        await new Promise(resolve => { origImg.onload = resolve; });
-        
-        canvas.width = origImg.width;
-        canvas.height = origImg.height;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        await new Promise(resolve => {
+          origImg.onload = resolve;
+          origImg.onerror = resolve;
+          origImg.src = imageSrc || '';
+        });
+        if (!isMounted || !origImg.naturalWidth) return;
+
+        const natW = origImg.naturalWidth || origImg.width;
+        const natH = origImg.naturalHeight || origImg.height;
+        originalImgRef.current = origImg;
+        setImageDims({ width: natW, height: natH });
+
+        if (!workCanvasRef.current) {
+          workCanvasRef.current = document.createElement('canvas');
+        }
+        const workCanvas = workCanvasRef.current;
+        workCanvas.width = natW;
+        workCanvas.height = natH;
+        const workCtx = workCanvas.getContext('2d');
+        if (!workCtx) return;
+
+        workRestorePatternRef.current = workCtx.createPattern(origImg, 'no-repeat');
+
+        const currentImg = new Image();
+        await new Promise(resolve => {
+          currentImg.onload = resolve;
+          currentImg.onerror = resolve;
+          currentImg.src = resultImage || imageSrc || '';
+        });
+        if (!isMounted || !currentImg.naturalWidth) return;
+
+        workCtx.save();
+        workCtx.globalCompositeOperation = 'source-over';
+        workCtx.clearRect(0, 0, natW, natH);
+        workCtx.imageSmoothingEnabled = true;
+        workCtx.imageSmoothingQuality = 'high';
+        workCtx.drawImage(currentImg, 0, 0, natW, natH);
+        workCtx.restore();
+
+        syncDisplayCanvas(natW, natH);
       };
-      img.src = resultImage || imageSrc || '';
+      initTouchup();
+      return () => { isMounted = false; };
     }
   }, [isManualMode, resultImage, imageSrc]);
+
+  // Keep visible HiDPI canvas razor-sharp when zooming in manual mode
+  useEffect(() => {
+    if (isManualMode && workCanvasRef.current && workCanvasRef.current.width > 0) {
+      syncDisplayCanvas();
+    }
+  }, [zoom, isManualMode]);
 
   // Round Brush Cursor State for Desktop & Smart Phone Android
   const [touchupCursor, setTouchupCursor] = useState<{ x: number; y: number; isTouch: boolean } | null>(null);
@@ -548,9 +632,10 @@ export default function BackgroundRemover() {
     if (cursorFadeTimerRef.current) clearTimeout(cursorFadeTimerRef.current);
     let clientX: number, clientY: number;
     if ('touches' in e) {
-      if (e.touches.length === 0) return;
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
+      const touch = e.touches[0] || e.changedTouches[0];
+      if (!touch) return;
+      clientX = touch.clientX;
+      clientY = touch.clientY;
     } else {
       clientX = (e as React.MouseEvent).clientX;
       clientY = (e as React.MouseEvent).clientY;
@@ -560,21 +645,32 @@ export default function BackgroundRemover() {
 
   const getBrushRenderedDiameter = () => {
     const canvas = canvasRef.current;
+    const nativeW = workCanvasRef.current?.width || imageDims?.width || canvas?.width || 1;
     if (!canvas) return Math.max(12, brushSize);
     const rect = canvas.getBoundingClientRect();
-    const scale = rect.width / (canvas.width || 1);
+    const scale = rect.width / nativeW;
     return Math.max(8, Math.round(brushSize * scale));
   };
 
   const getCoords = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current;
-    if (!canvas) return null;
+    const workCanvas = workCanvasRef.current;
+    if (!canvas || !workCanvas || workCanvas.width === 0 || workCanvas.height === 0) return null;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
+    if (rect.width === 0 || rect.height === 0) return null;
+    const scaleX = workCanvas.width / rect.width;
+    const scaleY = workCanvas.height / rect.height;
     
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    let clientX: number, clientY: number;
+    if ('touches' in e) {
+      const touch = e.touches[0] || e.changedTouches[0];
+      if (!touch) return null;
+      clientX = touch.clientX;
+      clientY = touch.clientY;
+    } else {
+      clientX = (e as React.MouseEvent).clientX;
+      clientY = (e as React.MouseEvent).clientY;
+    }
 
     return {
       x: (clientX - rect.left) * scaleX,
@@ -582,72 +678,138 @@ export default function BackgroundRemover() {
     };
   };
 
+  const paintBrushDot = (
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    radius: number,
+    mode: 'erase' | 'restore',
+    pattern: CanvasPattern | null
+  ) => {
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    if (mode === 'erase') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = 'rgba(0,0,0,1)';
+      ctx.fill();
+    } else if (pattern) {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = pattern;
+      ctx.fill();
+    }
+  };
+
+  const paintBrushSegment = (
+    ctx: CanvasRenderingContext2D,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    lineW: number,
+    mode: 'erase' | 'restore',
+    pattern: CanvasPattern | null
+  ) => {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.lineWidth = lineW;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (mode === 'erase') {
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.strokeStyle = 'rgba(0,0,0,1)';
+      ctx.stroke();
+    } else if (pattern) {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = pattern;
+      ctx.stroke();
+    }
+  };
+
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+    if (brushMode === 'magic') return;
     if (e.cancelable) e.preventDefault();
     updateTouchupCursor(e, 'touches' in e);
-    setIsDrawing(true);
     const pos = getCoords(e);
+    if (!pos || !workCanvasRef.current || !canvasRef.current) return;
+    setIsDrawing(true);
     lastPosRef.current = pos;
 
-    if (pos && canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d');
-      if (ctx) {
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, brushSize / 2, 0, Math.PI * 2);
-        if (brushMode === 'erase') {
-          ctx.globalCompositeOperation = 'destination-out';
-          ctx.fill();
-        } else if (originalImgRef.current) {
-          ctx.globalCompositeOperation = 'source-over';
-          const pattern = ctx.createPattern(originalImgRef.current, 'no-repeat');
-          if (pattern) {
-            ctx.fillStyle = pattern;
-            ctx.fill();
-          }
-        }
-      }
+    const workCanvas = workCanvasRef.current;
+    const displayCanvas = canvasRef.current;
+    const workCtx = workCanvas.getContext('2d');
+    const displayCtx = displayCanvas.getContext('2d');
+
+    if (workCtx) {
+      paintBrushDot(workCtx, pos.x, pos.y, brushSize / 2, brushMode, workRestorePatternRef.current);
+    }
+    if (displayCtx && workCanvas.width > 0 && workCanvas.height > 0) {
+      const dxScale = displayCanvas.width / workCanvas.width;
+      const dyScale = displayCanvas.height / workCanvas.height;
+      paintBrushDot(
+        displayCtx,
+        pos.x * dxScale,
+        pos.y * dyScale,
+        (brushSize / 2) * dxScale,
+        brushMode,
+        displayRestorePatternRef.current
+      );
     }
   };
 
   const draw = (e: React.MouseEvent | React.TouchEvent) => {
+    if (brushMode === 'magic') return;
     if (e.cancelable) e.preventDefault();
     updateTouchupCursor(e, 'touches' in e);
-    if (!isDrawing || !lastPosRef.current || !canvasRef.current || !originalImgRef.current) return;
-    const ctx = canvasRef.current.getContext('2d');
-    if (!ctx) return;
+    if (!isDrawing || !lastPosRef.current || !workCanvasRef.current || !canvasRef.current) return;
 
     const pos = getCoords(e);
     if (!pos) return;
 
-    ctx.beginPath();
-    ctx.moveTo(lastPosRef.current.x, lastPosRef.current.y);
-    ctx.lineTo(pos.x, pos.y);
-    ctx.lineWidth = brushSize;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    const workCanvas = workCanvasRef.current;
+    const displayCanvas = canvasRef.current;
+    const workCtx = workCanvas.getContext('2d');
+    const displayCtx = displayCanvas.getContext('2d');
 
-    if (brushMode === 'erase') {
-      ctx.globalCompositeOperation = 'destination-out';
-      ctx.stroke();
-    } else {
-      ctx.globalCompositeOperation = 'source-over';
-      const pattern = ctx.createPattern(originalImgRef.current, 'no-repeat');
-      if (pattern) {
-        ctx.strokeStyle = pattern;
-        ctx.stroke();
-      }
+    if (workCtx) {
+      paintBrushSegment(
+        workCtx,
+        lastPosRef.current.x,
+        lastPosRef.current.y,
+        pos.x,
+        pos.y,
+        brushSize,
+        brushMode,
+        workRestorePatternRef.current
+      );
+    }
+    if (displayCtx && workCanvas.width > 0 && workCanvas.height > 0) {
+      const dxScale = displayCanvas.width / workCanvas.width;
+      const dyScale = displayCanvas.height / workCanvas.height;
+      paintBrushSegment(
+        displayCtx,
+        lastPosRef.current.x * dxScale,
+        lastPosRef.current.y * dyScale,
+        pos.x * dxScale,
+        pos.y * dyScale,
+        Math.max(1, brushSize * dxScale),
+        brushMode,
+        displayRestorePatternRef.current
+      );
     }
 
     lastPosRef.current = pos;
   };
 
   const stopDrawing = () => {
-    if (isDrawing && canvasRef.current) {
+    if (isDrawing && workCanvasRef.current) {
       setIsDrawing(false);
-      const result = canvasRef.current.toDataURL('image/png');
+      lastPosRef.current = null;
+      const result = workCanvasRef.current.toDataURL('image/png');
       isDrawingUpdateRef.current = true;
       setResultImage(result);
       addToHistory(result);
+      syncDisplayCanvas();
     }
     if (cursorFadeTimerRef.current) clearTimeout(cursorFadeTimerRef.current);
     cursorFadeTimerRef.current = setTimeout(() => {
@@ -850,41 +1012,45 @@ export default function BackgroundRemover() {
             finalB = finalB * (1 - skinWeight) + fB * skinWeight;
           }
 
-          // Clean edge preservation with 100% solid core for subject & clothing
-          let finalAlpha = alpha;
-          if (alpha > 180) {
-            finalAlpha = 255;
-          } else if (alpha <= 12) {
-            finalAlpha = 0;
-          } else {
-            finalAlpha = alpha;
-          }
-
+          // Preserve smooth natural sub-pixel hair & clothing alpha edges
           dst[i] = Math.round(finalR);
           dst[i + 1] = Math.round(finalG);
           dst[i + 2] = Math.round(finalB);
-          dst[i + 3] = finalAlpha;
+          dst[i + 3] = alpha <= 2 ? 0 : alpha;
         }
       }
       tempCtx.putImageData(output, 0, 0);
     }
     
-    // Now composite everything onto the final canvas
+    // Now composite everything onto the final canvas AFTER mask refinement
     // 1. Draw Background
     if (bgColor === 'portrait') {
-      // Draw Blurred Original Background
-      if (imageSrc) {
-        // We use a temporary canvas to blur the original image
+      if (imageSrc && originalImgRef.current) {
         const bgCanvas = document.createElement('canvas');
         bgCanvas.width = canvas.width;
         bgCanvas.height = canvas.height;
         const bgCtx = bgCanvas.getContext('2d');
-        if (bgCtx && originalImgRef.current) {
+        if (bgCtx) {
           bgCtx.filter = `blur(${blurAmount}px)`;
           bgCtx.drawImage(originalImgRef.current, 0, 0, canvas.width, canvas.height);
           ctx.drawImage(bgCanvas, 0, 0);
         }
       }
+    } else if (bgColor === 'custom-image' && customBgImgRef.current) {
+      const bgImg = customBgImgRef.current;
+      const imgRatio = bgImg.width / Math.max(1, bgImg.height);
+      const targetRatio = canvas.width / Math.max(1, canvas.height);
+      let drawW = canvas.width, drawH = canvas.height, offsetX = 0, offsetY = 0;
+      if (imgRatio > targetRatio) {
+        drawH = canvas.height;
+        drawW = canvas.height * imgRatio;
+        offsetX = (canvas.width - drawW) / 2;
+      } else {
+        drawW = canvas.width;
+        drawH = canvas.width / imgRatio;
+        offsetY = (canvas.height - drawH) / 2;
+      }
+      ctx.drawImage(bgImg, offsetX, offsetY, drawW, drawH);
     } else if (bgColor !== 'transparent') {
       ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -914,7 +1080,7 @@ export default function BackgroundRemover() {
   return (
     <ToolLayout
       title="AI Background Remover"
-      description="Professional Studio-Quality Extraction. High-performance MODNet Engine optimized for ultra-speed, high-precision background removal in 5-7 seconds."
+      description="Professional Studio-Quality Extraction. Dual-precision AI ensemble for crisp subject isolation, clean edges, and automatic chair/object removal."
       toolId="background-remover"
       acceptedFileTypes={['image/*']}
       onDownload={downloadImage}
@@ -936,11 +1102,12 @@ export default function BackgroundRemover() {
                 setIsManualMode(false);
                 setIsCropping(false); 
                 setHasCropped(false);
-                setZoom(0.3); // Default to 30% on new upload
+                setZoom(1); // Default to 100% fitted on new upload
                 
                 const img = new Image();
               img.onload = () => { 
                 originalImgRef.current = img;
+                setImageDims({ width: img.width, height: img.height });
                 // AUTO-TRIGGER removal on upload
                 removeBackground(src);
               };
@@ -957,24 +1124,9 @@ export default function BackgroundRemover() {
             setIsManualMode(false);
             setIsCropping(false);
             setHasCropped(false);
+            setImageDims(null);
           }
         }, [file]);
-
-        useEffect(() => {
-          if (isManualMode && resultImage && canvasRef.current) {
-            const canvas = canvasRef.current;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return;
-
-            const img = new Image();
-            img.onload = () => {
-              canvas.width = img.width;
-              canvas.height = img.height;
-              ctx.drawImage(img, 0, 0);
-            };
-            img.src = resultImage;
-          }
-        }, [isManualMode, resultImage]);
 
         if (!imageSrc) return null;
 
@@ -1281,33 +1433,8 @@ export default function BackgroundRemover() {
                                 <Target className="w-4 h-4 text-accent" /> Subject & Object Isolation
                               </h4>
                               <span className="text-[10px] bg-accent/10 text-accent font-bold px-2 py-0.5 rounded-full">
-                                AI Smart
+                                Dual AI Active
                               </span>
-                            </div>
-
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-bold text-text-muted uppercase tracking-wider">AI Segmentation Engine</label>
-                              <div className="grid grid-cols-3 gap-1.5">
-                                {[
-                                  { id: 'strict_subject', label: 'Strict Subject', icon: ShieldCheck, desc: 'Removes chairs & nearby items' },
-                                  { id: 'modnet', label: 'Portrait Matting', icon: Sparkles, desc: 'Optimized for human portraits' },
-                                  { id: 'rmbg', label: 'Universal', icon: Layers, desc: 'General items & products' },
-                                ].map((eng) => (
-                                  <button
-                                    key={eng.id}
-                                    onClick={() => {
-                                      setSelectedEngine(eng.id as any);
-                                      if (imageSrc) {
-                                        removeBackground(imageSrc, { engine: eng.id as any });
-                                      }
-                                    }}
-                                    className={`p-2 rounded-xl border text-center transition-all flex flex-col items-center justify-center gap-1 ${selectedEngine === eng.id ? 'bg-accent border-accent text-white shadow-sm' : 'bg-surface border-border text-text-muted hover:border-accent'}`}
-                                  >
-                                    <eng.icon className="w-3.5 h-3.5" />
-                                    <span className="text-[9px] font-bold leading-tight">{eng.label}</span>
-                                  </button>
-                                ))}
-                              </div>
                             </div>
 
                             <div className="space-y-2">
@@ -1386,45 +1513,84 @@ export default function BackgroundRemover() {
                             <ImageIcon className="w-5 h-5 text-accent" /> Background
                           </h3>
 
-                            <div className="grid grid-cols-4 gap-3">
+                            <div className="grid grid-cols-5 gap-2.5">
                               {[
-                                { color: 'transparent', label: 'Clear' },
-                                { color: 'portrait', label: 'Portrait' },
-                                { color: '#ffffff', label: 'White' },
-                                { color: '#1e3a8a', label: 'Blue' },
+                                { color: 'transparent', label: 'Transparent' },
+                                { color: '#ffffff', label: 'Pure White' },
+                                { color: '#0000ff', label: 'Blue' },
+                                { color: '#eeeeee', label: 'Light Grey' },
+                                { color: 'portrait', label: 'Blur BG' },
+                                { color: '#1e3a8a', label: 'Navy' },
                                 { color: '#dc2626', label: 'Red' },
-                                { color: '#9ca3af', label: 'Gray' },
                                 { color: '#000000', label: 'Black' },
                               ].map(item => (
                                 <button
                                   key={item.color}
                                   onClick={() => setBgColor(item.color)}
                                   title={item.label}
-                                  className={`w-full aspect-square rounded-xl border-2 transition-all relative group flex items-center justify-center ${bgColor === item.color ? 'border-accent scale-105 shadow-md' : 'border-transparent hover:border-border'}`}
+                                  className={`w-full aspect-square rounded-xl border-2 transition-all relative group flex items-center justify-center ${bgColor === item.color ? 'border-accent scale-105 shadow-md' : 'border-border/50 hover:border-border'}`}
                                   style={{ 
                                     backgroundColor: item.color === 'transparent' || item.color === 'portrait' ? 'transparent' : item.color,
-                                    backgroundImage: item.color === 'transparent' ? 'linear-gradient(45deg, #eee 25%, transparent 25%, transparent 75%, #eee 75%, #eee 100%), linear-gradient(45deg, #eee 25%, white 25%, white 75%, #eee 75%, #eee 100%)' : item.color === 'portrait' ? `url(${imageSrc})` : 'none',
+                                    backgroundImage: item.color === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%, transparent 75%, #ccc 75%, #ccc 100%), linear-gradient(45deg, #ccc 25%, white 25%, white 75%, #ccc 75%, #ccc 100%)' : item.color === 'portrait' ? `url(${imageSrc})` : 'none',
                                     backgroundSize: item.color === 'transparent' ? '10px 10px' : 'cover',
                                     backgroundPosition: 'center'
                                   }}
                                 >
-                                  {item.color === 'portrait' && <Sparkles className="w-5 h-5 text-white drop-shadow-md" />}
-                                  <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10 transition-all">
+                                  {item.color === 'portrait' && <Sparkles className="w-4 h-4 text-white drop-shadow-md" />}
+                                  <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10">
                                     {item.label}
                                   </span>
                                 </button>
                               ))}
                               <button
                                 onClick={() => setBgColor('custom')}
-                                title="Custom"
+                                title="Custom Color"
                                 className={`w-full aspect-square rounded-xl border-2 flex items-center justify-center bg-gradient-to-br from-red-500 via-green-500 to-blue-500 transition-all relative group ${bgColor === 'custom' ? 'border-accent scale-105 shadow-md' : 'border-transparent hover:border-border'}`}
                               >
-                                <div className="w-4 h-4 rounded-full bg-white/50" />
-                                <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10 transition-all">
-                                  Custom
+                                <div className="w-3.5 h-3.5 rounded-full bg-white/70" />
+                                <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10">
+                                  Color
+                                </span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (customBgImage) setBgColor('custom-image');
+                                  else bgUploadInputRef.current?.click();
+                                }}
+                                title="Custom Background Image"
+                                className={`w-full aspect-square rounded-xl border-2 flex items-center justify-center bg-bg-secondary transition-all relative group overflow-hidden ${bgColor === 'custom-image' ? 'border-accent scale-105 shadow-md' : 'border-dashed border-border hover:border-accent'}`}
+                                style={customBgImage ? { backgroundImage: `url(${customBgImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+                              >
+                                {!customBgImage && <Upload className="w-4 h-4 text-text-muted" />}
+                                <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[8px] font-bold opacity-0 group-hover:opacity-100 transition-opacity bg-bg-primary px-1 rounded border border-border whitespace-nowrap z-10">
+                                  Image
                                 </span>
                               </button>
                             </div>
+
+                            <input
+                              ref={bgUploadInputRef}
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onload = (ev) => {
+                                  const src = ev.target?.result as string;
+                                  const img = new Image();
+                                  img.onload = () => {
+                                    customBgImgRef.current = img;
+                                    setCustomBgImage(src);
+                                    setBgColor('custom-image');
+                                  };
+                                  img.src = src;
+                                };
+                                reader.readAsDataURL(file);
+                                e.target.value = '';
+                              }}
+                            />
 
                           {bgColor === 'portrait' && (
                             <div className="space-y-3 p-3 bg-accent/5 border border-accent/20 rounded-xl animate-in slide-in-from-top-2">
@@ -1449,6 +1615,34 @@ export default function BackgroundRemover() {
                                 <input type="color" value={customColor} onChange={(e) => setCustomColor(e.target.value)} className="w-12 h-10 rounded-lg cursor-pointer bg-transparent border-none" />
                                 <input type="text" value={customColor} onChange={(e) => setCustomColor(e.target.value)} className="fi flex-1" />
                               </div>
+                            </div>
+                          )}
+
+                          {bgColor === 'custom-image' && (
+                            <div className="space-y-2 p-3 bg-accent/5 border border-accent/20 rounded-xl">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-text-primary">Custom Background Image</span>
+                                {customBgImage && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCustomBgImage(null);
+                                      customBgImgRef.current = null;
+                                      setBgColor('transparent');
+                                    }}
+                                    className="text-[10px] font-bold text-red-500 hover:underline"
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => bgUploadInputRef.current?.click()}
+                                className="w-full py-2 px-3 bg-surface border border-border hover:border-accent rounded-xl text-xs font-bold text-text-primary flex items-center justify-center gap-1.5 transition-all"
+                              >
+                                <Upload className="w-3.5 h-3.5" /> {customBgImage ? 'Change Background Image' : 'Upload Background Image'}
+                              </button>
                             </div>
                           )}
 
@@ -1646,7 +1840,7 @@ export default function BackgroundRemover() {
                     </h4>
                     <ul className="text-[10px] text-text-secondary space-y-1.5 list-disc pl-4">
                       <li>Use well-lit photos for best results.</li>
-                      <li>High-precision MediaPipe segmentation captures complex edges like hair and fine fabrics.</li>
+                      <li>Hair-aware edge matting preserves fine strands, ears, and clothing contours.</li>
                       <li>Use "Portrait" mode with blur to keep your original high-quality background.</li>
                       <li>Use "Manual Touchup" to fix tiny details or stray hair strands.</li>
                     </ul>
@@ -1732,7 +1926,7 @@ export default function BackgroundRemover() {
                   className="relative w-full h-[400px] sm:h-[550px] bg-bg-secondary rounded-3xl overflow-auto border border-border group shadow-inner p-6 sm:p-12"
                 >
                   <div 
-                    className="table mx-auto transition-all duration-200 ease-out"
+                    className="table mx-auto"
                     style={{ minHeight: '100%' }}
                   >
                     <div className="table-cell align-middle">
@@ -1763,13 +1957,29 @@ export default function BackgroundRemover() {
                           />
                         </ReactCrop>
                       </div>
-                    ) : isManualMode ? (
+                    ) : isManualMode ? (() => {
+                      const { displayW, displayH } = getManualDisplayDims(imageDims);
+                      return (
                       <div 
-                        className="flex items-center justify-center w-full h-full relative"
+                        className="flex items-center justify-center relative shrink-0 rounded-lg overflow-hidden shadow-2xl"
                         onMouseEnter={(e) => updateTouchupCursor(e, false)}
                         onMouseMove={(e) => updateTouchupCursor(e, false)}
                         onMouseLeave={() => setTouchupCursor(null)}
+                        style={{
+                          width: `${displayW}px`,
+                          height: `${displayH}px`,
+                          backgroundColor: resultImage && bgColor !== 'transparent' && bgColor !== 'portrait' && bgColor !== 'custom-image' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
+                          backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
+                          backgroundSize: '20px 20px',
+                          backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                        }}
                       >
+                        {resultImage && bgColor === 'portrait' && imageSrc && (
+                          <img src={imageSrc} alt="" className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none" style={{ filter: `blur(${blurAmount}px)` }} />
+                        )}
+                        {resultImage && bgColor === 'custom-image' && customBgImage && (
+                          <img src={customBgImage} alt="" className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none" />
+                        )}
                         <canvas
                           ref={canvasRef}
                           onMouseDown={(e) => { updateTouchupCursor(e, false); startDrawing(e); }}
@@ -1780,50 +1990,38 @@ export default function BackgroundRemover() {
                           onTouchMove={(e) => { updateTouchupCursor(e, true); draw(e); }}
                           onTouchEnd={stopDrawing}
                           onClick={handleMagicEraserClick}
-                          className={`max-w-full max-h-full ${brushMode === 'magic' ? 'cursor-pointer' : 'cursor-none'} shadow-2xl rounded-lg transition-all duration-200 select-none touch-none`}
+                          className={`${brushMode === 'magic' ? 'cursor-pointer' : 'cursor-none'} relative z-10 select-none touch-none block shrink-0`}
                           style={{
-                            zoom: zoom,
-                            backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
-                            backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
-                            backgroundSize: '20px 20px',
-                            backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                            width: `${displayW}px`,
+                            height: `${displayH}px`,
+                            filter: resultImage ? getFilterStyle() : 'none',
+                            backgroundColor: 'transparent',
+                            imageRendering: 'auto'
                           }}
                         />
-
-                        {/* Round Shape Brush Cursor Overlay for Desktop & Smart Phone Android */}
-                        {brushMode !== 'magic' && touchupCursor && (
-                          <div
-                            className="pointer-events-none fixed z-50 rounded-full -translate-x-1/2 -translate-y-1/2 select-none transition-transform duration-75"
-                            style={{
-                              left: `${touchupCursor.x}px`,
-                              top: `${touchupCursor.y}px`,
-                              width: `${getBrushRenderedDiameter()}px`,
-                              height: `${getBrushRenderedDiameter()}px`,
-                              border: '2px solid rgba(255, 255, 255, 0.95)',
-                              boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.8), 0 0 12px rgba(0, 0, 0, 0.4)',
-                              backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(59, 130, 246, 0.3)',
-                            }}
-                          >
-                            {/* Precise Center Point */}
-                            <div className="absolute inset-0 m-auto w-1.5 h-1.5 rounded-full bg-white shadow-xs ring-1 ring-black/70" />
-
-                            {/* Smart Phone Android Touch Alignment Guides */}
-                            {touchupCursor.isTouch && (
-                              <>
-                                <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
-                                <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
-                                <div className="absolute -left-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
-                                <div className="absolute -right-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
-                                <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-black/85 text-white text-[9px] font-bold rounded-full shadow-md whitespace-nowrap border border-white/30 backdrop-blur-xs">
-                                  {brushSize}px
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        )}
                       </div>
-                    ) : (
-                      <div className="flex items-center justify-center relative w-full h-full">
+                      );
+                    })() : (() => {
+                      const { displayW, displayH } = getManualDisplayDims(imageDims);
+                      return (
+                      <div
+                        className="flex items-center justify-center relative shrink-0 rounded-lg overflow-hidden"
+                        style={{
+                          width: `${displayW}px`,
+                          height: `${displayH}px`,
+                          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+                          backgroundColor: resultImage && bgColor !== 'transparent' && bgColor !== 'portrait' && bgColor !== 'custom-image' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
+                          backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
+                          backgroundSize: '20px 20px',
+                          backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                        }}
+                      >
+                        {resultImage && bgColor === 'portrait' && imageSrc && (
+                          <img src={imageSrc} alt="" className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none" style={{ filter: `blur(${blurAmount}px)` }} />
+                        )}
+                        {resultImage && bgColor === 'custom-image' && customBgImage && (
+                          <img src={customBgImage} alt="" className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none" />
+                        )}
                         <img 
                           ref={resultImgElementRef}
                           key={resultImage || 'original'}
@@ -1831,22 +2029,18 @@ export default function BackgroundRemover() {
                           alt="Preview" 
                           referrerPolicy="no-referrer"
                           onClick={handleMagicEraserClick}
-                          onError={(e) => {
+                          onError={() => {
                             console.error("Preview image failed to load:", resultImage);
-                            // Fallback to original if result fails
                             if (resultImage) {
                               setResultImage(null);
                             }
                           }}
-                          className={`max-w-full max-h-full shadow-2xl rounded-lg transition-all duration-200 ${brushMode === 'magic' ? 'cursor-pointer hover:ring-2 hover:ring-accent' : ''}`}
+                          className={`relative z-10 block shrink-0 ${brushMode === 'magic' ? 'cursor-pointer hover:ring-2 hover:ring-accent' : ''}`}
                           style={{ 
-                            zoom: zoom,
+                            width: `${displayW}px`,
+                            height: `${displayH}px`,
                             filter: resultImage && !isManualMode ? getFilterStyle() : 'none',
-                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-                            backgroundColor: resultImage && bgColor !== 'transparent' ? (bgColor === 'custom' ? customColor : bgColor) : 'transparent',
-                            backgroundImage: !resultImage || bgColor === 'transparent' ? 'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)' : 'none',
-                            backgroundSize: '20px 20px',
-                            backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px'
+                            backgroundColor: 'transparent'
                           }}
                         />
                         
@@ -1919,10 +2113,40 @@ export default function BackgroundRemover() {
                           </div>
                         )}
                       </div>
-                    )}
+                      );
+                    })()}
                     </div>
                   </div>
                   
+                  {/* Round Shape Brush Cursor Overlay for Desktop & Mobile Touch (fixed viewport, unaffected by zoom/scroll) */}
+                  {isManualMode && brushMode !== 'magic' && touchupCursor && (
+                    <div
+                      className="pointer-events-none fixed z-50 rounded-full -translate-x-1/2 -translate-y-1/2 select-none transition-transform duration-75"
+                      style={{
+                        left: `${touchupCursor.x}px`,
+                        top: `${touchupCursor.y}px`,
+                        width: `${getBrushRenderedDiameter()}px`,
+                        height: `${getBrushRenderedDiameter()}px`,
+                        border: '2px solid rgba(255, 255, 255, 0.95)',
+                        boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.8), 0 0 12px rgba(0, 0, 0, 0.4)',
+                        backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(59, 130, 246, 0.3)',
+                      }}
+                    >
+                      <div className="absolute inset-0 m-auto w-1.5 h-1.5 rounded-full bg-white shadow-xs ring-1 ring-black/70" />
+                      {touchupCursor.isTouch && (
+                        <>
+                          <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
+                          <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-0.5 h-2.5 bg-white shadow-xs ring-1 ring-black/60" />
+                          <div className="absolute -left-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
+                          <div className="absolute -right-2.5 top-1/2 -translate-y-1/2 w-2.5 h-0.5 bg-white shadow-xs ring-1 ring-black/60" />
+                          <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-black/85 text-white text-[9px] font-bold rounded-full shadow-md whitespace-nowrap border border-white/30 backdrop-blur-xs">
+                            {brushSize}px
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   {/* Floating Controls */}
                   <div className="absolute top-4 right-4 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={onReset} className="p-3 bg-white/90 hover:bg-white text-red-500 rounded-full shadow-xl transition-all hover:scale-110">
