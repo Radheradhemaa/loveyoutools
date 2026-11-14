@@ -731,6 +731,8 @@ export function extendAndProtectLeftShoulderAndGarment(
   let garmentVarSum = 0;
   let garmentRSum = 0, garmentGSum = 0, garmentBSum = 0;
   let garmentSampleCount = 0;
+  let lightShirtCount = 0;
+  let checkEdgeCount = 0;
   const chestStartY = Math.max(shoulderStartY, Math.floor(minSubjY + subjH * 0.58));
   const chestEndY = Math.floor(minSubjY + subjH * 0.85);
 
@@ -751,10 +753,22 @@ export function extendAndProtectLeftShoulderAndGarment(
         garmentGSum += g;
         garmentBSum += b;
 
-        const rightPx = (idx + 1) * 4;
-        const downPx = (idx + w) * 4;
-        const diffR = Math.abs(r - pixels[rightPx]);
-        const diffD = Math.abs(r - pixels[downPx]);
+        const maxC = Math.max(r, g, b);
+        const minC = Math.min(r, g, b);
+        if (lum >= 165 && (maxC - minC) <= 50) lightShirtCount++;
+
+        const rightPx = Math.min(w - 1, x + 3);
+        const downPy = Math.min(h - 1, y + 3);
+        const rIdx = (y * w + rightPx) * 4;
+        const dIdx = (downPy * w + x) * 4;
+        const lumR = 0.299 * pixels[rIdx] + 0.587 * pixels[rIdx + 1] + 0.114 * pixels[rIdx + 2];
+        const lumD = 0.299 * pixels[dIdx] + 0.587 * pixels[dIdx + 1] + 0.114 * pixels[dIdx + 2];
+        if (Math.abs(lum - lumR) >= 14 || Math.abs(lum - lumD) >= 14) checkEdgeCount++;
+
+        const right1Px = (idx + 1) * 4;
+        const down1Px = (idx + w) * 4;
+        const diffR = Math.abs(r - pixels[right1Px]);
+        const diffD = Math.abs(r - pixels[down1Px]);
         garmentVarSum += (diffR + diffD);
         garmentSampleCount++;
       }
@@ -766,7 +780,12 @@ export function extendAndProtectLeftShoulderAndGarment(
   const avgShirtR = garmentSampleCount > 0 ? garmentRSum / garmentSampleCount : 200;
   const avgShirtG = garmentSampleCount > 0 ? garmentGSum / garmentSampleCount : 200;
   const avgShirtB = garmentSampleCount > 0 ? garmentBSum / garmentSampleCount : 200;
-  const isWhiteOrCheckShirt = avgGarmentLum >= 135 || avgGarmentTexture >= 4.0;
+  const lightFraction = garmentSampleCount > 0 ? lightShirtCount / garmentSampleCount : 0;
+  const checkFraction = garmentSampleCount > 0 ? checkEdgeCount / garmentSampleCount : 0;
+  const isWhiteOrCheckShirt =
+    avgGarmentLum >= 135 ||
+    avgGarmentTexture >= 4.0 ||
+    (lightFraction >= 0.22 && checkFraction >= 0.06);
 
   // 6. Compute symmetrical expected left shoulder width based on right shoulder
   const expectedLeftDist = new Float32Array(h);
@@ -857,24 +876,24 @@ export function extendAndProtectLeftShoulderAndGarment(
         : 999;
       const isFabric = isFabricOrCheckPattern(x, y);
 
-      if (distToBg < 20 && !isFabric) {
+      if (distToBg < 18 && !isFabric && rawAlphas[idx] < 120) {
         break;
       }
 
-      const hasAiSignal = rawAlphas[idx] >= 65;
+      const hasAiSignal = rawAlphas[idx] >= 55;
       const matchesTorsoShirt = garmentSampleCount > 0 && distToShirt <= 42 && distToShirt < distToBg * 0.90;
-      const matchesCheckShirt = isWhiteOrCheckShirt && isFabric && distToBg >= 18;
+      const matchesCheckShirt = isWhiteOrCheckShirt && isFabric && distToBg >= 16;
 
       if (!hasAiSignal && !matchesTorsoShirt && !matchesCheckShirt) {
         break;
       }
 
-      rawAlphas[idx] = Math.max(rawAlphas[idx], 220.0);
+      rawAlphas[idx] = Math.max(rawAlphas[idx], 235.0);
       actualReachedLeft = x;
     }
 
     for (let x = actualReachedLeft + 3; x <= Math.min(w - 1, currLeft + 10); x++) {
-      if (rawAlphas[row + x] >= 175 && rawAlphas[row + x] < 225) {
+      if (rawAlphas[row + x] >= 165 && rawAlphas[row + x] < 245) {
         rawAlphas[row + x] = 255.0;
       }
     }
@@ -1011,33 +1030,160 @@ function solidifySubjectInteriorAndClothing(
   const meanBgB = bgCount > 10 ? bgB / bgCount : 245;
 
   const subjWidth = Math.max(1, maxSubjX - minSubjX);
-  const torsoStartY = Math.floor(minSubjY + subjHeight * 0.54);
-  const coreX0 = Math.floor(minSubjX + subjWidth * 0.18);
-  const coreX1 = Math.floor(maxSubjX - subjWidth * 0.18);
+  const torsoStartY = Math.floor(minSubjY + subjHeight * 0.48);
+  const coreX0 = Math.floor(minSubjX + subjWidth * 0.14);
+  const coreX1 = Math.floor(maxSubjX - subjWidth * 0.14);
 
-  // 3. White Shirt & Light Garment Protection strictly inside deep central torso interior
-  // Never solidify outer concave bays, enclosed arm-torso pockets, or uncertain background haze!
+  // Detect if torso contains a white or check-patterned garment (white squares + dark/colored check lines)
+  let chestSamples = 0, lightChestSamples = 0, checkEdgeSamples = 0, lumSum = 0;
   if (imageData && coreX1 > coreX0) {
-    const pixels = imageData.data;
-    for (let y = torsoStartY; y < maxSubjY; y++) {
+    const px = imageData.data;
+    const cy0 = Math.floor(minSubjY + subjHeight * 0.56);
+    const cy1 = Math.min(h - 4, Math.floor(minSubjY + subjHeight * 0.88));
+    for (let y = cy0; y <= cy1; y += 3) {
       const row = y * w;
-      for (let x = coreX0; x <= coreX1; x++) {
+      for (let x = coreX0; x <= coreX1 - 3; x += 3) {
         const idx = row + x;
-        if (isNearExterior[idx] === 0 && alphas[idx] >= 175) {
+        if (isNearExterior[idx] === 0 && alphas[idx] >= 140) {
           const pIdx = idx * 4;
-          const r = pixels[pIdx];
-          const g = pixels[pIdx + 1];
-          const b = pixels[pIdx + 2];
-
-          const distToBg = Math.hypot(r - meanBgR, g - meanBgG, b - meanBgB);
-          if (distToBg < 20 && alphas[idx] < 220) continue;
-
+          const r = px[pIdx], g = px[pIdx + 1], b = px[pIdx + 2];
+          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
           const maxC = Math.max(r, g, b);
           const minC = Math.min(r, g, b);
-          const isWhiteOrCheckShirt = (maxC >= 125 && (maxC - minC) <= 65) || (r > 135 && g > 135 && b > 135);
-          if (isWhiteOrCheckShirt) {
-            alphas[idx] = 255.0;
+          lumSum += lum;
+          if (lum >= 155 && (maxC - minC) <= 55) lightChestSamples++;
+
+          const rIdx = (y * w + Math.min(w - 1, x + 3)) * 4;
+          const dIdx = (Math.min(h - 1, y + 3) * w + x) * 4;
+          const lumR = 0.299 * px[rIdx] + 0.587 * px[rIdx + 1] + 0.114 * px[rIdx + 2];
+          const lumD = 0.299 * px[dIdx] + 0.587 * px[dIdx + 1] + 0.114 * px[dIdx + 2];
+          if (Math.abs(lum - lumR) >= 14 || Math.abs(lum - lumD) >= 14) checkEdgeSamples++;
+          chestSamples++;
+        }
+      }
+    }
+  }
+  const avgChestLum = chestSamples > 0 ? lumSum / chestSamples : 0;
+  const lightChestRatio = chestSamples > 0 ? lightChestSamples / chestSamples : 0;
+  const checkEdgeRatio = chestSamples > 0 ? checkEdgeSamples / chestSamples : 0;
+  const isWhiteOrCheckGarment =
+    chestSamples > 20 &&
+    (lightChestRatio >= 0.20 || (avgChestLum >= 125 && checkEdgeRatio >= 0.05));
+
+  // Compute per-row horizontal garment span [rowLeftSolid..rowRightSolid] inside torso
+  const rowLeftSolid = new Int32Array(h).fill(-1);
+  const rowRightSolid = new Int32Array(h).fill(-1);
+  for (let y = torsoStartY; y <= maxSubjY; y++) {
+    const row = y * w;
+    for (let x = minSubjX; x <= maxSubjX; x++) {
+      if (isExterior[row + x] === 0 && alphas[row + x] >= 165) {
+        rowLeftSolid[y] = x;
+        break;
+      }
+    }
+    for (let x = maxSubjX; x >= minSubjX; x--) {
+      if (isExterior[row + x] === 0 && alphas[row + x] >= 165) {
+        rowRightSolid[y] = x;
+        break;
+      }
+    }
+  }
+
+  // If wearing a white/check shirt, plug tiny exterior leaks inside narrow check-square spans between garment stripes
+  if (isWhiteOrCheckGarment) {
+    const maxCheckGapX = Math.max(26, Math.round(subjWidth * 0.16));
+    const maxCheckGapY = Math.max(22, Math.round(subjHeight * 0.08));
+    for (let y = torsoStartY; y <= maxSubjY; y++) {
+      const rL = rowLeftSolid[y];
+      const rR = rowRightSolid[y];
+      if (rL === -1 || rR <= rL + 8) continue;
+      const row = y * w;
+      let x = rL + 1;
+      while (x < rR) {
+        if (isExterior[row + x] === 1) {
+          const runStart = x;
+          while (x < rR && isExterior[row + x] === 1) x++;
+          const runLen = x - runStart;
+          if (runLen <= maxCheckGapX && runStart > rL && x <= rR) {
+            // Confirm vertical enclosure within check square height
+            let enclosedVert = true;
+            for (let rx = runStart; rx < x; rx += Math.max(1, Math.floor(runLen / 4))) {
+              let hasUp = false, hasDown = false;
+              for (let dy = 1; dy <= maxCheckGapY && y - dy >= torsoStartY; dy++) {
+                if (isExterior[(y - dy) * w + rx] === 0 && alphas[(y - dy) * w + rx] >= 165) {
+                  hasUp = true;
+                  break;
+                }
+              }
+              for (let dy = 1; dy <= maxCheckGapY && y + dy <= maxSubjY; dy++) {
+                if (isExterior[(y + dy) * w + rx] === 0 && alphas[(y + dy) * w + rx] >= 165) {
+                  hasDown = true;
+                  break;
+                }
+              }
+              if (!hasUp && !hasDown) {
+                enclosedVert = false;
+                break;
+              }
+            }
+            if (enclosedVert) {
+              for (let rx = runStart; rx < x; rx++) {
+                isExterior[row + rx] = 0;
+                isNearExterior[row + rx] = 0;
+              }
+            }
           }
+        } else {
+          x++;
+        }
+      }
+    }
+  }
+
+  // 3. White & Check Shirt Interior Protection:
+  // Any enclosed pixel (isExterior === 0) inside the torso/shirt/collar/sleeve span must be 100% solid (255.0)
+  // so white squares inside check shirts NEVER become transparent or let background color bleed through!
+  if (imageData && coreX1 > coreX0) {
+    const pixels = imageData.data;
+    for (let y = torsoStartY; y <= maxSubjY; y++) {
+      const row = y * w;
+      const rL = rowLeftSolid[y];
+      const rR = rowRightSolid[y];
+      const rowSpan = rL !== -1 && rR > rL ? rR - rL : 0;
+      const innerStartX = rL !== -1
+        ? (isWhiteOrCheckGarment ? Math.min(coreX0, rL + 4) : Math.max(coreX0, rL + 2))
+        : coreX0;
+      const innerEndX = rR !== -1
+        ? (isWhiteOrCheckGarment ? Math.max(coreX1, rR - 4) : Math.min(coreX1, rR - 2))
+        : coreX1;
+
+      for (let x = Math.max(0, minSubjX + 4); x <= Math.min(w - 1, maxSubjX - 4); x++) {
+        const idx = row + x;
+        if (isExterior[idx] !== 0) continue;
+
+        const inTorsoCore = x >= innerStartX && x <= innerEndX && rowSpan >= Math.max(20, subjWidth * 0.24);
+        const pIdx = idx * 4;
+        const r = pixels[pIdx];
+        const g = pixels[pIdx + 1];
+        const b = pixels[pIdx + 2];
+        const maxC = Math.max(r, g, b);
+        const minC = Math.min(r, g, b);
+        const isWhiteOrNeutralLight = (maxC >= 130 && (maxC - minC) <= 65) || (r > 135 && g > 135 && b > 135);
+
+        if (isNearExterior[idx] === 0) {
+          // Completely inside the subject silhouette (not near exterior boundary):
+          // If inside torso/shoulder core on a white/check shirt, solidify ALL white/neutral squares even if AI gave 0..174!
+          if (inTorsoCore && isWhiteOrCheckGarment && (isWhiteOrNeutralLight || alphas[idx] >= 120)) {
+            alphas[idx] = 255.0;
+          } else if (isWhiteOrNeutralLight && alphas[idx] >= 145) {
+            const distToBg = Math.hypot(r - meanBgR, g - meanBgG, b - meanBgB);
+            if (distToBg >= 18 || alphas[idx] >= 185 || inTorsoCore) {
+              alphas[idx] = 255.0;
+            }
+          }
+        } else if (inTorsoCore && isWhiteOrCheckGarment && isWhiteOrNeutralLight && alphas[idx] >= 140) {
+          // Near-exterior band inside torso/sleeve span on white/check shirt: solidify garment pixels
+          alphas[idx] = 255.0;
         }
       }
     }
@@ -1046,14 +1192,28 @@ function solidifySubjectInteriorAndClothing(
   // 4. Cleanly separate exterior background from confident deep interior subject core
   for (let y = 0; y < h; y++) {
     const rowOffset = y * w;
+    const rL = y >= torsoStartY ? rowLeftSolid[y] : -1;
+    const rR = y >= torsoStartY ? rowRightSolid[y] : -1;
     for (let x = 0; x < w; x++) {
       const i = rowOffset + x;
-      if (isExterior[i] === 1 || alphas[i] < 18) {
+      if (isExterior[i] === 1) {
         alphas[i] = 0.0;
+      } else if (alphas[i] < 18) {
+        // Inside enclosed torso/sleeve span of a white/check shirt, keep solidified pixels instead of punching holes
+        const insideClosedTorso =
+          isWhiteOrCheckGarment &&
+          y >= torsoStartY &&
+          rL !== -1 &&
+          rR > rL &&
+          x >= rL + 4 &&
+          x <= rR - 4;
+        if (!insideClosedTorso) {
+          alphas[i] = 0.0;
+        }
       } else if (isNearExterior[i] === 0) {
-        if (y > torsoStartY && x >= coreX0 && x <= coreX1 && alphas[i] >= 205) {
+        if (y > torsoStartY && x >= coreX0 && x <= coreX1 && alphas[i] >= 165) {
           alphas[i] = 255.0;
-        } else if (alphas[i] >= 232) {
+        } else if (alphas[i] >= 230) {
           alphas[i] = 255.0;
         }
       }
@@ -1366,7 +1526,10 @@ function applyFastGuidedFilter(
       const t = (rawVal - threshLow) / (threshHigh - threshLow);
       const s = t * t * (3 - 2 * t);
       const refined = s * 255.0;
-      if (gVal > 0.68) {
+      // Preserve solid lower torso/shirt garment pixels (e.g. white/check shirts) without softening
+      if (y >= h * 0.50 && origA >= 195) {
+        output[i] = Math.max(origA, refined);
+      } else if (gVal > 0.68) {
         output[i] = Math.max(0, Math.min(255, Math.min(origA + 6, refined)));
       } else {
         output[i] = Math.max(0, Math.min(255, Math.min(origA + 12, refined)));
@@ -1431,7 +1594,7 @@ function applyCleanEdgeMatting(
       if ((isLightBg || secBgLum > 155) && isUpper && curLum > 170) {
         lowerCut = isEarLevel ? 52 : 48;
       }
-      const upperCut = isUpper ? 220 : 195;
+      const upperCut = isUpper ? 220 : 185;
 
       if (alphaVal <= lowerCut) {
         pixels[pIdx + 3] = 0;
@@ -1452,7 +1615,7 @@ function applyCleanEdgeMatting(
       const distToGlobBg = Math.hypot(r - bgMeanR, g - bgMeanG, b - bgMeanB);
       const distToBg = Math.min(distToSecBg, distToGlobBg);
 
-      if (pixels[pIdx + 3] > 0 && alphaVal < 225) {
+      if (pixels[pIdx + 3] > 0 && alphaVal < upperCut) {
         let fgR = 0, fgG = 0, fgB = 0, fgCount = 0;
         const rad = 5;
         const startY = Math.max(0, y - rad);
@@ -1480,8 +1643,12 @@ function applyCleanEdgeMatting(
         const distToFg = fgCount > 0 ? Math.hypot(r - avgFgR, g - avgFgG, b - avgFgB) : 999;
 
         // Strip faint/medium haze pixels that match local background far better than nearest solid subject
+        // (Guard lower white/check garment boundaries with alphaVal >= 100 so white shirts aren't eaten)
+        const maxC = Math.max(r, g, b);
+        const minC = Math.min(r, g, b);
+        const isLowerWhiteGarment = !isUpper && maxC >= 155 && (maxC - minC) <= 45 && alphaVal >= 105;
         const bgMatchThresh = Math.max(22, Math.min(44, secStd * 1.65));
-        if (!isWarmSkin && alphaVal < (isUpper ? 160 : 135) && distToBg <= bgMatchThresh) {
+        if (!isWarmSkin && !isLowerWhiteGarment && alphaVal < (isUpper ? 160 : 120) && distToBg <= bgMatchThresh) {
           if (fgCount === 0 || distToBg < distToFg * 0.78) {
             pixels[pIdx + 3] = 0;
             continue;
@@ -2477,11 +2644,36 @@ function cleanRightPocketAndEnclosedHoles(
   }
 
   // Part B: Enclosed Background Pockets Cleaner (gaps between arms & torso, hair & collar, under-chin pockets)
-  // Guarded away from face oval & eyes (center top 45% inside face width)
+  // Guarded away from face oval, eyes, and white/check shirt chest core
   const faceMinX = coreCenterX - subjW * 0.22;
   const faceMaxX = coreCenterX + subjW * 0.22;
   const faceMinY = minY + subjH * 0.12;
   const faceMaxY = minY + subjH * 0.45;
+  const shirtCoreMinX = coreCenterX - subjW * 0.26;
+  const shirtCoreMaxX = coreCenterX + subjW * 0.26;
+  const shirtCoreMinY = minY + subjH * 0.48;
+
+  // Detect light/white/check chest texture so we never punch holes into white check shirt squares
+  let lightChestPx = 0, checkChestPx = 0, chestTotalPx = 0;
+  for (let y = Math.floor(shirtCoreMinY); y <= Math.min(h - 4, Math.floor(minY + subjH * 0.85)); y += 3) {
+    const row = y * w;
+    for (let x = Math.max(0, Math.floor(shirtCoreMinX)); x <= Math.min(w - 4, Math.floor(shirtCoreMaxX)); x += 3) {
+      const idx = row + x;
+      if (alphaCopy[idx] >= 200) {
+        const pIdx = idx * 4;
+        const r = pixels[pIdx], g = pixels[pIdx + 1], b = pixels[pIdx + 2];
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        if (lum >= 155 && Math.max(r, g, b) - Math.min(r, g, b) <= 50) lightChestPx++;
+        const rIdx = (row + x + 3) * 4;
+        const lumR = 0.299 * pixels[rIdx] + 0.587 * pixels[rIdx + 1] + 0.114 * pixels[rIdx + 2];
+        if (Math.abs(lum - lumR) >= 14) checkChestPx++;
+        chestTotalPx++;
+      }
+    }
+  }
+  const hasWhiteOrCheckShirt =
+    chestTotalPx > 15 &&
+    (lightChestPx / chestTotalPx >= 0.22 || checkChestPx / chestTotalPx >= 0.06);
 
   const holeVisited = new Uint8Array(total);
   const holeQueue = new Int32Array(total);
@@ -2498,6 +2690,8 @@ function cleanRightPocketAndEnclosedHoles(
 
       // Protect face features (eyes, teeth, skin speculars)
       if (x >= faceMinX && x <= faceMaxX && y >= faceMinY && y <= faceMaxY) continue;
+      // Never punch holes inside the chest/torso core when wearing a white or check shirt
+      if (hasWhiteOrCheckShirt && y >= shirtCoreMinY && x >= shirtCoreMinX && x <= shirtCoreMaxX) continue;
 
       const pIdx = idx * 4;
       const r = pixels[pIdx], g = pixels[pIdx + 1], b = pixels[pIdx + 2];
@@ -2535,6 +2729,7 @@ function cleanRightPocketAndEnclosedHoles(
           const ny = Math.floor(n / w);
           const nx = n % w;
           if (nx >= faceMinX && nx <= faceMaxX && ny >= faceMinY && ny <= faceMaxY) continue;
+          if (hasWhiteOrCheckShirt && ny >= shirtCoreMinY && nx >= shirtCoreMinX && nx <= shirtCoreMaxX) continue;
 
           const np = n * 4;
           const nr = pixels[np], ng = pixels[np + 1], nb = pixels[np + 2];
@@ -2545,7 +2740,7 @@ function cleanRightPocketAndEnclosedHoles(
           const nbR = nSec ? nSec.meanR : globalBgR;
           const nbG = nSec ? nSec.meanG : globalBgG;
           const nbB = nSec ? nSec.meanB : globalBgB;
-          const nDistBg = Math.hypot(nr - nbR, ng - nbG, nbB - nb);
+          const nDistBg = Math.hypot(nr - nbR, ng - nbG, nb - nbB);
           const nDistShirt = shirtCount > 0 ? Math.hypot(nr - avgShirtR, ng - avgShirtG, nb - avgShirtB) : 999;
 
           if ((na < 95 && nDistBg <= 40) || (na < 185 && nDistBg <= 28 && nDistBg < nDistShirt)) {
@@ -2682,10 +2877,14 @@ function cleanLeftPerimeterHaloPatches(
 
       const r = pixels[pIdx], g = pixels[pIdx + 1], b = pixels[pIdx + 2];
       const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const maxC = Math.max(r, g, b);
+      const minC = Math.min(r, g, b);
       const isWarmSkin = r > g && g >= b * 0.85 && (r - b) >= 14;
+      const isLowerWhiteShirtEdge = !isUpperNeckEar && maxC >= 150 && (maxC - minC) <= 45;
 
       if (isWarmSkin && a >= 105) break;
       if (lum < 82 && localBgLum > 110 && a >= 90) break;
+      if (isLowerWhiteShirtEdge && a >= 95) break;
 
       const distToBg = Math.hypot(r - localBgR, g - localBgG, b - localBgB);
       const distToFg = fgCnt > 0 ? Math.hypot(r - intFgR, g - intFgG, b - intFgB) : 999;
@@ -2694,14 +2893,14 @@ function cleanLeftPerimeterHaloPatches(
         break;
       }
 
-      const isFaintHalo = a < 95 && distToBg <= 60;
-      const isMidHaloCloserToBg = a < 170 && fgCnt > 0 && distToBg < distToFg * 0.88 && distToBg <= 45;
-      const isBgMatchedFringe = a < 195 && !isWarmSkin && distToBg <= 26;
+      const isFaintHalo = isLowerWhiteShirtEdge ? (a < 55 && distToBg <= 35) : (a < 95 && distToBg <= 60);
+      const isMidHaloCloserToBg = !isLowerWhiteShirtEdge && a < 170 && fgCnt > 0 && distToBg < distToFg * 0.88 && distToBg <= 45;
+      const isBgMatchedFringe = !isLowerWhiteShirtEdge && a < 195 && !isWarmSkin && distToBg <= 26;
 
       if (isFaintHalo || isMidHaloCloserToBg || isBgMatchedFringe) {
         pixels[pIdx + 3] = 0;
       } else {
-        if (fgCnt > 0 && a < 210 && distToBg < distToFg) {
+        if (!isLowerWhiteShirtEdge && fgCnt > 0 && a < 210 && distToBg < distToFg) {
           const blend = Math.min(0.75, (1 - a / 255) + 0.25);
           pixels[pIdx] = Math.round(r * (1 - blend) + intFgR * blend);
           pixels[pIdx + 1] = Math.round(g * (1 - blend) + intFgG * blend);
@@ -3098,7 +3297,10 @@ export function removeSubjectBoundaryWhiteLine(
         const g = pixels[pIdx + 1];
         const b = pixels[pIdx + 2];
         const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        const maxC = Math.max(r, g, b);
+        const minC = Math.min(r, g, b);
         const isWarmSkin = r > g && g >= b * 0.85 && (r - b) >= 14;
+        const isLowerWhiteShirtEdge = !isUpperPerimeterZone && maxC >= 155 && (maxC - minC) <= 45;
 
         const sec = bgModels?.sectors?.[secY * 3 + Math.min(2, Math.floor((x / w) * 3))];
         const sBgR = sec ? sec.meanR : bgMeanR;
@@ -3112,7 +3314,8 @@ export function removeSubjectBoundaryWhiteLine(
         if (transparentNeighbors >= 2) {
           if (
             a < 40 ||
-            (!isWarmSkin && a < 165 && distToBg < 28) ||
+            (!isWarmSkin && !isLowerWhiteShirtEdge && a < 165 && distToBg < 28) ||
+            (isLowerWhiteShirtEdge && a < 85 && distToBg < 22) ||
             (isUpperPerimeterZone && isLightBg && !isWarmSkin && lum > 155 && a < 145)
           ) {
             pixels[pIdx + 3] = 0;
@@ -3122,7 +3325,8 @@ export function removeSubjectBoundaryWhiteLine(
         } else if (transparentNeighbors === 1) {
           if (
             a < 25 ||
-            (!isWarmSkin && a < 140 && distToBg < 22) ||
+            (!isWarmSkin && !isLowerWhiteShirtEdge && a < 140 && distToBg < 22) ||
+            (isLowerWhiteShirtEdge && a < 65 && distToBg < 18) ||
             (isUpperPerimeterZone && isLightBg && !isWarmSkin && lum > 165 && a < 110)
           ) {
             pixels[pIdx + 3] = 0;
@@ -3189,6 +3393,9 @@ export function removeSubjectBoundaryWhiteLine(
       }
 
       if (fgCount > 0) {
+        const maxC = Math.max(curR, curG, curB);
+        const minC = Math.min(curR, curG, curB);
+        const isLowerWhiteShirtEdge = !isUpperZone && maxC >= 155 && (maxC - minC) <= 45 && a >= 130;
         const avgFgR = fgR / fgCount;
         const avgFgG = fgG / fgCount;
         const avgFgB = fgB / fgCount;
@@ -3196,7 +3403,7 @@ export function removeSubjectBoundaryWhiteLine(
         const curBgDist = Math.hypot(curR - sBgR, curG - sBgG, curB - sBgB);
         const curFgDist = Math.hypot(curR - avgFgR, curG - avgFgG, curB - avgFgB);
 
-        if (fgBgDist > 26 && curFgDist > 16 && curBgDist < fgBgDist * 0.95) {
+        if (!isLowerWhiteShirtEdge && fgBgDist > 26 && curFgDist > 16 && curBgDist < fgBgDist * 0.95) {
           const aNorm = Math.max(0.25, a / 255.0);
           const unmixR = Math.max(0, Math.min(255, (curR - sBgR * (1 - aNorm)) / aNorm));
           const unmixG = Math.max(0, Math.min(255, (curG - sBgG * (1 - aNorm)) / aNorm));
@@ -3462,27 +3669,59 @@ export async function removeBackground(
           const mBgG = bgCnt > 10 ? sumBgG / bgCnt : 245;
           const mBgB = bgCnt > 10 ? sumBgB / bgCnt : 245;
 
-          // Estimate interior core garment color (lower center) so white/black clothes aren't eaten
+          // Estimate interior core garment signature & detect white/check shirt
           let gR = 0, gG = 0, gB = 0, gCnt = 0;
+          let lightGarCnt = 0, checkGarCnt = 0;
           const cStartY = Math.min(h - 1, Math.floor(neckSplitY));
           const cEndY = Math.min(h - 1, maxSubjY);
+          const torsoMinX = new Int32Array(h).fill(-1);
+          const torsoMaxX = new Int32Array(h).fill(-1);
+
+          for (let y = cStartY; y <= cEndY; y++) {
+            const row = y * w;
+            for (let x = 0; x < w; x++) {
+              if (rawAlphas[row + x] >= 180) {
+                torsoMinX[y] = x;
+                break;
+              }
+            }
+            for (let x = w - 1; x >= 0; x--) {
+              if (rawAlphas[row + x] >= 180) {
+                torsoMaxX[y] = x;
+                break;
+              }
+            }
+          }
+
           for (let y = cStartY; y <= cEndY; y += 3) {
             const row = y * w;
-            for (let x = Math.floor(w * 0.35); x <= Math.floor(w * 0.65); x += 3) {
+            for (let x = Math.floor(w * 0.34); x <= Math.floor(w * 0.66); x += 3) {
               const idx = row + x;
-              if (rawAlphas[idx] >= 220 && modnetAlphas[idx] >= 180) {
+              if (rawAlphas[idx] >= 200 || (rawAlphas[idx] >= 140 && modnetAlphas[idx] >= 140)) {
                 const p = idx * 4;
-                gR += pixels[p]; gG += pixels[p + 1]; gB += pixels[p + 2]; gCnt++;
+                const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                gR += r; gG += g; gB += b; gCnt++;
+                if (lum >= 155 && Math.max(r, g, b) - Math.min(r, g, b) <= 55) lightGarCnt++;
+                const rIdx = (row + Math.min(w - 1, x + 3)) * 4;
+                const rLum = 0.299 * pixels[rIdx] + 0.587 * pixels[rIdx + 1] + 0.114 * pixels[rIdx + 2];
+                if (Math.abs(lum - rLum) >= 14) checkGarCnt++;
               }
             }
           }
           const avgGarR = gCnt > 10 ? gR / gCnt : 128;
           const avgGarG = gCnt > 10 ? gG / gCnt : 128;
           const avgGarB = gCnt > 10 ? gB / gCnt : 128;
+          const isTorsoWhiteOrCheck =
+            gCnt > 10 && (lightGarCnt / gCnt >= 0.20 || checkGarCnt / gCnt >= 0.06);
 
           for (let y = 0; y < h; y++) {
             const row = y * w;
             const isUpperPortrait = y <= neckSplitY;
+            const tLeft = torsoMinX[y];
+            const tRight = torsoMaxX[y];
+            const innerTorsoMargin = Math.max(12, Math.round((tRight - tLeft) * 0.16));
+
             for (let x = 0; x < w; x++) {
               const i = row + x;
               const ra = rawAlphas[i];
@@ -3509,18 +3748,35 @@ export async function removeBackground(
                   rawAlphas[i] = strict ? (ra * 0.35 + ma * 0.65) : (ra * 0.5 + ma * 0.5);
                 }
               } else {
-                // Lower shoulder/torso: suppress chairs/walls/clutter rejected by MODNet unless pixel matches core garment
+                // Lower shoulder/torso: NEVER let MODNet eat white/check shirt pixels inside torso!
+                const p = i * 4;
+                const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
+                const maxC = Math.max(r, g, b);
+                const minC = Math.min(r, g, b);
+                const isWhiteOrNeutralLight = maxC >= 135 && (maxC - minC) <= 55;
+                const insideChestCore =
+                  tLeft !== -1 &&
+                  tRight > tLeft + innerTorsoMargin * 2 &&
+                  x >= tLeft + innerTorsoMargin &&
+                  x <= tRight - innerTorsoMargin;
+
+                if (insideChestCore && isTorsoWhiteOrCheck && (isWhiteOrNeutralLight || ra >= 140)) {
+                  rawAlphas[i] = Math.max(ra, 245);
+                  continue;
+                }
+
                 if (ma < 65 && ra >= 35) {
-                  const p = i * 4;
-                  const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
                   const distToBg = Math.hypot(r - mBgR, g - mBgG, b - mBgB);
                   const distToGar = gCnt > 10 ? Math.hypot(r - avgGarR, g - avgGarG, b - avgGarB) : 999;
 
-                  if (ra >= 232 && gCnt > 10 && distToGar < 42 && distToBg > 24) {
+                  if (isTorsoWhiteOrCheck && isWhiteOrNeutralLight && (ra >= 180 || insideChestCore)) {
+                    // White/check shirt cell -> preserve solid!
+                    rawAlphas[i] = Math.max(ra, 235);
+                  } else if (ra >= 232 && gCnt > 10 && distToGar < 42 && distToBg > 24) {
                     // Confident shirt/coat color matching core torso -> preserve!
                     rawAlphas[i] = ra;
-                  } else if (distToBg < 38 || (strict && distToGar > 48 && ra < 238)) {
-                    // Background wall, shadow, or chair/desk object rejected by MODNet -> suppress cleanly
+                  } else if (!insideChestCore && (distToBg < 38 || (strict && distToGar > 48 && ra < 238))) {
+                    // Background wall, shadow, or chair/desk object outside torso rejected by MODNet -> suppress cleanly
                     rawAlphas[i] = Math.min(ra, ra * 0.25 + ma * 0.75);
                   }
                 }
@@ -3830,7 +4086,7 @@ export async function cleanEdgeHalosAndDeFringe(
       const subjHeight = Math.max(1, maxY - minY);
       const earZoneYStart = Math.floor(minY + subjHeight * 0.16);
       const earZoneYEnd = Math.floor(minY + subjHeight * 0.54);
-      const shoulderZoneYEnd = Math.floor(minY + subjHeight * 0.85);
+      const shoulderZoneYEnd = Math.min(h - 1, maxY);
       const coreCenterX = Math.round((minX + maxX) / 2);
 
       // 4. Sample dominant background colors near boundaries
