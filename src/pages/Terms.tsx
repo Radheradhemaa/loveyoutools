@@ -6,9 +6,9 @@ export default function Terms() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-16">
       <SEO 
-        title="Terms of Service - LoveYouTools" 
-        description="Read our terms of service to understand the rules and regulations for using LoveYouTools."
-        url={window.location.href}
+        title="Terms of Service – LoveYouTools" 
+        description="Read our terms of service to understand the rules, usage guidelines, and regulations for using LoveYouTools."
+        url="https://loveyoutools.in/terms"
       />
       
       <Link to="/" className="inline-flex items-center gap-2 text-text-muted hover:text-accent mb-8 transition-colors">

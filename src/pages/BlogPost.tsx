@@ -14,13 +14,18 @@ export default function BlogPost() {
   }
 
   const relatedTool = post.toolId ? tools.find(t => t.id === post.toolId) : null;
+  const canonicalUrl = `https://loveyoutools.in/blog/${post.id}`;
+  const absoluteImage = post.image.startsWith('http')
+    ? post.image
+    : `https://loveyoutools.in${post.image.startsWith('/') ? post.image : `/${post.image}`}`;
 
   const articleSchema = {
     "@context": "https://schema.org",
     "@type": "BlogPosting",
     "headline": post.title,
     "description": post.excerpt,
-    "image": post.image,
+    "image": absoluteImage,
+    "url": canonicalUrl,
     "author": {
       "@type": "Person",
       "name": post.author
@@ -28,26 +33,26 @@ export default function BlogPost() {
     "datePublished": post.date,
     "publisher": {
       "@type": "Organization",
-      "name": "LoveTools",
+      "name": "LoveYouTools",
       "logo": {
         "@type": "ImageObject",
-        "url": `https://loveyoutools.in/logo.png?v=2`
+        "url": "https://loveyoutools.in/logo.png?v=2"
       }
     },
     "mainEntityOfPage": {
       "@type": "WebPage",
-      "@id": `https://loveyoutools.in/blog/${id}`
+      "@id": canonicalUrl
     }
   };
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-16">
       <SEO 
-        title={`${post.title} - LoveTools Blog`} 
+        title={`${post.title} – LoveYouTools Blog`} 
         description={post.excerpt}
-        url={window.location.href}
+        url={canonicalUrl}
         type="article"
-        image={post.image}
+        image={absoluteImage}
         schema={articleSchema}
       />
       

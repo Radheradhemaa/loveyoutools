@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link, Outlet, useLocation, useSearchParams } from 'react-router-dom';
-import { Search, Moon, Sun, Menu, X, ChevronRight, Heart, Wrench } from 'lucide-react';
+import { Search, Moon, Sun, Menu, X, Heart, Wrench } from 'lucide-react';
+import { Helmet } from 'react-helmet-async';
 import { categories, tools } from '../data/tools';
-import SEO from './SEO';
 import { useFocusMode } from '../contexts/FocusModeContext';
 
 export default function Layout() {
@@ -11,7 +11,11 @@ export default function Layout() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation();
   const [searchParams] = useSearchParams();
-  const activeCategory = searchParams.get('c') || 'all';
+  const categoryIds = categories.map(c => c.id);
+  const pathCategory = location.pathname.replace(/^\//, '').replace(/\/$/, '').toLowerCase();
+  const isCategoryPath = categoryIds.includes(pathCategory);
+  const activeCategory = isCategoryPath ? pathCategory : (searchParams.get('c') || 'all');
+  const isHomeOrCategory = location.pathname === '/' || isCategoryPath;
   const { isFocusMode } = useFocusMode();
 
   useEffect(() => {
@@ -33,33 +37,30 @@ export default function Layout() {
     t.d.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const organizationSchema = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "LoveYouTools",
+    "alternateName": [
+      "Love You Tools",
+      "LoveYouTools.in",
+      "loveyoutools"
+    ],
+    "url": "https://loveyoutools.in/",
+    "logo": "https://loveyoutools.in/logo.png?v=2",
+    "sameAs": [
+      "https://twitter.com/loveyoutools",
+      "https://github.com/loveyoutools"
+    ]
+  };
+
   return (
     <div className={`min-h-screen flex flex-col transition-all duration-500 ${isFocusMode ? 'bg-bg-primary' : ''}`}>
-      <SEO 
-        title="LoveYouTools – Free Online Tools Hub | Love You Tools (100+ Web Tools)" 
-        description="LoveYouTools (Love You Tools) is a 100% free online utility platform with 100+ tools for background removal, PDF editing, passport photos, resume builder, AI text humanizer, and calculators."
-        keywords="LoveYouTools, love you tools, love you, loveyoutools in, love you online tools, free online tools, online utilities"
-        url={typeof window !== 'undefined' ? window.location.href : 'https://loveyoutools.in/'}
-        schema={{
-          "@context": "https://schema.org",
-          "@type": "Organization",
-          "name": "LoveYouTools",
-          "alternateName": [
-            "Love You Tools",
-            "Love You",
-            "loveyoutools",
-            "LoveYouTools.in",
-            "Love You Online Tools",
-            "loveyou tools"
-          ],
-          "url": "https://loveyoutools.in/",
-          "logo": "https://loveyoutools.in/logo.png?v=2",
-          "sameAs": [
-            "https://twitter.com/loveyoutools",
-            "https://github.com/loveyoutools"
-          ]
-        }}
-      />
+      <Helmet>
+        <script type="application/ld+json">
+          {JSON.stringify(organizationSchema)}
+        </script>
+      </Helmet>
       
       {/* Header */}
       {!isFocusMode && (
@@ -162,16 +163,8 @@ export default function Layout() {
                 {categories.map(cat => (
                   <Link 
                     key={cat.id} 
-                    to={`/?c=${cat.id}`} 
-                    onClick={(e) => {
-                      setIsMenuOpen(false);
-                      if (location.pathname === '/') {
-                        e.preventDefault();
-                        const target = document.getElementById('trending-section') || document.getElementById('tools-grid');
-                        if (target) target.scrollIntoView({ behavior: 'smooth' });
-                        window.dispatchEvent(new CustomEvent('filter-category', { detail: cat.id }));
-                      }
-                    }}
+                    to={cat.id === 'all' ? '/all' : `/${cat.id}`}
+                    onClick={() => setIsMenuOpen(false)}
                     className="p-2 text-sm bg-bg-secondary rounded-lg hover:bg-accent hover:text-white transition-colors"
                   >
                     {cat.name}
@@ -183,22 +176,14 @@ export default function Layout() {
         </div>
       )}
 
-      {/* Category Nav - Only show on home page */}
-      {!isFocusMode && location.pathname === '/' && (
+      {/* Category Nav - Show on home and category pages */}
+      {!isFocusMode && isHomeOrCategory && (
         <nav className="bg-surface border-b border-border overflow-x-auto hide-scrollbar">
           <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-2 sm:gap-3 py-2.5">
             {categories.map(cat => (
               <Link
                 key={cat.id}
-                to={`/?c=${cat.id}`}
-                onClick={(e) => {
-                  if (location.pathname === '/') {
-                    e.preventDefault();
-                    const target = document.getElementById('trending-section') || document.getElementById('tools-grid');
-                    if (target) target.scrollIntoView({ behavior: 'smooth' });
-                    window.dispatchEvent(new CustomEvent('filter-category', { detail: cat.id }));
-                  }
-                }}
+                to={cat.id === 'all' && location.pathname === '/' ? '/' : `/${cat.id}`}
                 className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
                   activeCategory === cat.id 
                     ? 'bg-accent text-white' 
@@ -241,10 +226,11 @@ export default function Layout() {
               <div>
                 <h3 className="font-bold text-text-primary mb-4">Popular Tools</h3>
                 <ul className="space-y-2 text-sm text-text-secondary">
+                  <li><Link to="/background-remover" className="hover:text-accent">AI Background Remover</Link></li>
+                  <li><Link to="/passport-photo-maker" className="hover:text-accent">Passport Photo Maker</Link></li>
                   <li><Link to="/image-compressor" className="hover:text-accent">Image Compressor</Link></li>
                   <li><Link to="/merge-pdf" className="hover:text-accent">Merge PDF</Link></li>
-                  <li><Link to="/word-counter" className="hover:text-accent">Word Counter</Link></li>
-                  <li><Link to="/json-formatter-validator" className="hover:text-accent">JSON Formatter</Link></li>
+                  <li><Link to="/pdf-editor" className="hover:text-accent">Edit PDF</Link></li>
                 </ul>
               </div>
               <div>
@@ -253,15 +239,7 @@ export default function Layout() {
                   {categories.filter(c => c.id !== 'all').map(cat => (
                     <li key={cat.id}>
                       <Link 
-                        to={`/?c=${cat.id}`} 
-                        onClick={(e) => {
-                          if (location.pathname === '/') {
-                            e.preventDefault();
-                            const target = document.getElementById('trending-section') || document.getElementById('tools-grid');
-                            if (target) target.scrollIntoView({ behavior: 'smooth' });
-                            window.dispatchEvent(new CustomEvent('filter-category', { detail: cat.id }));
-                          }
-                        }}
+                        to={`/${cat.id}`}
                         className="hover:text-accent transition-colors"
                       >
                         {cat.name}

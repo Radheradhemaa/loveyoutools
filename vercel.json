@@ -1,6 +1,8 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "cleanUrls": true,
+  "trailingSlash": false,
   "redirects": [
     {
       "source": "/(.*)",
@@ -27,7 +29,7 @@
   ],
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!api/|assets/|favicon/|blog-images/|images/|social-preview/|pwa-icons/|logo/|.*\\..*).*)",
       "destination": "/index.html"
     }
   ],

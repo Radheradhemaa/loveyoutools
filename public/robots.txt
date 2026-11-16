@@ -1,5 +1,7 @@
 User-agent: *
 Allow: /
+Allow: /assets/
 Disallow: /admin
+Disallow: /tool/
 
 Sitemap: https://loveyoutools.in/sitemap.xml

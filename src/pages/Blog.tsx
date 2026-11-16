@@ -7,9 +7,9 @@ export default function Blog() {
   return (
     <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 py-16">
       <SEO 
-        title="Blog - LoveTools" 
-        description="Read our latest guides, tips, and news about online tools, productivity, and privacy."
-        url={window.location.href}
+        title="Blog & Guides – LoveYouTools" 
+        description="Read our latest guides, tutorials, and privacy tips for free online image, PDF, developer, SEO, and productivity tools on LoveYouTools."
+        url="https://loveyoutools.in/blog"
       />
       
       <Link to="/" className="inline-flex items-center gap-2 text-text-muted hover:text-accent mb-8 transition-colors">

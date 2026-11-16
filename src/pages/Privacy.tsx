@@ -6,9 +6,9 @@ export default function Privacy() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-16">
       <SEO 
-        title="Privacy Policy - LoveYouTools" 
-        description="Comprehensive privacy policy for LoveYouTools explaining data collection, cookies, and Google AdSense compliance."
-        url={window.location.href}
+        title="Privacy Policy – LoveYouTools" 
+        description="Comprehensive privacy policy for LoveYouTools explaining client-side local processing, cookies, and Google AdSense compliance."
+        url="https://loveyoutools.in/privacy"
       />
       
       <Link to="/" className="inline-flex items-center gap-2 text-text-muted hover:text-accent mb-8 transition-colors">

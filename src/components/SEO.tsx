@@ -7,59 +7,86 @@ interface SEOProps {
   url: string;
   image?: string;
   type?: 'website' | 'article' | 'SoftwareApplication';
-  schema?: any;
+  schema?: unknown;
+  noindex?: boolean;
 }
 
-export default function SEO({ title, description, keywords, url, image = '/social-preview/og-image.png?v=2', type = 'website', schema }: SEOProps) {
-  const siteName = 'LoveYouTools (Love You Tools)';
-  const cleanTitle = title.replace(/\s*[-|]\s*LoveYouTools.*$/i, '').trim();
-  const fullTitle = `${cleanTitle} – LoveYouTools (Love You Tools)`;
+const BASE_URL = 'https://loveyoutools.in';
 
-  // Ensure canonical URL always uses the .in domain
-  const baseUrl = 'https://loveyoutools.in';
-  let canonicalUrl = url;
+function toCleanCanonicalUrl(inputUrl: string): string {
   try {
-    const urlObj = new URL(url);
-    // Remove trailing slash for consistency
-    const pathname = urlObj.pathname.endsWith('/') && urlObj.pathname.length > 1 
-      ? urlObj.pathname.slice(0, -1) 
-      : urlObj.pathname;
-    canonicalUrl = `${baseUrl}${pathname}${urlObj.search}`;
-  } catch (e) {
-    // Fallback for relative paths or invalid URLs
-    const path = url.startsWith('/') ? url : `/${url}`;
-    canonicalUrl = `${baseUrl}${path}`;
+    const parsed = inputUrl.startsWith('http')
+      ? new URL(inputUrl)
+      : new URL(inputUrl.startsWith('/') ? inputUrl : `/${inputUrl}`, BASE_URL);
+    const pathname = parsed.pathname.length > 1 && parsed.pathname.endsWith('/')
+      ? parsed.pathname.slice(0, -1)
+      : parsed.pathname || '/';
+    return `${BASE_URL}${pathname}`;
+  } catch {
+    const cleanPath = inputUrl.split('?')[0].split('#')[0];
+    const normalized = cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`;
+    return `${BASE_URL}${normalized.length > 1 && normalized.endsWith('/') ? normalized.slice(0, -1) : normalized}`;
   }
+}
 
-  const finalKeywords = keywords 
-    ? `LoveYouTools, love you tools, love you, loveyoutools in, love you online tools, ${keywords}`
-    : 'LoveYouTools, love you tools, love you, loveyoutools in, love you online tools, free online tools, online utilities';
+function toAbsoluteUrl(pathOrUrl: string): string {
+  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+    return pathOrUrl;
+  }
+  return `${BASE_URL}${pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`}`;
+}
+
+export default function SEO({
+  title,
+  description,
+  keywords,
+  url,
+  image = '/social-preview/og-image.png?v=2',
+  type = 'website',
+  schema,
+  noindex = false,
+}: SEOProps) {
+  const siteName = 'LoveYouTools (Love You Tools)';
+  const trimmedTitle = title.trim();
+  const fullTitle = /loveyoutools/i.test(trimmedTitle)
+    ? trimmedTitle
+    : `${trimmedTitle.replace(/\s*[-–|]\s*LoveTools.*$/i, '').trim()} – LoveYouTools`;
+
+  const canonicalUrl = toCleanCanonicalUrl(url);
+  const absoluteImage = toAbsoluteUrl(image);
+
+  const finalKeywords = keywords
+    ? `LoveYouTools, love you tools, loveyoutools in, ${keywords}`
+    : 'LoveYouTools, love you tools, loveyoutools in, free online tools, online utilities';
 
   const schemaArray = schema ? (Array.isArray(schema) ? schema : [schema]) : [];
+  const robotsContent = noindex
+    ? 'noindex, follow'
+    : 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1';
 
   return (
     <Helmet>
       <title>{fullTitle}</title>
-      <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+      <meta name="robots" content={robotsContent} />
       <meta name="description" content={description} />
       <meta name="keywords" content={finalKeywords} />
-      <link rel="canonical" href={canonicalUrl} />
+      {!noindex && <link rel="canonical" href={canonicalUrl} />}
 
       {/* Open Graph / Facebook */}
       <meta property="og:type" content={type} />
       <meta property="og:url" content={canonicalUrl} />
       <meta property="og:title" content={fullTitle} />
       <meta property="og:description" content={description} />
-      <meta property="og:image" content={image} />
+      <meta property="og:image" content={absoluteImage} />
       <meta property="og:site_name" content={siteName} />
       <meta property="og:locale" content="en_US" />
 
       {/* Twitter */}
-      <meta property="twitter:card" content="summary_large_image" />
-      <meta property="twitter:url" content={canonicalUrl} />
-      <meta property="twitter:title" content={fullTitle} />
-      <meta property="twitter:description" content={description} />
-      <meta property="twitter:image" content={image} />
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:url" content={canonicalUrl} />
+      <meta name="twitter:title" content={fullTitle} />
+      <meta name="twitter:description" content={description} />
+      <meta name="twitter:image" content={absoluteImage} />
 
       {/* Structured Data */}
       {schemaArray.map((s, idx) => (

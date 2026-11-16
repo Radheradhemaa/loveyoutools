@@ -6,9 +6,9 @@ export default function Disclaimer() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-16">
       <SEO 
-        title="Disclaimer - LoveYouTools" 
-        description="Read our medical, legal, and general tools disclaimer for using LoveYouTools website."
-        url={window.location.href}
+        title="Disclaimer – LoveYouTools" 
+        description="Read the general tools disclaimer, client-side processing notice, and advertising disclosures for LoveYouTools."
+        url="https://loveyoutools.in/disclaimer"
       />
       
       <Link to="/" className="inline-flex items-center gap-2 text-text-muted hover:text-accent mb-8 transition-colors">

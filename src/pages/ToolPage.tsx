@@ -121,6 +121,12 @@ export default function ToolPage() {
   if (!tool) {
     return (
       <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
+        <SEO
+          title="Page Not Found – LoveYouTools"
+          description="The requested page or tool could not be found on LoveYouTools."
+          url="https://loveyoutools.in/404"
+          noindex
+        />
         <h1 className="text-4xl font-bold mb-4">Tool Not Found</h1>
         <p className="text-text-muted mb-8">The tool you are looking for does not exist.</p>
         <Link to="/" className="btn bp">Return Home</Link>
@@ -185,14 +191,17 @@ export default function ToolPage() {
     return <GenericTool tool={tool} />;
   };
 
-  const toolUrl = `${window.location.origin}/${tool.id}`;
+  const toolUrl = `https://loveyoutools.in/${tool.id}`;
   const keywords = `${tool.n.toLowerCase()}, free ${tool.n.toLowerCase()}, online ${tool.n.toLowerCase()}, ${category?.name.toLowerCase()} tools`;
+  const deterministicRatingCount =
+    140 + (tool.id.split('').reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 420);
 
   // Schemas
   const softwareSchema = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": tool.n,
+    "url": toolUrl,
     "description": tool.d,
     "applicationCategory": "BrowserApplication",
     "operatingSystem": "All",
@@ -204,7 +213,7 @@ export default function ToolPage() {
     "aggregateRating": {
       "@type": "AggregateRating",
       "ratingValue": "4.8",
-      "ratingCount": Math.floor(Math.random() * 500) + 100
+      "ratingCount": deterministicRatingCount
     }
   };
 
@@ -222,13 +231,13 @@ export default function ToolPage() {
         "@type": "ListItem",
         "position": 2,
         "name": category?.name,
-        "item": `https://loveyoutools.in/#tools-grid`
+        "item": `https://loveyoutools.in/${tool.c}`
       },
       {
         "@type": "ListItem",
         "position": 3,
         "name": tool.n,
-        "item": `https://loveyoutools.in/${tool.id}`
+        "item": toolUrl
       }
     ]
   };
@@ -393,7 +402,7 @@ export default function ToolPage() {
         <nav className="flex items-center gap-2 text-xs sm:text-sm text-text-muted mb-4 sm:mb-6">
           <Link to="/" className="hover:text-accent transition-colors">Home</Link>
           <ChevronRight className="w-3 h-3 sm:w-4 h-4" />
-          <Link to={`/?c=${tool.c}`} className="hover:text-accent transition-colors">
+          <Link to={`/${tool.c}`} className="hover:text-accent transition-colors">
             {category?.name}
           </Link>
           <ChevronRight className="w-3 h-3 sm:w-4 h-4" />

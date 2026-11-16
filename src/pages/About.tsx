@@ -6,9 +6,9 @@ export default function About() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-16">
       <SEO 
-        title="About Us - LoveYouTools" 
-        description="Learn more about LoveYouTools, our mission, and why we build free online tools for everyone."
-        url={window.location.href}
+        title="About Us – LoveYouTools" 
+        description="Learn more about LoveYouTools, our mission, and why we build 100+ fast, privacy-first free online tools for everyone."
+        url="https://loveyoutools.in/about"
       />
       
       <Link to="/" className="inline-flex items-center gap-2 text-text-muted hover:text-accent mb-8 transition-colors">

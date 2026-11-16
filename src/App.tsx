@@ -12,6 +12,7 @@ import BlogPost from './pages/BlogPost';
 import Disclaimer from './pages/Disclaimer';
 import ScrollToTop from './components/ScrollToTop';
 import { FocusModeProvider } from './contexts/FocusModeContext';
+import { categories } from './data/tools';
 
 export default function App() {
   return (
@@ -22,6 +23,13 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Layout />}>
               <Route index element={<Home />} />
+              {categories.map((cat) => (
+                <Route
+                  key={cat.id}
+                  path={cat.id}
+                  element={<Home categoryProp={cat.id} />}
+                />
+              ))}
               <Route path="about" element={<About />} />
               <Route path="contact" element={<Contact />} />
               <Route path="privacy" element={<Privacy />} />
@@ -29,8 +37,9 @@ export default function App() {
               <Route path="disclaimer" element={<Disclaimer />} />
               <Route path="blog" element={<Blog />} />
               <Route path="blog/:id" element={<BlogPost />} />
-              <Route path=":id" element={<ToolPage />} />
               <Route path="tool/:id" element={<ToolPage />} />
+              <Route path=":id" element={<ToolPage />} />
+              <Route path="*" element={<ToolPage />} />
             </Route>
           </Routes>
         </Router>

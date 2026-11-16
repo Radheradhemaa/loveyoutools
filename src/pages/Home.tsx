@@ -5,9 +5,9 @@ import { ArrowRight, Sparkles, Zap, Shield, CheckCircle2, History } from 'lucide
 import SEO from '../components/SEO';
 import AdSlot from '../components/AdSlot';
 
-export default function Home() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const categoryParam = searchParams.get('c') || 'all';
+export default function Home({ categoryProp }: { categoryProp?: string }) {
+  const [searchParams] = useSearchParams();
+  const categoryParam = categoryProp || searchParams.get('c') || 'all';
   const [activeCategory, setActiveCategory] = useState(categoryParam);
   const [recentToolIds, setRecentToolIds] = useState<string[]>([]);
 
@@ -20,19 +20,12 @@ export default function Home() {
 
   useEffect(() => {
     setActiveCategory(categoryParam);
-    if (categoryParam !== 'all') {
+    if (!categoryProp && searchParams.get('c') && categoryParam !== 'all') {
       setTimeout(scrollToContent, 100);
     }
-  }, [categoryParam]);
+  }, [categoryParam, categoryProp, searchParams]);
 
   useEffect(() => {
-    const handleFilter = (e: CustomEvent) => {
-      setActiveCategory(e.detail);
-      setSearchParams({ c: e.detail });
-      setTimeout(scrollToContent, 10);
-    };
-    window.addEventListener('filter-category', handleFilter as EventListener);
-
     try {
       const recent = JSON.parse(localStorage.getItem('recent-tools') || '[]');
       if (Array.isArray(recent)) {
@@ -44,100 +37,143 @@ export default function Home() {
       console.error("Error parsing recent tools", e);
       setRecentToolIds([]);
     }
-
-    return () => window.removeEventListener('filter-category', handleFilter as EventListener);
-  }, [setSearchParams]);
-
-  const handleCategoryChange = (catId: string) => {
-    setActiveCategory(catId);
-    setSearchParams({ c: catId });
-    setTimeout(scrollToContent, 10);
-  };
+  }, []);
 
   const filteredTools = activeCategory === 'all' 
     ? tools 
     : tools.filter(t => t.c === activeCategory);
 
   const trendingTools = activeCategory === 'all'
-    ? tools.filter(t => (t as any).popular).slice(0, 8)
-    : tools.filter(t => t.c === activeCategory && (t as any).popular).slice(0, 4);
+    ? tools.filter(t => (t as { popular?: boolean }).popular).slice(0, 8)
+    : tools.filter(t => t.c === activeCategory && (t as { popular?: boolean }).popular).slice(0, 4);
 
   const activeCategoryName = categories.find(c => c.id === activeCategory)?.name || 'All';
+
+  const isCategoryRoute = Boolean(categoryProp);
+  const canonicalUrl = isCategoryRoute
+    ? `https://loveyoutools.in/${categoryProp}`
+    : 'https://loveyoutools.in/';
+
+  const sampleNames = filteredTools.slice(0, 4).map(t => t.n).join(', ');
+  const pageTitle = isCategoryRoute
+    ? (categoryProp === 'all'
+        ? 'All 100+ Free Online Tools Directory – LoveYouTools'
+        : `Free Online ${activeCategoryName} Tools – ${filteredTools.length}+ Web Utilities | LoveYouTools`)
+    : 'LoveYouTools – Free Online Tools Hub (100+ Free Web Tools)';
+
+  const pageDescription = isCategoryRoute
+    ? (categoryProp === 'all'
+        ? `Browse all ${tools.length}+ free online tools on LoveYouTools including ${sampleNames}. Fast, private, browser-based tools with zero signup.`
+        : `Explore ${filteredTools.length} free online ${activeCategoryName.toLowerCase()} tools on LoveYouTools: ${sampleNames}, and more. 100% browser-based with zero signup.`)
+    : "LoveYouTools (Love You Tools) is India's leading 100% free online utility suite with 100+ browser-based tools for PDF editing, background removal, passport photos, resume maker, AI text humanizer, and calculators with zero signup.";
 
   const recentTools = recentToolIds
     .map(id => tools.find(t => t.id === id))
     .filter(Boolean) as typeof tools;
 
+  const pageSchema = isCategoryRoute
+    ? [
+        {
+          "@context": "https://schema.org",
+          "@type": "CollectionPage",
+          "@id": canonicalUrl,
+          "url": canonicalUrl,
+          "name": pageTitle,
+          "description": pageDescription,
+          "isPartOf": { "@id": "https://loveyoutools.in/#website" },
+          "mainEntity": {
+            "@type": "ItemList",
+            "numberOfItems": filteredTools.length,
+            "itemListElement": filteredTools.slice(0, 20).map((t, idx) => ({
+              "@type": "ListItem",
+              "position": idx + 1,
+              "name": t.n,
+              "url": `https://loveyoutools.in/${t.id}`
+            }))
+          }
+        }
+      ]
+    : [
+        {
+          "@context": "https://schema.org",
+          "@type": "WebSite",
+          "@id": "https://loveyoutools.in/#website",
+          "url": "https://loveyoutools.in/",
+          "name": "LoveYouTools",
+          "alternateName": ["Love You Tools", "Love You", "LoveYouTools.in", "loveyoutools", "Love You Online Tools", "loveyou tools"],
+          "potentialAction": {
+            "@type": "SearchAction",
+            "target": "https://loveyoutools.in/?search={search_term_string}",
+            "query-input": "required name=search_term_string"
+          }
+        },
+        {
+          "@context": "https://schema.org",
+          "@type": "FAQPage",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "What is LoveYouTools (Love You Tools)?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "LoveYouTools (Love You Tools) is a free online platform offering 100+ digital utilities for image editing, PDF conversion, background removal, passport photo generation, resume building, AI text humanizing, calculations, and web development with zero signup."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Is LoveYouTools 100% free to use?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes, LoveYouTools is 100% free forever with no hidden subscriptions, no usage limits, and no credit card required."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Is my data private and secure on LoveYouTools?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes, LoveYouTools executes processing client-side in your browser via modern WebAssembly and HTML5 Canvas. Your images, documents, and files never leave your device."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "What popular tools are available on LoveYouTools?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Popular tools include AI Background Remover, Passport Photo Maker, PDF Editor, Compress PDF, Resume Maker, AI Text Humanizer, Photo Sign Resizer, Image Compressor, and Age Calculator."
+              }
+            }
+          ]
+        }
+      ];
+
   return (
     <div className="max-w-[1380px] mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-12">
       <SEO 
-        title="LoveYouTools – Free Online Tools Hub | Love You Tools (100+ Free Web Tools)" 
-        description="LoveYouTools (Love You Tools) is India's leading 100% free online utility suite with 100+ browser-based tools for PDF editing, background removal, passport photos, resume maker, AI text humanizer, and calculators with zero signup."
-        keywords="LoveYouTools, love you tools, love you, loveyoutools in, love you online tools, free online tools, background remover, passport photo maker, pdf editor, resume maker, ai text humanizer, compress pdf, image compressor, age calculator"
-        url="https://loveyoutools.in/"
-        schema={[
-          {
-            "@context": "https://schema.org",
-            "@type": "WebSite",
-            "@id": "https://loveyoutools.in/#website",
-            "url": "https://loveyoutools.in/",
-            "name": "LoveYouTools",
-            "alternateName": ["Love You Tools", "Love You", "LoveYouTools.in", "loveyoutools", "Love You Online Tools", "loveyou tools"],
-            "potentialAction": {
-              "@type": "SearchAction",
-              "target": "https://loveyoutools.in/?search={search_term_string}",
-              "query-input": "required name=search_term_string"
-            }
-          },
-          {
-            "@context": "https://schema.org",
-            "@type": "FAQPage",
-            "mainEntity": [
-              {
-                "@type": "Question",
-                "name": "What is LoveYouTools (Love You Tools)?",
-                "acceptedAnswer": {
-                  "@type": "Answer",
-                  "text": "LoveYouTools (Love You Tools) is a free online platform offering 100+ digital utilities for image editing, PDF conversion, background removal, passport photo generation, resume building, AI text humanizing, calculations, and web development with zero signup."
-                }
-              },
-              {
-                "@type": "Question",
-                "name": "Is LoveYouTools 100% free to use?",
-                "acceptedAnswer": {
-                  "@type": "Answer",
-                  "text": "Yes, LoveYouTools is 100% free forever with no hidden subscriptions, no usage limits, and no credit card required."
-                }
-              },
-              {
-                "@type": "Question",
-                "name": "Is my data private and secure on LoveYouTools?",
-                "acceptedAnswer": {
-                  "@type": "Answer",
-                  "text": "Yes, LoveYouTools executes processing client-side in your browser via modern WebAssembly and HTML5 Canvas. Your images, documents, and files never leave your device."
-                }
-              },
-              {
-                "@type": "Question",
-                "name": "What popular tools are available on LoveYouTools?",
-                "acceptedAnswer": {
-                  "@type": "Answer",
-                  "text": "Popular tools include AI Background Remover, Passport Photo Maker, PDF Editor, Compress PDF, Resume Maker, AI Text Humanizer, Photo Sign Resizer, Image Compressor, and Age Calculator."
-                }
-              }
-            ]
-          }
-        ]}
+        title={pageTitle}
+        description={pageDescription}
+        keywords={`LoveYouTools, ${activeCategoryName.toLowerCase()} tools, free online tools, background remover, passport photo maker, pdf editor, resume maker, ai text humanizer`}
+        url={canonicalUrl}
+        schema={pageSchema}
       />
       {/* Hero Section */}
       <section className="text-center pt-2 pb-4 relative overflow-hidden mb-8">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,var(--color-accent)_0%,transparent_40%)] opacity-5 pointer-events-none"></div>
         
         <h1 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl xl:text-[2.4rem] 2xl:text-[2.6rem] font-extrabold tracking-tight text-text-primary mt-0 mb-3 w-full mx-auto leading-tight">
-          <span className="text-accent">LoveYouTools</span> – Free Online Tools Hub (Love You Tools)
+          {isCategoryRoute ? (
+            categoryProp === 'all'
+              ? <><span className="text-accent">All {tools.length}+</span> Free Online Tools Directory</>
+              : <>Free Online <span className="text-accent">{activeCategoryName}</span> Tools</>
+          ) : (
+            <><span className="text-accent">LoveYouTools</span> – Free Online Tools Hub (Love You Tools)</>
+          )}
         </h1>
         <p className="text-sm sm:text-base text-text-secondary max-w-3xl mx-auto mb-6">
-          Welcome to <strong>LoveYouTools (Love You Tools)</strong> — 100+ free online digital tools designed to simplify your everyday tasks. Edit PDFs, remove image backgrounds, format text, build ATS resumes, and calculate anything directly in your browser with 100% privacy and zero sign-up.
+          {isCategoryRoute
+            ? pageDescription
+            : <>Welcome to <strong>LoveYouTools (Love You Tools)</strong> — 100+ free online digital tools designed to simplify your everyday tasks. Edit PDFs, remove image backgrounds, format text, build ATS resumes, and calculate anything directly in your browser with 100% privacy and zero sign-up.</>
+          }
         </p>
 
         <div className="flex flex-wrap justify-center gap-6 text-sm font-medium text-text-muted">
@@ -211,17 +247,13 @@ export default function Home() {
       <section id="tools-grid" className="scroll-mt-24 mt-12">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
           <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Zap className="text-accent" /> Browse All Online Tools
+            <Zap className="text-accent" /> {activeCategory === 'all' ? 'Browse All Online Tools' : `Browse All ${activeCategoryName} Tools`}
           </h2>
           <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 w-full sm:w-auto hide-scrollbar">
             {categories.map(cat => (
               <Link
                 key={cat.id}
-                to={`/?c=${cat.id}`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleCategoryChange(cat.id);
-                }}
+                to={cat.id === 'all' && !categoryProp ? '/' : `/${cat.id}`}
                 className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
                   activeCategory === cat.id 
                     ? 'bg-accent text-white' 
