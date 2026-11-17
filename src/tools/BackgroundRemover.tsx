@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut, Target, MousePointerClick, Scissors } from 'lucide-react';
+import { Upload, Download, Loader2, X, Wand2, Image as ImageIcon, Check, Trash2, Eraser, Paintbrush, Sliders, Sparkles, RefreshCw, Undo, Redo, Maximize2, Crop as CropIcon, RotateCcw, ZoomIn, ZoomOut, Target, MousePointerClick } from 'lucide-react';
 import ReactCrop, { Crop, PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval, ensurePreloaded, magicEraseObjectAtPoint, removeChairFromImage, cleanEdgeHalosAndDeFringe, BgRemovalOptions } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded, magicEraseObjectAtPoint, BgRemovalOptions } from '../lib/bgRemoval';
 import { reconstructLeftShoulder } from '../lib/shoulderReconstruction';
 import { drawSteppedHighQuality } from '../lib/touchupCanvas';
 
@@ -54,7 +54,7 @@ export default function BackgroundRemover() {
   
   // AI Subject Focus & Precision Engine Options
   const [isolateMainSubject, setIsolateMainSubject] = useState(true);
-  const [objectStrictness, setObjectStrictness] = useState(75);
+  const [objectStrictness, setObjectStrictness] = useState(82);
   const [severTouchingObjects, setSeverTouchingObjects] = useState(true);
   const [removeBackgroundNoise, setRemoveBackgroundNoise] = useState(true);
   const [autoExtendLeftShoulder, setAutoExtendLeftShoulder] = useState(true);
@@ -498,40 +498,6 @@ export default function BackgroundRemover() {
       removeBackgroundNoise: true,
       decontaminateHalos: true,
     });
-  };
-
-  const handleRemoveChairBackrest = async () => {
-    const targetSrc = resultImage || imageSrc;
-    if (!targetSrc) return;
-    try {
-      setIsProcessing(true);
-      setStatusText('Removing Chair & Backrest Objects...');
-      const cleaned = await removeChairFromImage(targetSrc, { objectStrictness: 85, severTouchingObjects: true, isolateMainSubject: true });
-      setResultImage(cleaned);
-      addToHistory(cleaned);
-    } catch (err) {
-      console.error("Chair removal failed:", err);
-    } finally {
-      setIsProcessing(false);
-      setStatusText('');
-    }
-  };
-
-  const handleRemoveBoundaryWhiteLine = async () => {
-    const targetSrc = resultImage || imageSrc;
-    if (!targetSrc) return;
-    try {
-      setIsProcessing(true);
-      setStatusText('Removing Boundary White Line & Edge Halos...');
-      const cleaned = await cleanEdgeHalosAndDeFringe(targetSrc, { deFringeStrength: 1.0, haloThreshold: 35, isolateMainSubject: true });
-      setResultImage(cleaned);
-      addToHistory(cleaned);
-    } catch (err) {
-      console.error("White line removal failed:", err);
-    } finally {
-      setIsProcessing(false);
-      setStatusText('');
-    }
   };
 
   const handleMagicEraserClick = async (e: React.MouseEvent<HTMLImageElement | HTMLCanvasElement>) => {
@@ -1489,23 +1455,6 @@ export default function BackgroundRemover() {
                                   Sever Touching Objects (Chairs, Desks)
                                 </label>
                               </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                              <button
-                                onClick={handleRemoveBoundaryWhiteLine}
-                                disabled={isProcessing}
-                                className="w-full py-2.5 px-2 bg-gradient-to-r from-accent/15 to-emerald-500/10 hover:from-accent hover:to-emerald-500 text-accent hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 border border-accent/30 shadow-sm"
-                              >
-                                <Scissors className="w-3.5 h-3.5" /> Remove White Line
-                              </button>
-                              <button
-                                onClick={handleRemoveChairBackrest}
-                                disabled={isProcessing}
-                                className="w-full py-2.5 px-2 bg-gradient-to-r from-red-500/15 to-orange-500/10 hover:from-red-500 hover:to-orange-500 text-red-600 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 border border-red-500/30 shadow-sm"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" /> Erase Chair
-                              </button>
                             </div>
                           </div>
 

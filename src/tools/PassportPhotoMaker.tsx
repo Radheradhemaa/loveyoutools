@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw, Trash2, Upload } from 'lucide-react';
+import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw, Upload } from 'lucide-react';
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
-import { removeBackground as runBgRemoval, ensurePreloaded, removeChairFromImage, cleanEdgeHalosAndDeFringe } from '../lib/bgRemoval';
+import { removeBackground as runBgRemoval, ensurePreloaded } from '../lib/bgRemoval';
 import { drawSteppedHighQuality } from '../lib/touchupCanvas';
 
 // --- Configuration ---
@@ -758,54 +758,6 @@ export default function PassportPhotoMaker() {
     await removeBackgroundFromSrc(croppedImageSrc);
   };
 
-  const handleEraseChairAndBackrest = async () => {
-    const targetSrc = bgRemovedImageSrc || croppedImageSrc;
-    if (!targetSrc) return;
-    try {
-      setIsProcessing(true);
-      const cleaned = await removeChairFromImage(targetSrc, {
-        objectStrictness: 85,
-        severTouchingObjects: true,
-        isolateMainSubject: true,
-      });
-      if (bgRemovedImageSrc) {
-        setBgRemovedImageSrc(cleaned);
-      } else {
-        setCroppedImageSrc(cleaned);
-      }
-      addToHistory(cleaned);
-      updateCanvasFromSrc(cleaned);
-    } catch (err) {
-      console.error("Chair removal failed:", err);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleRemoveBoundaryWhiteLine = async () => {
-    const targetSrc = bgRemovedImageSrc || croppedImageSrc;
-    if (!targetSrc) return;
-    try {
-      setIsProcessing(true);
-      const cleaned = await cleanEdgeHalosAndDeFringe(targetSrc, {
-        deFringeStrength: 1.0,
-        haloThreshold: 35,
-        isolateMainSubject: true,
-      });
-      if (bgRemovedImageSrc) {
-        setBgRemovedImageSrc(cleaned);
-      } else {
-        setCroppedImageSrc(cleaned);
-      }
-      addToHistory(cleaned);
-      updateCanvasFromSrc(cleaned);
-    } catch (err) {
-      console.error("White line removal failed:", err);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
   // --- 4. Apply Adjustments & Background Color ---
   useEffect(() => {
     if (isManualMode) return;
@@ -1509,26 +1461,6 @@ export default function PassportPhotoMaker() {
                         >
                           <Scissors className="w-3.5 h-3.5" />
                           {isManualMode ? 'Done Touchup' : 'Manual Touchup'}
-                        </button>
-                      </div>
-
-                      {/* 1-Click White Line & Chair Erase Buttons */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
-                        <button
-                          onClick={handleRemoveBoundaryWhiteLine}
-                          disabled={isProcessing}
-                          className="w-full py-2 px-3 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm"
-                        >
-                          <Scissors className="w-3.5 h-3.5 text-emerald-600" />
-                          Remove White Line
-                        </button>
-                        <button
-                          onClick={handleEraseChairAndBackrest}
-                          disabled={isProcessing}
-                          className="w-full py-2 px-3 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm"
-                        >
-                          <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                          Erase Chair
                         </button>
                       </div>
 

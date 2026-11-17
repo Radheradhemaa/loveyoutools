@@ -10,6 +10,7 @@ if (env.backends?.onnx?.wasm) {
 }
 
 let isnetPipeline: any = null;
+let isnetModelId = "";
 let modnetPipeline: any = null;
 let u2netPipeline: any = null;
 
@@ -49,7 +50,7 @@ const ensureWebGPUChecked = async () => {
 };
 
 /**
- * Ensures the primary precision model (RMBG-1.4) is loaded.
+ * Ensures the primary precision model (RMBG-1.4) is loaded cleanly (retrying WASM before falling back).
  */
 export const ensureIsnetLoaded = async () => {
   if (!isnetPipeline) {
@@ -57,11 +58,23 @@ export const ensureIsnetLoaded = async () => {
     const device = hasWebGPU ? "webgpu" : "wasm";
     try {
       isnetPipeline = await pipeline("image-segmentation", "briaai/RMBG-1.4", { device });
+      isnetModelId = "briaai/RMBG-1.4";
     } catch (e) {
+      if (device !== "wasm") {
+        try {
+          isnetPipeline = await pipeline("image-segmentation", "briaai/RMBG-1.4", { device: "wasm" });
+          isnetModelId = "briaai/RMBG-1.4";
+          return;
+        } catch (eWasm) {
+          console.warn("RMBG-1.4 WASM fallback failed, trying ISNet/MODNet...", eWasm);
+        }
+      }
       try {
-        isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", { device });
+        isnetPipeline = await pipeline("image-segmentation", "Xenova/isnet_general_use", { device: "wasm" });
+        isnetModelId = "Xenova/isnet_general_use";
       } catch (e2) {
         isnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", { device: "wasm" });
+        isnetModelId = "Xenova/modnet";
       }
     }
   }
@@ -69,7 +82,7 @@ export const ensureIsnetLoaded = async () => {
 
 /**
  * Ensures the portrait matting model (MODNet) is loaded.
- * MODNet is specialized in isolating human portraits and excluding chairs, desks, and backgrounds.
+ * MODNet is specialized in isolating human portraits and excluding chairs, desks, and close objects.
  */
 export const ensureModnetLoaded = async () => {
   if (!modnetPipeline) {
@@ -81,7 +94,7 @@ export const ensureModnetLoaded = async () => {
       try {
         modnetPipeline = await pipeline("image-segmentation", "Xenova/modnet", { device: "wasm" });
       } catch (e2) {
-        console.warn("MODNet failed to load, fallback to RMBG", e2);
+        console.warn("MODNet failed to load", e2);
       }
     }
   }
@@ -616,7 +629,7 @@ export function extendAndProtectLeftShoulderAndGarment(
     }
 
     for (let x = w - 1; x >= coreCenterX; x--) {
-      if (rawAlphas[row + x] >= 110) {
+      if (rawAlphas[row + x] >= 125) {
         rightEdgeX[y] = x;
         break;
       }
@@ -951,8 +964,8 @@ export function extendAndProtectLeftShoulderAndGarment(
     const locShB = shCnt > 0 ? shAvgB / shCnt : avgShirtB;
 
     const symTargetLeft = Math.max(2, Math.round(symCenterX - smoothedTargetLeftDist[y]));
-    const slopeClampLeft = prevExtendedLeft !== -1 ? Math.max(2, prevExtendedLeft - maxStepOutPerRow) : symTargetLeft;
-    const targetLeft = y <= shoulderStartY + Math.round(subjH * 0.05) && prevExtendedLeft !== -1
+    const slopeClampLeft = prevExtendedLeft !== -1 ? Math.max(2, prevExtendedLeft - Math.min(maxStepOutPerRow, 5)) : symTargetLeft;
+    const targetLeft = prevExtendedLeft !== -1
       ? Math.max(symTargetLeft, slopeClampLeft)
       : symTargetLeft;
 
@@ -1011,11 +1024,12 @@ export function extendAndProtectLeftShoulderAndGarment(
       const matchesCheckShirt =
         isWhiteOrCheckShirt &&
         !isUpperShoulderSlope &&
-        ((isFabric && distToShirt <= 42) || (rawAlphas[idx] >= 105 && lum >= 125 && maxC - minC <= 60 && distToBg >= 14));
+        rawAlphas[idx] >= 70 &&
+        ((isFabric && distToShirt <= 34 && distToBg >= 16) || (rawAlphas[idx] >= 120 && lum >= 125 && maxC - minC <= 60 && distToBg >= 16));
 
       if (
         modnetAlphas &&
-        modnetAlphas[idx] < 14 &&
+        modnetAlphas[idx] < 18 &&
         !(matchesTorsoShirt && !isUpperShoulderSlope && hasSolidGarmentBelow)
       ) {
         break;
@@ -1023,7 +1037,7 @@ export function extendAndProtectLeftShoulderAndGarment(
 
       if (!hasAiSignal && !matchesTorsoShirt && !matchesCheckShirt) break;
 
-      rawAlphas[idx] = Math.max(rawAlphas[idx], actualReachedLeft === currLeft ? 205.0 : 235.0);
+      rawAlphas[idx] = Math.max(rawAlphas[idx], actualReachedLeft === currLeft ? 205.0 : 230.0);
       actualReachedLeft = x;
     }
 
@@ -1067,8 +1081,8 @@ export function extendAndProtectLeftShoulderAndGarment(
     const locShB = shCnt > 0 ? shAvgB / shCnt : avgRSleeveB;
 
     const symTargetRight = Math.min(w - 3, Math.round(symCenterX + smoothedTargetRightDist[y]));
-    const slopeClampRight = prevExtendedRight !== -1 ? Math.min(w - 3, prevExtendedRight + maxStepOutPerRow) : symTargetRight;
-    const targetRight = y <= shoulderStartY + Math.round(subjH * 0.05) && prevExtendedRight !== -1
+    const slopeClampRight = prevExtendedRight !== -1 ? Math.min(w - 3, prevExtendedRight + Math.min(maxStepOutPerRow, 5)) : symTargetRight;
+    const targetRight = prevExtendedRight !== -1
       ? Math.min(symTargetRight, slopeClampRight)
       : symTargetRight;
 
@@ -1127,11 +1141,12 @@ export function extendAndProtectLeftShoulderAndGarment(
       const matchesCheckShirt =
         isWhiteOrCheckShirt &&
         !isUpperShoulderSlope &&
-        ((isFabric && distToShirt <= 42) || (rawAlphas[idx] >= 105 && lum >= 125 && maxC - minC <= 60 && distToBg >= 14));
+        rawAlphas[idx] >= 70 &&
+        ((isFabric && distToShirt <= 34 && distToBg >= 16) || (rawAlphas[idx] >= 120 && lum >= 125 && maxC - minC <= 60 && distToBg >= 16));
 
       if (
         modnetAlphas &&
-        modnetAlphas[idx] < 14 &&
+        modnetAlphas[idx] < 18 &&
         !(matchesTorsoShirt && !isUpperShoulderSlope && hasSolidGarmentBelow)
       ) {
         break;
@@ -1139,7 +1154,7 @@ export function extendAndProtectLeftShoulderAndGarment(
 
       if (!hasAiSignal && !matchesTorsoShirt && !matchesCheckShirt) break;
 
-      rawAlphas[idx] = Math.max(rawAlphas[idx], actualReachedRight === currRight ? 205.0 : 235.0);
+      rawAlphas[idx] = Math.max(rawAlphas[idx], actualReachedRight === currRight ? 205.0 : 230.0);
       actualReachedRight = x;
     }
 
@@ -1796,8 +1811,10 @@ export function isolateAndCleanSubjectMask(
   const mMaxX = compMaxX[mainLabel];
   const mMinY = compMinY[mainLabel];
   const mMaxY = compMaxY[mainLabel];
+  const mW = Math.max(1, mMaxX - mMinX);
   const mH = Math.max(1, mMaxY - mMinY);
-  const hairPad = Math.max(8, Math.round(mw * 0.015));
+  const crownLeft = mMinX + mW * 0.14;
+  const crownRight = mMaxX - mW * 0.14;
   const noiseFloor = Math.max(12, Math.round(total * 0.0008));
 
   const keepComp = new Uint8Array(curLabel + 1);
@@ -1807,13 +1824,13 @@ export function isolateAndCleanSubjectMask(
     if (l === mainLabel) continue;
     const sz = compSizes[l];
     if (isolateMainSubject) {
-      // Keep only tiny stray hair strands immediately adjacent to the upper head contour
-      const nearUpperHead =
-        sz < Math.min(180, mainSize * 0.004) &&
-        compMaxY[l] <= mMinY + mH * 0.44 &&
-        compMinX[l] >= mMinX - hairPad &&
-        compMaxX[l] <= mMaxX + hairPad;
-      if (nearUpperHead) keepComp[l] = 1;
+      // Keep only microscopic stray hair flecks directly beside the upper head crown
+      const nearUpperCrown =
+        sz <= Math.min(28, mainSize * 0.0008) &&
+        compMaxY[l] <= mMinY + mH * 0.30 &&
+        compMinX[l] >= crownLeft &&
+        compMaxX[l] <= crownRight;
+      if (nearUpperCrown) keepComp[l] = 1;
     } else if (sz >= noiseFloor) {
       keepComp[l] = 1;
     }
@@ -1856,6 +1873,11 @@ export function eliminateChairAndBackrestObjects(
   // sever thin/lateral bridges where MODNet confidently sees background (ma < 16)
   // BEFORE connected-component labeling so attached chair/wall objects detach cleanly.
   if (!preservePolishedEdges && modnetAlphas && (severTouchingObjects || isolateMainSubject)) {
+    const step0Alphas = new Float32Array(alphas);
+    let step0PreCount = 0;
+    for (let i = 0; i < total; i++) {
+      if (step0Alphas[i] >= 160) step0PreCount++;
+    }
     const mLeft = new Int32Array(h).fill(-1);
     const mRight = new Int32Array(h).fill(-1);
     let mMinY = h, mMaxY = 0;
@@ -1884,7 +1906,7 @@ export function eliminateChairAndBackrestObjects(
       }
       const headCX = headCnt > 0 ? headSumX / headCnt : w * 0.5;
       const headHalfEstimate = Math.max(24, Math.round(w * 0.22));
-      const garmentLatPad = Math.max(14, Math.round(w * 0.032));
+      const garmentLatPad = Math.max(10, Math.round(w * 0.018));
 
       // Fast 4-neighbor distance check to confident MODNet (ma >= 115) via 2-pass chamfer
       const mDist = new Uint8Array(total);
@@ -1972,6 +1994,7 @@ export function eliminateChairAndBackrestObjects(
       const bgB = bgCnt > 8 ? bgSumB / bgCnt : 245;
       const bgLum = 0.299 * bgR + 0.587 * bgG + 0.114 * bgB;
 
+      let step0CutCount = 0;
       for (let y = 0; y < h; y++) {
         const row = y * w;
         const mL = mLeft[y];
@@ -1991,43 +2014,57 @@ export function eliminateChairAndBackrestObjects(
 
           if (isUpper) {
             const aboveCrown = y < mMinY + 8 && Math.abs(x - headCX) <= headHalfEstimate;
-            const farLateralOfModnet = mL === -1 ? !aboveCrown : (x < mL - 6 || x > mR + 6);
-            const insideModnetUpperSpan = mL !== -1 && x >= mL - 4 && x <= mR + 4;
-            const hairDistMax = ma >= 12 ? 12 : (isHairCrown ? 6 : 3);
-            const isDarkHair = lum < 92 && bgLum > 110 && dBg > 24 && mDist[i] <= hairDistMax;
-            const isWarmSkin = r > g && g >= b * 0.85 && (r - b) >= 10 && dBg > 20 && mDist[i] <= 11;
+            const farLateralOfModnet = mL === -1 ? !aboveCrown : (x < mL - 4 || x > mR + 4);
+            const insideModnetUpperSpan = mL !== -1 && x >= mL - 3 && x <= mR + 3;
+            const hairDistMax = ma >= 14 ? 9 : (isHairCrown ? 5 : 3);
+            const isDarkHair = lum < 92 && bgLum > 110 && dBg > 24 && mDist[i] <= hairDistMax && (ma >= 10 || isHairCrown);
+            const isAnyHairOrHeadwear = insideModnetUpperSpan && alphas[i] >= 175 && dBg > 20 && (ma >= 10 || mDist[i] <= 4);
+            const isWarmSkin = r > g && g >= b * 0.85 && (r - b) >= 10 && dBg > 20 && mDist[i] <= 6 && (ma >= 12 || mDist[i] <= 4);
             const isProtectedEarEdge =
               isDarkHair ||
+              isAnyHairOrHeadwear ||
               isWarmSkin ||
-              (inEarBand && insideModnetUpperSpan && alphas[i] >= 185 && dBg > 22 && mDist[i] <= 3) ||
-              (inEarBand && alphas[i] >= 165 && ma >= 24 && mDist[i] <= 7);
+              (alphas[i] >= 220 && (insideModnetUpperSpan || mDist[i] <= 5)) ||
+              (inEarBand && insideModnetUpperSpan && alphas[i] >= 180 && dBg > 20 && mDist[i] <= 3) ||
+              (inEarBand && alphas[i] >= 165 && ma >= 22 && mDist[i] <= 5);
             if (!aboveCrown && !isProtectedEarEdge) {
-              if ((ma < 24 && (farLateralOfModnet || mDist[i] > 4)) || (ma < 44 && farLateralOfModnet && mDist[i] > 7)) {
+              if ((ma < 22 && (farLateralOfModnet || mDist[i] > 3)) || (ma < 40 && farLateralOfModnet && mDist[i] > 5)) {
+                if (step0Alphas[i] >= 160) step0CutCount++;
                 alphas[i] = 0;
                 if (pixels) pixels[i * 4 + 3] = 0;
               }
             }
           } else {
             const insideTorsoBand = mL !== -1 && x >= mL - garmentLatPad && x <= mR + garmentLatPad;
-            const farOutsideTorso = mL !== -1 ? !insideTorsoBand : mDist[i] > 6;
+            const farOutsideTorso = mL !== -1 ? !insideTorsoBand : mDist[i] > 5;
             const veryFarOutsideTorso = mL !== -1 && (x < mL - garmentLatPad * 1.45 || x > mR + garmentLatPad * 1.45);
             const dCoreGar = gCnt > 8 ? Math.hypot(r - garR, g - garG, b - garB) : 999;
             const dLsGar = lsCnt > 5 ? Math.hypot(r - lsR, g - lsG, b - lsB) : 999;
             const dRsGar = rsCnt > 5 ? Math.hypot(r - rsR, g - rsG, b - rsB) : 999;
             const dGar = Math.min(dCoreGar, dLsGar, dRsGar);
             const isGarMatch =
-              ((gCnt > 8 || lsCnt > 5 || rsCnt > 5) && dGar < 38 && (dBg > 18 || alphas[i] >= 150) && mDist[i] <= 7 && insideTorsoBand) ||
-              (alphas[i] >= 160 && insideTorsoBand && mDist[i] <= 7 && ma >= 10);
-            // Sever touching background furniture/objects rejected by MODNet without cutting genuine shoulders/sleeves/folds
+              ((gCnt > 8 || lsCnt > 5 || rsCnt > 5) && dGar < 38 && (dBg > 16 || alphas[i] >= 155) && mDist[i] <= 5 && (ma >= 8 || insideTorsoBand)) ||
+              (alphas[i] >= 218 && (insideTorsoBand || mDist[i] <= 5)) ||
+              (alphas[i] >= 230 && mDist[i] <= 6) ||
+              (alphas[i] >= 165 && insideTorsoBand && mDist[i] <= 4 && ma >= 14);
+            // Sever touching background furniture/objects rejected by MODNet without cutting genuine outer shoulder curves/sleeves/folds
             if (
               !isGarMatch &&
-              ((ma < 22 && (farOutsideTorso || mDist[i] > 5)) ||
-                (ma < 42 && (veryFarOutsideTorso || (farOutsideTorso && mDist[i] > 6))))
+              ((ma < 22 && (farOutsideTorso || mDist[i] > 4)) ||
+                (ma < 38 && (veryFarOutsideTorso || (farOutsideTorso && mDist[i] > 5))))
             ) {
+              if (step0Alphas[i] >= 160) step0CutCount++;
               alphas[i] = 0;
               if (pixels) pixels[i * 4 + 3] = 0;
             }
           }
+        }
+      }
+
+      if (step0PreCount > 200 && step0CutCount > step0PreCount * 0.25) {
+        for (let i = 0; i < total; i++) {
+          alphas[i] = step0Alphas[i];
+          if (pixels) pixels[i * 4 + 3] = Math.round(step0Alphas[i]);
         }
       }
     }
@@ -2095,7 +2132,7 @@ export function eliminateChairAndBackrestObjects(
   if (!preservePolishedEdges && (isolateMainSubject || severTouchingObjects) && objectStrictness >= 60 && coreCount > 250) {
     const roughW = Math.max(1, maxX - minX);
     const roughH = Math.max(1, maxY - minY);
-    const rErode = Math.max(5, Math.min(11, Math.round(roughW * 0.022)));
+    const rErode = Math.max(4, Math.min(10, Math.round(roughW * (modnetAlphas ? 0.018 : 0.016))));
 
     // Sample subject chest garment, outer lower sleeves, face/side skin, and crown hair before morphological split
     let mGarR = 0, mGarG = 0, mGarB = 0, mGarC = 0;
@@ -2272,21 +2309,28 @@ export function eliminateChairAndBackrestObjects(
         const lateralWing = Math.abs(cx - coreCenterX) > roughW * 0.22;
         const isDarkHairAtHead = (avgLum < 85 || distHair < 36) && eMaxY[l] <= minY + roughH * 0.48 && !touchesEdge;
 
-        // Strict Subject Protection: never sever anything MODNet marks as subject (meanMa >= 45),
-        // and without MODNet protect garment, sleeve, hair, and skin-matching body parts
+        // Strict Subject Protection: never sever anything MODNet marks as subject (meanMa >= 26) or aligned valid head/limb parts,
+        // while rejecting disconnected/bridged background objects clearly rejected by MODNet
+        const alignedWithMain =
+          eMaxX[l] >= eMinX[mainCore] - 25 &&
+          eMinX[l] <= eMaxX[mainCore] + 25 &&
+          eMaxY[l] <= eMaxY[mainCore] + roughH * 0.12;
         if (modnetAlphas) {
-          if (meanMa < 45 && !((distGar < 32 || distSlv < 32 || distSkin < 38) && meanMa >= 22 && !touchesEdge)) {
+          const isValidSubjectCore =
+            meanMa >= 26 ||
+            (sz >= Math.max(100, mSz * 0.04) && alignedWithMain && !touchesEdge && meanMa >= 16) ||
+            ((distGar < 34 || distSlv < 34 || distSkin < 38 || distHair < 34) && meanMa >= 18 && !touchesEdge);
+          if (!isValidSubjectCore) {
             severComp[l] = 1;
             hasSeverTarget = true;
           }
         } else {
           const likelySubjectPart =
-            sz >= mSz * 0.35 ||
-            distGar < 36 ||
-            distSlv < 34 ||
-            distSkin < 38 ||
-            isDarkHairAtHead ||
-            (!touchesEdge && !lateralWing && cy >= minY + roughH * 0.20);
+            sz >= mSz * 0.22 ||
+            ((distGar < 36 || distSlv < 34 || distSkin < 38 || distHair < 34) && !touchesEdge && sz >= Math.max(70, mSz * 0.015)) ||
+            (isDarkHairAtHead && sz < mSz * 0.02) ||
+            (!touchesEdge && alignedWithMain && eMaxY[l] <= minY + roughH * 0.60 && sz >= Math.max(90, mSz * 0.025)) ||
+            (!touchesEdge && !lateralWing && cy >= minY + roughH * 0.15 && sz >= Math.max(120, mSz * 0.03));
           if (!likelySubjectPart) {
             severComp[l] = 1;
             hasSeverTarget = true;
@@ -2295,6 +2339,7 @@ export function eliminateChairAndBackrestObjects(
       }
 
       if (hasSeverTarget) {
+        const preVoronoi = new Float32Array(alphas);
         // Multi-source Voronoi reconstruction across alphas >= 20 to cleanly split at the narrowest neck
         const vOwner = new Int32Array(eLabels);
         const vQueue = new Int32Array(total);
@@ -2311,11 +2356,19 @@ export function eliminateChairAndBackrestObjects(
           if (cx > 0) { const n = curr - 1; if (alphas[n] >= 20 && vOwner[n] === 0) { vOwner[n] = ow; vQueue[vTail++] = n; } }
           if (cx < w - 1) { const n = curr + 1; if (alphas[n] >= 20 && vOwner[n] === 0) { vOwner[n] = ow; vQueue[vTail++] = n; } }
         }
+        let vCutCount = 0;
         for (let i = 0; i < total; i++) {
           const ow = vOwner[i];
           if (ow > 0 && severComp[ow] === 1) {
+            if (preVoronoi[i] >= 120) vCutCount++;
             alphas[i] = 0;
             if (pixels) pixels[i * 4 + 3] = 0;
+          }
+        }
+        if (vCutCount > coreCount * 0.30 && !modnetAlphas) {
+          for (let i = 0; i < total; i++) {
+            alphas[i] = preVoronoi[i];
+            if (pixels) pixels[i * 4 + 3] = Math.round(preVoronoi[i]);
           }
         }
       }
@@ -2486,65 +2539,99 @@ export function eliminateChairAndBackrestObjects(
     const hasLightShirt = totShCnt > 10 && lightShCnt / totShCnt >= 0.22;
     const hasCheckShirt = totShCnt > 12 && checkShCnt / totShCnt >= 0.06;
 
+    let wingBgR = 0, wingBgG = 0, wingBgB = 0, wingBgCnt = 0;
+    for (let y = 0; y < h; y += 4) {
+      const row = y * w;
+      for (let x = 0; x < w; x += 4) {
+        const i = row + x;
+        if (alphas[i] < 20) {
+          const p = i * 4;
+          wingBgR += pixels[p]; wingBgG += pixels[p + 1]; wingBgB += pixels[p + 2]; wingBgCnt++;
+        }
+      }
+    }
+    const meanWingBgR = wingBgCnt > 6 ? wingBgR / wingBgCnt : 245;
+    const meanWingBgG = wingBgCnt > 6 ? wingBgG / wingBgCnt : 245;
+    const meanWingBgB = wingBgCnt > 6 ? wingBgB / wingBgCnt : 245;
+
     const isProtectedSubjectPixel = (idx: number, x: number, y: number): boolean => {
       const ma = modnetAlphas ? modnetAlphas[idx] : -1;
-      if (modnetAlphas && ma >= 36) return true;
+      if (modnetAlphas && ma >= 40) return true;
+      const md = mChairDist ? mChairDist[idx] : 0;
+      if (alphas[idx] >= 225 && (!modnetAlphas || md <= 5 || ma >= 14)) return true;
+
       const p = idx * 4;
       const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
       const lum = 0.299 * r + 0.587 * g + 0.114 * b;
       const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
-      const md = mChairDist ? mChairDist[idx] : 0;
       const inModSpan = modSpanL && modSpanR && modSpanL[y] !== -1
-        ? (x >= modSpanL[y] - 6 && x <= modSpanR[y] + 6)
+        ? (x >= modSpanL[y] - 4 && x <= modSpanR[y] + 4)
         : false;
+      const dExtBg = Math.hypot(r - meanWingBgR, g - meanWingBgG, b - meanWingBgB);
+      if (modnetAlphas && ma >= 24 && (inModSpan || md <= 4 || dExtBg > 20)) return true;
 
-      // Protect authentic warm face/ear/under-ear/neck skin (when MODNet active, guard within <= 11px of head/neck)
+      // Protect authentic warm face/ear/under-ear/neck/hand skin
       const warmTone = r > g && g >= b * 0.85 && (r - b) >= 10;
       const dSkin = skC > 4 ? Math.hypot(r - avgSkR, g - avgSkG, b - avgSkB) : 999;
-      if (warmTone && (!modnetAlphas || md <= 11) && (dSkin < 40 || (y <= neckSplitY + roughH * 0.10 && (r - b) >= 14))) {
+      if (
+        warmTone &&
+        (!modnetAlphas || (md <= 6 && (ma >= 10 || (dSkin < 36 && md <= 4)))) &&
+        (dSkin < 40 || ((ma >= 12 || !modnetAlphas) && y <= neckSplitY + roughH * 0.12 && (r - b) >= 12 && dExtBg > 18))
+      ) {
         return true;
       }
 
-      // Protect hair strictly within the head silhouette (never shield dark chair headrests/frames outside head/neck!)
+      // Protect hair (all shades) & headwear within the head silhouette
       const nearModHead = modnetAlphas && modSpanL && modSpanR && modSpanL[y] !== -1
-        ? (x >= modSpanL[y] - 6 && x <= modSpanR[y] + 6)
+        ? (x >= modSpanL[y] - 5 && x <= modSpanR[y] + 5)
         : Math.abs(x - headCX) <= headMaxHalf;
       const dHair = hrC > 4 ? Math.hypot(r - avgHairR, g - avgHairG, b - avgHairB) : 999;
-      if (nearModHead && y <= neckSplitY + roughH * 0.08 && (dHair < 34 || (lum < 82 && (!modnetAlphas || ma >= 12 || md <= 5)))) {
+      if (nearModHead && y <= neckSplitY + roughH * 0.08 && dExtBg > 20 && ((alphas[idx] >= 165 && (!modnetAlphas || ma >= 12 || md <= 4)) || (dHair < 36 && (!modnetAlphas || ma >= 10 || md <= 3)) || (lum < 86 && (!modnetAlphas || ma >= 12 || md <= 3)))) {
         return true;
       }
-      if (!modnetAlphas && y <= upperObjZoneEndY && Math.abs(x - headCX) <= roughW * 0.26 && dHair < 34) return true;
+      if (!modnetAlphas && y <= neckSplitY + roughH * 0.08 && Math.abs(x - headCX) <= roughW * 0.26 && dHair < 36 && dExtBg > 20) return true;
 
-      // Protect torso / collar / sleeve / fold garments along & near the subject boundary
-      // even when clothing color is close to the background!
+      // Protect torso / collar / sleeve / patterned/dark/check clothes & arms within anatomical bounds
       if (y >= neckSplitY - Math.round(roughH * 0.04)) {
         const dChest = grC > 6 ? Math.hypot(r - avgGrR, g - avgGrG, b - avgGrB) : 999;
         const dLeftS = lsC > 4 ? Math.hypot(r - avgLsR, g - avgLsG, b - avgLsB) : 999;
         const dRightS = rsC > 4 ? Math.hypot(r - avgRsR, g - avgRsG, b - avgRsB) : 999;
+        const matchesGarColor = dChest < 36 || dLeftS < 34 || dRightS < 34;
         const insideSymAnat = symAnatL[y] !== -1 && x >= symAnatL[y] && x <= symAnatR[y];
-        if (alphas[idx] >= 165 && (!modnetAlphas || md <= 8 || ma >= 14 || insideSymAnat)) {
-          return true;
+        const isLightShirtPx = hasLightShirt && lum >= 132 && (maxC - minC) <= 82;
+
+        if (modnetAlphas) {
+          if (insideSymAnat && alphas[idx] >= 185 && (md <= 4 || ma >= 14) && dExtBg > 18) {
+            return true;
+          }
+          if (alphas[idx] >= 160 && ((ma >= 16 && md <= 5) || (md <= 3 && inModSpan && (ma >= 10 || matchesGarColor || isLightShirtPx)))) {
+            return true;
+          }
+          if (insideSymAnat && matchesGarColor && md <= 4 && (ma >= 10 || (md <= 2 && alphas[idx] >= 165))) {
+            return true;
+          }
+          if (insideSymAnat && ma >= 20 && md <= 5 && alphas[idx] >= 120 && dExtBg > 18) {
+            return true;
+          }
+          if (insideSymAnat && isLightShirtPx && md <= 3 && (ma >= 10 || md <= 2) && alphas[idx] >= 155 && dExtBg > 16) {
+            return true;
+          }
+          if (ma < 14 && !inModSpan && md > 4) {
+            return false;
+          }
+        } else {
+          if (insideSymAnat && (matchesGarColor || (isLightShirtPx && alphas[idx] >= 165)) && (dExtBg > 20 || alphas[idx] >= 190)) {
+            return true;
+          }
+          if (matchesGarColor && dExtBg > 24 && alphas[idx] >= 175) return true;
         }
-        if (
-          insideSymAnat &&
-          (dChest < 40 || dLeftS < 38 || dRightS < 38) &&
-          (!modnetAlphas || md <= 9 || ma >= 12)
-        ) {
-          return true;
-        }
-        if (modnetAlphas && ma < 16 && !inModSpan && md > 6) {
-          return false;
-        }
-        if (dChest < 40 || dLeftS < 38 || dRightS < 38) return true;
-        if (hasLightShirt && lum >= 135 && (maxC - minC) <= 60) return true;
-        if (!modnetAlphas && hasCheckShirt && y >= neckSplitY + Math.round(roughH * 0.08)) return true;
       }
       return false;
     };
 
     const wingVisited = new Uint8Array(total);
     const wingQueue = new Int32Array(total);
-    const preWingAlpha = modnetAlphas ? null : new Float32Array(alphas);
+    const preWingAlpha = new Float32Array(alphas);
     let wHead = 0, wTail = 0;
 
     for (let y = 0; y < h; y++) {
@@ -2579,14 +2666,20 @@ export function eliminateChairAndBackrestObjects(
           continue;
         }
         const ny = Math.floor(n / w), nx = n % w;
+        if (Math.abs(nx - headCX) <= centerSafeHalf && alphas[n] >= 170) {
+          touchedCenter = true;
+        }
         if (isProtectedSubjectPixel(n, nx, ny)) continue;
-        // Without MODNet, never crop solid shoulders/arms/folds; only peel faint bridges & disconnected upper wings
+        // Without MODNet, peel faint bridges & background-matched protruding chairs/objects outside core center
         if (!modnetAlphas) {
           if (Math.abs(nx - headCX) <= centerSafeHalf) {
             touchedCenter = true;
             continue;
           }
-          if (ny >= neckSplitY && alphas[n] >= 170) continue;
+          const np = n * 4;
+          const dExtBg = Math.hypot(pixels[np] - meanWingBgR, pixels[np + 1] - meanWingBgG, pixels[np + 2] - meanWingBgB);
+          const outsideSym = symAnatL[ny] === -1 || nx < symAnatL[ny] || nx > symAnatR[ny];
+          if (ny >= neckSplitY && alphas[n] >= 170 && !outsideSym && dExtBg > 24) continue;
         }
         alphas[n] = 0;
         if (pixels) pixels[n * 4 + 3] = 0;
@@ -2595,7 +2688,7 @@ export function eliminateChairAndBackrestObjects(
       }
     }
 
-    if (!modnetAlphas && preWingAlpha && (peeledList.length > coreCount * 0.22 || (touchedCenter && peeledList.length > coreCount * 0.16))) {
+    if (peeledList.length > coreCount * 0.16 || (touchedCenter && peeledList.length > coreCount * 0.10)) {
       for (const idx of peeledList) {
         alphas[idx] = preWingAlpha[idx];
         if (pixels) pixels[idx * 4 + 3] = Math.round(preWingAlpha[idx]);
@@ -2614,6 +2707,7 @@ export function eliminateChairAndBackrestObjects(
     const cSizes: number[] = [0];
     const cSumX: number[] = [0];
     const cSumY: number[] = [0];
+    const cSumMa: number[] = [0];
     const cMinX: number[] = [w];
     const cMaxX: number[] = [0];
     const cMinY: number[] = [h];
@@ -2626,7 +2720,7 @@ export function eliminateChairAndBackrestObjects(
         const idx = row + x;
         if (alphas[idx] >= coreThresh && cLabels[idx] === 0) {
           cCur++;
-          let sz = 0, sx = 0, sy = 0;
+          let sz = 0, sx = 0, sy = 0, sma = 0;
           let bx0 = w, bx1 = 0, by0 = h, by1 = 0;
           let hd = 0, tl = 0;
           cLabels[idx] = cCur;
@@ -2636,6 +2730,7 @@ export function eliminateChairAndBackrestObjects(
             const cy = Math.floor(curr / w);
             const cx = curr % w;
             sz++; sx += cx; sy += cy;
+            if (modnetAlphas) sma += modnetAlphas[curr];
             if (cx < bx0) bx0 = cx;
             if (cx > bx1) bx1 = cx;
             if (cy < by0) by0 = cy;
@@ -2645,7 +2740,7 @@ export function eliminateChairAndBackrestObjects(
             if (cx > 0 && alphas[curr - 1] >= coreThresh && cLabels[curr - 1] === 0) { cLabels[curr - 1] = cCur; cQueue[tl++] = curr - 1; }
             if (cx < w - 1 && alphas[curr + 1] >= coreThresh && cLabels[curr + 1] === 0) { cLabels[curr + 1] = cCur; cQueue[tl++] = curr + 1; }
           }
-          cSizes.push(sz); cSumX.push(sx); cSumY.push(sy);
+          cSizes.push(sz); cSumX.push(sx); cSumY.push(sy); cSumMa.push(sma);
           cMinX.push(bx0); cMaxX.push(bx1); cMinY.push(by0); cMaxY.push(by1);
         }
       }
@@ -2670,20 +2765,40 @@ export function eliminateChairAndBackrestObjects(
       const mcSz = cSizes[mainCore];
       const mcMinX = cMinX[mainCore], mcMaxX = cMaxX[mainCore];
       const mcMinY = cMinY[mainCore], mcMaxY = cMaxY[mainCore];
+      const mcW = Math.max(1, mcMaxX - mcMinX);
       const mcH = Math.max(1, mcMaxY - mcMinY);
-      const mcPad = Math.max(10, Math.round(w * 0.015));
+      const crownMinX = mcMinX + mcW * 0.12;
+      const crownMaxX = mcMaxX - mcW * 0.12;
 
       const keepCore = new Uint8Array(cCur + 1);
       keepCore[mainCore] = 1;
       for (let l = 1; l <= cCur; l++) {
         if (l === mainCore) continue;
         const sz = cSizes[l];
+        const meanMa = modnetAlphas ? cSumMa[l] / Math.max(1, sz) : -1;
+        const touchesFrameEdge = cMinX[l] <= 2 || cMaxX[l] >= w - 3 || cMinY[l] <= 2;
         const isHairWisp =
-          sz < Math.min(240, mcSz * 0.004) &&
-          cMaxY[l] <= mcMinY + mcH * 0.42 &&
-          cMinX[l] >= mcMinX - mcPad &&
-          cMaxX[l] <= mcMaxX + mcPad;
-        if (isHairWisp) keepCore[l] = 1;
+          sz <= Math.min(36, mcSz * 0.0012) &&
+          cMaxY[l] <= mcMinY + mcH * 0.30 &&
+          cMinX[l] >= crownMinX &&
+          cMaxX[l] <= crownMaxX;
+        const isModnetConfirmedSubjectPart =
+          modnetAlphas !== undefined &&
+          sz >= Math.max(80, mcSz * 0.015) &&
+          meanMa >= 28;
+        const isAlignedSubjectPart =
+          sz >= Math.max(90, mcSz * 0.025) &&
+          cMaxY[l] <= mcMinY + mcH * 0.72 &&
+          cMaxX[l] >= mcMinX - 18 &&
+          cMinX[l] <= mcMaxX + 18 &&
+          !touchesFrameEdge &&
+          (!modnetAlphas || meanMa >= 16);
+        const isMajorSubjectPart =
+          sz >= Math.max(240, mcSz * 0.12) &&
+          (!modnetAlphas || meanMa >= 18);
+        if (isHairWisp || isModnetConfirmedSubjectPart || isAlignedSubjectPart || isMajorSubjectPart) {
+          keepCore[l] = 1;
+        }
       }
 
       // Clear all secondary >= 95 islands + any < 95 haze within 4px around deleted islands
@@ -2837,11 +2952,46 @@ export function eliminateChairAndBackrestObjects(
   const mainMaxX = compMaxX[mainLabel];
   const mainMinY = compMinY[mainLabel];
   const mainMaxY = compMaxY[mainLabel];
+  const mainW = Math.max(1, mainMaxX - mainMinX);
   const mainH = Math.max(1, mainMaxY - mainMinY);
-  const hairPad = Math.max(10, Math.round(w * 0.015));
+  const crownLeft = mainMinX + mainW * 0.14;
+  const crownRight = mainMaxX - mainW * 0.14;
   const fullIsolation = isolateMainSubject || severTouchingObjects;
 
-  // 4. Eliminate disconnected secondary islands & background objects
+  // Sample per-component RGB & exterior bg RGB so minor bright/background-colored specks are NEVER spared as hair wisps
+  let extR = 0, extG = 0, extB = 0, extC = 0;
+  for (let y = 0; y < h; y += 6) {
+    const row = y * w;
+    for (let x = 0; x < w; x += 6) {
+      if (alphas[row + x] < 10) {
+        const p = (row + x) * 4;
+        extR += pixels[p]; extG += pixels[p + 1]; extB += pixels[p + 2]; extC++;
+      }
+    }
+  }
+  const avgExtR = extC > 4 ? extR / extC : 245;
+  const avgExtG = extC > 4 ? extG / extC : 245;
+  const avgExtB = extC > 4 ? extB / extC : 245;
+  const compSumR = new Float64Array(currentLabel + 1);
+  const compSumG = new Float64Array(currentLabel + 1);
+  const compSumB = new Float64Array(currentLabel + 1);
+  const compSumMa = new Float64Array(currentLabel + 1);
+  if (fullIsolation) {
+    for (let i = 0; i < total; i++) {
+      const l = labels[i];
+      if (l > 0 && l !== mainLabel) {
+        if (modnetAlphas) compSumMa[l] += modnetAlphas[i];
+        if (componentSizes[l] <= 48) {
+          const p = i * 4;
+          compSumR[l] += pixels[p];
+          compSumG[l] += pixels[p + 1];
+          compSumB[l] += pixels[p + 2];
+        }
+      }
+    }
+  }
+
+  // 4. Eliminate disconnected secondary islands & minor close/distant background specks/objects
   const keepComp = new Uint8Array(currentLabel + 1);
   keepComp[mainLabel] = 1;
 
@@ -2849,14 +2999,19 @@ export function eliminateChairAndBackrestObjects(
     if (l === mainLabel) continue;
     const sz = componentSizes[l];
     if (fullIsolation) {
-      // Only spare tiny separated fine-hair flecks directly beside upper head
-      const isTinyHeadWisp =
-        sz < Math.min(220, mainSize * 0.004) &&
-        compMaxY[l] <= mainMinY + mainH * 0.42 &&
-        compMinX[l] >= mainMinX - hairPad &&
-        compMaxX[l] <= mainMaxX + hairPad;
-      if (isTinyHeadWisp) keepComp[l] = 1;
-    } else if (sz >= maxSize * 0.40) {
+      const meanMa = modnetAlphas ? compSumMa[l] / Math.max(1, sz) : -1;
+      const touchesFrame = compMinX[l] <= 2 || compMaxX[l] >= w - 3 || compMinY[l] <= 2;
+      if (sz <= 36 && compMaxY[l] <= mainMinY + mainH * 0.30 && compMinX[l] >= crownLeft && compMaxX[l] <= crownRight) {
+        const avgR = compSumR[l] / sz, avgG = compSumG[l] / sz, avgB = compSumB[l] / sz;
+        const lum = 0.299 * avgR + 0.587 * avgG + 0.114 * avgB;
+        const dBg = Math.hypot(avgR - avgExtR, avgG - avgExtG, avgB - avgExtB);
+        if (lum < 82 && dBg > 28) keepComp[l] = 1;
+      } else if (modnetAlphas && meanMa >= 30 && sz >= Math.max(120, mainSize * 0.02)) {
+        keepComp[l] = 1;
+      } else if (!modnetAlphas && !touchesFrame && sz >= Math.max(260, mainSize * 0.18)) {
+        keepComp[l] = 1;
+      }
+    } else if (sz >= maxSize * 0.30) {
       keepComp[l] = 1;
     }
   }
@@ -2867,14 +3022,14 @@ export function eliminateChairAndBackrestObjects(
       alphas[i] = 0;
       if (pixels) pixels[i * 4 + 3] = 0;
     } else if (l === 0 && alphas[i] > 0 && alphas[i] < 20 && fullIsolation) {
-      // Clear faint < 20 border haze not touching main component
+      // Clear faint < 20 border speck not touching main component
       const y = Math.floor(i / w), x = i % w;
       const touchesMain =
         (y > 0 && labels[i - w] === mainLabel) ||
         (y < h - 1 && labels[i + w] === mainLabel) ||
         (x > 0 && labels[i - 1] === mainLabel) ||
         (x < w - 1 && labels[i + 1] === mainLabel);
-      if (!touchesMain) {
+      if (!touchesMain || alphas[i] < 6) {
         alphas[i] = 0;
         if (pixels) pixels[i * 4 + 3] = 0;
       }
@@ -3132,13 +3287,18 @@ function applyCleanEdgeMatting(
       const secStd = sec ? Math.hypot(sec.stdR, sec.stdG, sec.stdB) : 18;
       const secBgLum = 0.299 * secBgR + 0.587 * secBgG + 0.114 * secBgB;
 
-      // Cleanly cut outer background haze and color-matched fringes:
-      let lowerCut = isUpper ? 36 : 28;
+      // Cleanly cut outer background haze and color-matched fringes for crisp boundaries
+      // while keeping fine dark hair strands intact:
+      const distBgEst = Math.min(
+        Math.hypot(r - secBgR, g - secBgG, b - secBgB),
+        Math.hypot(r - bgMeanR, g - bgMeanG, b - bgMeanB)
+      );
+      const isFineDarkHairWisp = isUpper && curLum < 85 && distBgEst > 26;
+      let lowerCut = isUpper ? (isFineDarkHairWisp ? 26 : 42) : 38;
       if ((isLightBg || secBgLum > 155) && isUpper && curLum > 170) {
-        lowerCut = isEarLevel ? 52 : 44;
+        lowerCut = isEarLevel ? 56 : 48;
       }
-      // Keep transition pixels up to 232 smooth and eligible for color decontamination (no hard un-unmixed shoulder crust)
-      const upperCut = isUpper ? 232 : 228;
+      const upperCut = isUpper ? 225 : 220;
 
       if (alphaVal <= lowerCut) {
         pixels[pIdx + 3] = 0;
@@ -3202,23 +3362,33 @@ function applyCleanEdgeMatting(
 
         const maxC = Math.max(r, g, b);
         const minC = Math.min(r, g, b);
+        const bgMatchThresh = Math.max(20, Math.min(36, secStd * 1.50));
+        const isOuterMixedBgHaze =
+          alphaVal < 118 &&
+          distToBg <= bgMatchThresh &&
+          distToBg < distToFg * 0.78 &&
+          distToFg > 22;
         const isLowerWhiteGarment =
           y >= shirtProtectStartY &&
           maxC >= 132 &&
           (maxC - minC) <= 82 &&
-          alphaVal >= 95 &&
+          !isOuterMixedBgHaze &&
+          (alphaVal >= 135 || distToBg >= 18) &&
           fgCount >= 2 &&
-          distToFg <= 38;
-        const isLowerGarmentEdge = !isUpper && fgCount >= 5 && alphaVal >= 85 && (distToFg <= 34 || distToBg > 18);
-        const bgMatchThresh = Math.max(20, Math.min(38, secStd * 1.55));
+          distToFg <= 34;
+        const isLowerGarmentEdge =
+          !isUpper &&
+          !isOuterMixedBgHaze &&
+          ((fgCount >= 5 && alphaVal >= 100 && (distToFg <= 32 || distToBg > 18)) ||
+            (fgCount >= 2 && distToFg <= 32 && alphaVal >= 110 && distToBg > 18));
         if (
           !isLikelyRealSkin &&
           !isLowerWhiteGarment &&
           !isLowerGarmentEdge &&
-          alphaVal < (isUpper ? 155 : (fgCount >= 6 ? 90 : 125)) &&
+          alphaVal < (isUpper ? 132 : (fgCount >= 6 ? 105 : 122)) &&
           distToBg <= bgMatchThresh
         ) {
-          if (fgCount === 0 || (distToBg < distToFg * 0.72 && distToFg > 24)) {
+          if (fgCount === 0 || (distToBg < distToFg * 0.76 && distToFg > 22)) {
             pixels[pIdx + 3] = 0;
             continue;
           }
@@ -3233,9 +3403,10 @@ function applyCleanEdgeMatting(
         const toneRefR = sameToneCnt >= 2 ? sameToneR / sameToneCnt : avgFgR;
         const toneRefG = sameToneCnt >= 2 ? sameToneG / sameToneCnt : avgFgG;
         const toneRefB = sameToneCnt >= 2 ? sameToneB / sameToneCnt : avgFgB;
-        if (!isLowerWhiteGarment && fgCount > 0 && pixels[pIdx + 3] > 0) {
+        const shouldUnmixLightRim = isLowerWhiteGarment && pixels[pIdx + 3] < 195 && distToBg < distToFg * 0.90 && distToFg > 16;
+        if ((!isLowerWhiteGarment || shouldUnmixLightRim) && fgCount > 0 && pixels[pIdx + 3] > 0 && pixels[pIdx + 3] < 228) {
           const fgBgDist = Math.hypot(toneRefR - secBgR, toneRefG - secBgG, toneRefB - secBgB);
-          if (fgBgDist > 22 && distToFg > 14) {
+          if (fgBgDist > 20 && distToFg > 14) {
             const aNorm = Math.max(0.25, pixels[pIdx + 3] / 255.0);
             const unmixR = Math.max(0, Math.min(255, (r - secBgR * (1 - aNorm)) / aNorm));
             const unmixG = Math.max(0, Math.min(255, (g - secBgG * (1 - aNorm)) / aNorm));
@@ -3246,7 +3417,8 @@ function applyCleanEdgeMatting(
             const anchorG = Math.max(Math.min(g, toneRefG) - 10, Math.min(Math.max(g, toneRefG) + 10, unmixG));
             const anchorB = Math.max(Math.min(b, toneRefB) - 10, Math.min(Math.max(b, toneRefB) + 10, unmixB));
 
-            const blend = Math.min(0.92, (1 - aNorm * 0.55) * Math.min(1.0, distToFg / Math.max(26, fgBgDist)));
+            const edgeScale = pixels[pIdx + 3] >= 190 ? 0.65 : 1.0;
+            const blend = Math.min(0.88, (1 - aNorm * 0.55) * Math.min(1.0, distToFg / Math.max(26, fgBgDist)) * edgeScale);
             pixels[pIdx] = Math.round(r * (1 - blend) + anchorR * blend);
             pixels[pIdx + 1] = Math.round(g * (1 - blend) + anchorG * blend);
             pixels[pIdx + 2] = Math.round(b * (1 - blend) + anchorB * blend);
@@ -3298,14 +3470,14 @@ function antiAliasBoundaryEdges(pixels: Uint8ClampedArray, w: number, h: number)
 }
 
 /**
- * Applies Adaptive Micro-Contrast & Detail Enhancement to the foreground subject
- * to make facial features, eyes, hair, and textures ultra crisp and high definition (HD).
+ * Applies Edge-Aware Luminance Micro-Contrast & Detail Enhancement to the foreground subject
+ * so eyes, hair strands, facial contours, and fabric texture look crisp studio-HD without chroma noise or edge ringing.
  */
 function enhanceForegroundSubjectClarity(
   pixels: Uint8ClampedArray,
   w: number,
   h: number,
-  clarityFactor = 0.25
+  clarityFactor = 0.20
 ) {
   const copy = new Uint8ClampedArray(pixels);
 
@@ -3313,31 +3485,46 @@ function enhanceForegroundSubjectClarity(
     const rowOffset = y * w;
     for (let x = 1; x < w - 1; x++) {
       const idx = (rowOffset + x) * 4;
-      const alpha = pixels[idx + 3];
-      if (alpha < 220) continue; // Skip boundary and transition pixels completely
+      const alpha = copy[idx + 3];
+      if (alpha < 235) continue;
 
-      const iUp = ((y - 1) * w + x) * 4;
-      const iDown = ((y + 1) * w + x) * 4;
-      const iLeft = (rowOffset + x - 1) * 4;
-      const iRight = (rowOffset + x + 1) * 4;
-
-      // Prevent sharpening anywhere near transparency (preserves hair perimeter without dark ringing):
-      if (copy[iUp + 3] < 220 || copy[iDown + 3] < 220 || copy[iLeft + 3] < 220 || copy[iRight + 3] < 220) {
+      // Require all 8 neighbors solid so sharpening never rings along hairline or boundary edges
+      const rowPrev = (y - 1) * w;
+      const rowNext = (y + 1) * w;
+      if (
+        copy[(rowPrev + x - 1) * 4 + 3] < 235 ||
+        copy[(rowPrev + x) * 4 + 3] < 235 ||
+        copy[(rowPrev + x + 1) * 4 + 3] < 235 ||
+        copy[(rowOffset + x - 1) * 4 + 3] < 235 ||
+        copy[(rowOffset + x + 1) * 4 + 3] < 235 ||
+        copy[(rowNext + x - 1) * 4 + 3] < 235 ||
+        copy[(rowNext + x) * 4 + 3] < 235 ||
+        copy[(rowNext + x + 1) * 4 + 3] < 235
+      ) {
         continue;
       }
 
-      const blurR = (copy[iUp] + copy[iDown] + copy[iLeft] + copy[iRight]) * 0.25;
-      const blurG = (copy[iUp + 1] + copy[iDown + 1] + copy[iLeft + 1] + copy[iRight + 1]) * 0.25;
-      const blurB = (copy[iUp + 2] + copy[iDown + 2] + copy[iLeft + 2] + copy[iRight + 2]) * 0.25;
+      const r = copy[idx], g = copy[idx + 1], b = copy[idx + 2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
 
-      const diffR = copy[idx] - blurR;
-      const diffG = copy[idx + 1] - blurG;
-      const diffB = copy[idx + 2] - blurB;
+      const lumAt = (pxIdx: number) => {
+        const p = pxIdx * 4;
+        return 0.299 * copy[p] + 0.587 * copy[p + 1] + 0.114 * copy[p + 2];
+      };
+      const blurLum = (
+        lumAt(rowPrev + x - 1) + lumAt(rowPrev + x) * 2 + lumAt(rowPrev + x + 1) +
+        lumAt(rowOffset + x - 1) * 2 + lum * 4 + lumAt(rowOffset + x + 1) * 2 +
+        lumAt(rowNext + x - 1) + lumAt(rowNext + x) * 2 + lumAt(rowNext + x + 1)
+      ) / 16.0;
 
-      const weight = (alpha / 255.0) * clarityFactor;
-      pixels[idx] = Math.max(0, Math.min(255, Math.round(copy[idx] + diffR * weight)));
-      pixels[idx + 1] = Math.max(0, Math.min(255, Math.round(copy[idx + 1] + diffG * weight)));
-      pixels[idx + 2] = Math.max(0, Math.min(255, Math.round(copy[idx + 2] + diffB * weight)));
+      const diffLum = lum - blurLum;
+      // Soft noise gate ignores tiny < 1.8 JPEG grain while crisp-enhancing real portrait & fabric details
+      if (Math.abs(diffLum) < 1.8) continue;
+      const delta = Math.max(-18, Math.min(18, diffLum * clarityFactor * 1.45));
+
+      pixels[idx] = Math.max(0, Math.min(255, Math.round(r + delta)));
+      pixels[idx + 1] = Math.max(0, Math.min(255, Math.round(g + delta)));
+      pixels[idx + 2] = Math.max(0, Math.min(255, Math.round(b + delta)));
     }
   }
 }
@@ -3433,8 +3620,12 @@ function cleanEarNeckHeadHalosPass(
   const leftRowBgR = new Float32Array(h);
   const leftRowBgG = new Float32Array(h);
   const leftRowBgB = new Float32Array(h);
+  const rightRowBgR = new Float32Array(h);
+  const rightRowBgG = new Float32Array(h);
+  const rightRowBgB = new Float32Array(h);
   for (let y = 0; y <= maxHeadNeckY; y++) {
     let sR = 0, sG = 0, sB = 0, sCnt = 0;
+    let rR = 0, rG = 0, rB = 0, rCnt = 0;
     for (let sy = Math.max(0, y - 5); sy <= Math.min(h - 1, y + 5); sy += 2) {
       const sRow = sy * w;
       let firstFg = coreCenterX;
@@ -3451,13 +3642,31 @@ function cleanEarNeckHeadHalosPass(
           sCnt++;
         }
       }
+
+      let lastFg = coreCenterX;
+      for (let x = w - 1; x > coreCenterX; x--) {
+        if (alphaCopy[sRow + x] > 25) { lastFg = x; break; }
+      }
+      const rx0 = Math.min(w - 1, lastFg + 2);
+      const rx1 = Math.min(w - 1, lastFg + 32);
+      for (let x = rx0; x <= rx1; x += 2) {
+        const idx = sRow + x;
+        if (alphaCopy[idx] <= 15) {
+          const p = idx * 4;
+          rR += pixels[p]; rG += pixels[p + 1]; rB += pixels[p + 2];
+          rCnt++;
+        }
+      }
     }
     leftRowBgR[y] = sCnt >= 4 ? sR / sCnt : bgMeanR;
     leftRowBgG[y] = sCnt >= 4 ? sG / sCnt : bgMeanG;
     leftRowBgB[y] = sCnt >= 4 ? sB / sCnt : bgMeanB;
+    rightRowBgR[y] = rCnt >= 4 ? rR / rCnt : bgMeanR;
+    rightRowBgG[y] = rCnt >= 4 ? rG / rCnt : bgMeanG;
+    rightRowBgB[y] = rCnt >= 4 ? rB / rCnt : bgMeanB;
   }
 
-  // Run 3 iterative inward passes so multi-pixel halo patches next to the left cheek, jawline & neck peel cleanly
+  // Run 3 iterative inward passes so multi-pixel halo patches next to cheeks, jawline & neck peel cleanly on both sides
   for (let pass = 0; pass < 3; pass++) {
     for (let i = 0; i <= maxHeadNeckY * w + w - 1 && i < total; i++) {
       alphaCopy[i] = pixels[i * 4 + 3];
@@ -3475,7 +3684,7 @@ function cleanEarNeckHeadHalosPass(
         if (a === 0 || a >= 250) continue; // Skip fully transparent or solid subject core
 
         const isLeftEarZone = isEarLevel && (x < coreCenterX);
-        const isRightEarZone = isEarLevel && (x >= coreCenterX) && y <= Math.floor(minY + subjH * 0.44);
+        const isRightEarZone = isEarLevel && (x >= coreCenterX);
 
         // Sample a 5x5 neighborhood around this boundary pixel
         let transparentCount = 0;
@@ -3508,14 +3717,17 @@ function cleanEarNeckHeadHalosPass(
         const curLum = 0.299 * curR + 0.587 * curG + 0.114 * curB;
 
         // Effective background color reference
-        const refBgR = bgCount > 0 ? (bgR / bgCount) : (isLeftEarZone ? leftRowBgR[y] : bgMeanR);
-        const refBgG = bgCount > 0 ? (bgG / bgCount) : (isLeftEarZone ? leftRowBgG[y] : bgMeanG);
-        const refBgB = bgCount > 0 ? (bgB / bgCount) : (isLeftEarZone ? leftRowBgB[y] : bgMeanB);
+        const sideRowR = x < coreCenterX ? leftRowBgR[y] : rightRowBgR[y];
+        const sideRowG = x < coreCenterX ? leftRowBgG[y] : rightRowBgG[y];
+        const sideRowB = x < coreCenterX ? leftRowBgB[y] : rightRowBgB[y];
+        const refBgR = bgCount > 0 ? (bgR / bgCount) : ((isLeftEarZone || isRightEarZone) ? sideRowR : bgMeanR);
+        const refBgG = bgCount > 0 ? (bgG / bgCount) : ((isLeftEarZone || isRightEarZone) ? sideRowG : bgMeanG);
+        const refBgB = bgCount > 0 ? (bgB / bgCount) : ((isLeftEarZone || isRightEarZone) ? sideRowB : bgMeanB);
         const refBgLum = 0.299 * refBgR + 0.587 * refBgG + 0.114 * refBgB;
 
         const distToLocalBg = Math.hypot(curR - refBgR, curG - refBgG, curB - refBgB);
-        const distToRowBg = isLeftEarZone
-          ? Math.hypot(curR - leftRowBgR[y], curG - leftRowBgG[y], curB - leftRowBgB[y])
+        const distToRowBg = (isLeftEarZone || isRightEarZone)
+          ? Math.hypot(curR - sideRowR, curG - sideRowG, curB - sideRowB)
           : distToLocalBg;
         const distToBg = Math.min(distToLocalBg, distToRowBg);
         const chromaDist = Math.abs((curR - curG) - (refBgR - refBgG)) + Math.abs((curG - curB) - (refBgG - refBgB));
@@ -3577,17 +3789,32 @@ function cleanEarNeckHeadHalosPass(
           }
         }
 
-        // 2. Right Ear Area Background Cleaning
+        // 2. Right Ear, Cheek, Jawline & Neck Specialized Background Cleaning (symmetric with Left)
         else if (isRightEarZone) {
-          if (transparentCount >= 4 && a < 110) {
+          if (transparentCount >= 3 && a < 135 && !(isLikelyRealSkin && a >= 85) && !isDarkHair) {
             pixels[pIdx + 3] = 0;
             continue;
           }
-          if (distToBg < 30 && a < 180 && !isLikelyRealSkin) {
+          if (transparentCount >= 5 && a < 165 && !(isLikelyRealSkin && a >= 95) && !isDarkHair) {
             pixels[pIdx + 3] = 0;
             continue;
           }
-          if (!isLikelyRealSkin && isNeutralBgColor && transparentCount >= 2 && a < 160) {
+          if (distToBg < 34 && a < 205 && (!isLikelyRealSkin || ((skinCount > 0 || sideSkinCount > 0) && distToBg < distToSkin * 0.62))) {
+            pixels[pIdx + 3] = 0;
+            continue;
+          }
+          if (
+            !isLikelyRealSkin &&
+            !hasWarmVsBg &&
+            !isDarkHair &&
+            transparentCount >= 1 &&
+            a < 185 &&
+            (isNeutralBgColor || distToBg < 44 || (chromaDist <= 14 && lumRatio >= 0.52 && lumRatio <= 1.14 && distToBg <= 52))
+          ) {
+            pixels[pIdx + 3] = 0;
+            continue;
+          }
+          if (curLum > 165 && !isLikelyRealSkin && transparentCount >= 1 && a < 140) {
             pixels[pIdx + 3] = 0;
             continue;
           }
@@ -4991,6 +5218,7 @@ function cleanLeftPerimeterHaloPatches(
         break;
       }
 
+      const isLowerCheckOrGarRim = !isUpperNeckEar && fgCnt > 0 && distToFg <= 32 && a >= 65 && distToBg > 18;
       const isFaintHalo = isLowerWhiteShirtEdge
         ? (a < 45 && distToBg <= 24)
         : isUpperNeckEar
@@ -4998,6 +5226,7 @@ function cleanLeftPerimeterHaloPatches(
           : (a < 54 && (fgCnt === 0 || distToBg < distToFg * 0.80 || distToBg <= 32));
       const isMidHaloCloserToBg =
         !isLowerWhiteShirtEdge &&
+        !isLowerCheckOrGarRim &&
         a < (isUpperNeckEar ? (dir === 1 ? 180 : 165) : 110) &&
         fgCnt > 0 &&
         distToBg < distToFg * (isUpperNeckEar ? 0.88 : 0.65) &&
@@ -5021,8 +5250,11 @@ function cleanLeftPerimeterHaloPatches(
         const refR = stCnt > 0 ? stR / stCnt : intFgR;
         const refG = stCnt > 0 ? stG / stCnt : intFgG;
         const refB = stCnt > 0 ? stB / stCnt : intFgB;
-        if (!isLowerWhiteShirtEdge && fgCnt > 0 && a < 238 && distToBg < Math.max(42, distToFg * 1.35)) {
-          const blend = Math.min(0.88, (1 - a / 255) + 0.35);
+        const maxDecontamA = isUpperNeckEar ? 238 : 210;
+        if (!isLowerWhiteShirtEdge && fgCnt > 0 && a < maxDecontamA && distToBg < Math.max(42, distToFg * 1.35) && distToFg > 14) {
+          const blend = isUpperNeckEar
+            ? Math.min(0.88, (1 - a / 255) + 0.35)
+            : Math.min(0.75, 1 - a / 255);
           pixels[pIdx] = Math.round(r * (1 - blend) + refR * blend);
           pixels[pIdx + 1] = Math.round(g * (1 - blend) + refG * blend);
           pixels[pIdx + 2] = Math.round(b * (1 - blend) + refB * blend);
@@ -5043,6 +5275,9 @@ function cleanLeftPerimeterHaloPatches(
   const compSizes: number[] = [0];
   const compSumX: number[] = [0];
   const compSumY: number[] = [0];
+  const compMinX: number[] = [w];
+  const compMaxX: number[] = [0];
+  const compMinY: number[] = [h];
   const queue = new Int32Array(total);
   let curLabel = 0;
   let maxCompSize = 0;
@@ -5055,6 +5290,7 @@ function cleanLeftPerimeterHaloPatches(
         curLabel++;
         let size = 0;
         let sX = 0, sY = 0;
+        let bx0 = w, bx1 = 0, by0 = h;
         let head = 0;
         let tail = 0;
         labels[idx] = curLabel;
@@ -5067,6 +5303,9 @@ function cleanLeftPerimeterHaloPatches(
           size++;
           sX += cx;
           sY += cy;
+          if (cx < bx0) bx0 = cx;
+          if (cx > bx1) bx1 = cx;
+          if (cy < by0) by0 = cy;
           if (cy > 0) {
             const n = curr - w;
             if (pixels[n * 4 + 3] > 20 && labels[n] === 0) { labels[n] = curLabel; queue[tail++] = n; }
@@ -5087,6 +5326,9 @@ function cleanLeftPerimeterHaloPatches(
         compSizes.push(size);
         compSumX.push(sX);
         compSumY.push(sY);
+        compMinX.push(bx0);
+        compMaxX.push(bx1);
+        compMinY.push(by0);
         if (size > maxCompSize) {
           maxCompSize = size;
         }
@@ -5112,12 +5354,16 @@ function cleanLeftPerimeterHaloPatches(
     }
 
     const islandCutoff = isolateAllDisconnected
-      ? Infinity
+      ? Math.max(450, Math.round(maxCompSize * 0.14))
       : Math.max(400, Math.min(4500, maxCompSize * 0.08));
     for (let i = 0; i < total; i++) {
       const l = labels[i];
-      if (l > 0 && l !== mainLabel && compSizes[l] < islandCutoff) {
-        pixels[i * 4 + 3] = 0;
+      if (l > 0 && l !== mainLabel) {
+        const sz = compSizes[l];
+        const touchesEdge = compMinX[l] <= 2 || compMaxX[l] >= w - 3 || compMinY[l] <= 2;
+        if (sz < islandCutoff || (isolateAllDisconnected && touchesEdge && sz < maxCompSize * 0.25)) {
+          pixels[i * 4 + 3] = 0;
+        }
       }
     }
   }
@@ -5405,23 +5651,32 @@ function cleanLeftEdgeHalosFromEarToShoulder(
           const distToSh = Math.min(minPatchDist, shCnt > 0 ? Math.hypot(r - avgShR, g - avgShG, b - avgShB) : 999);
 
           const isDarkJacketRim = isDarkHair && (shCnt === 0 || distToSh <= distToBg * 1.15) && a >= 115;
-          const matchesLeftGarment = shCnt > 0 && distToSh <= 38 && (distToSh <= distToBg * 1.05 || a >= 115);
+          const matchesLeftGarment = shCnt > 0 && distToSh <= 36 && (distToSh <= distToBg * 0.96 || a >= 135);
+          const isLightOrCheckRimL = Math.max(r, g, b) >= 132 && (Math.max(r, g, b) - Math.min(r, g, b)) <= 82 && minPatchDist <= 32 && (distToBg > 16 || a >= 155);
 
           if (
-            a < 54 ||
+            a < 48 ||
             (!isLikelySkin &&
               !isDarkJacketRim &&
               !matchesLeftGarment &&
-              a < 115 &&
-              ((distToBg < 26 && (shCnt === 0 || distToBg < distToSh * 0.68)) ||
-                (chromaToBg <= 13 && lumRatio >= 0.55 && lumRatio <= 1.12 && distToBg < 34 && distToSh > 34)))
+              a < 126 &&
+              distToSh > 26 &&
+              ((distToBg <= 28 && (shCnt === 0 || distToBg < distToSh * 0.78)) ||
+                (chromaToBg <= 13 && lumRatio >= 0.54 && lumRatio <= 1.12 && distToBg <= 36 && distToSh > 28)))
           ) {
             pixels[pIdx + 3] = 0;
-          } else if (shCnt > 0 && a < 245 && distToBg < Math.max(45, distToSh * 1.3) && distToSh > 12) {
-            const blend = Math.min(0.88, (1 - a / 255.0) + 0.35);
-            pixels[pIdx] = Math.round(r * (1 - blend) + avgShR * blend);
-            pixels[pIdx + 1] = Math.round(g * (1 - blend) + avgShG * blend);
-            pixels[pIdx + 2] = Math.round(b * (1 - blend) + avgShB * blend);
+          } else if ((!isLightOrCheckRimL || a < 175) && shCnt > 0 && a < 236 && distToBg < Math.max(48, distToSh * 1.35) && distToSh > 12) {
+            const aNorm = Math.max(0.26, a / 255.0);
+            const unmixR = Math.max(0, Math.min(255, (r - refR * (1 - aNorm)) / aNorm));
+            const unmixG = Math.max(0, Math.min(255, (g - refG * (1 - aNorm)) / aNorm));
+            const unmixB = Math.max(0, Math.min(255, (b - refB * (1 - aNorm)) / aNorm));
+            const anchorR = Math.max(Math.min(r, avgShR) - 10, Math.min(Math.max(r, avgShR) + 10, unmixR));
+            const anchorG = Math.max(Math.min(g, avgShG) - 10, Math.min(Math.max(g, avgShG) + 10, unmixG));
+            const anchorB = Math.max(Math.min(b, avgShB) - 10, Math.min(Math.max(b, avgShB) + 10, unmixB));
+            const blend = Math.min(0.88, (1 - aNorm) * 0.65 + 0.30);
+            pixels[pIdx] = Math.round(r * (1 - blend) + anchorR * blend);
+            pixels[pIdx + 1] = Math.round(g * (1 - blend) + anchorG * blend);
+            pixels[pIdx + 2] = Math.round(b * (1 - blend) + anchorB * blend);
           }
           continue;
         }
@@ -5432,7 +5687,7 @@ function cleanLeftEdgeHalosFromEarToShoulder(
         }
 
         // Rule A: Faint boundary noise or outer halo on left edge of ear/cheek/neck/collar
-        if (touchesExterior && a < 115 && !isDarkHair && !(isLikelySkin && a >= 75)) {
+        if (touchesExterior && a < 100 && !isDarkHair && !(isLikelySkin && a >= 70)) {
           pixels[pIdx + 3] = 0;
           continue;
         }
@@ -5443,23 +5698,23 @@ function cleanLeftEdgeHalosFromEarToShoulder(
           !isLikelySkin &&
           !hasWarmVsBg &&
           !isDarkHair &&
-          a < 195 &&
-          (distToBg < 34 || (chromaToBg <= 14 && lumRatio >= 0.52 && lumRatio <= 1.14 && distToBg < 48))
+          a < 165 &&
+          (distToBg < 30 || (chromaToBg <= 13 && lumRatio >= 0.54 && lumRatio <= 1.12 && distToBg < 42))
         ) {
           pixels[pIdx + 3] = 0;
           continue;
         }
 
         // Rule C: Light/neutral background bleed on ear/cheek/neck/collar boundary
-        if (isLightBg && touchesExterior && !isLikelySkin && !hasWarmVsBg && !isDarkHair && lum > 160 && (distToBg < 46 || (Math.abs(r - g) <= 14 && Math.abs(g - b) <= 14))) {
-          if (a < 185) {
+        if (isLightBg && touchesExterior && !isLikelySkin && !hasWarmVsBg && !isDarkHair && lum > 165 && (distToBg < 40 || (Math.abs(r - g) <= 14 && Math.abs(g - b) <= 14))) {
+          if (a < 160) {
             pixels[pIdx + 3] = 0;
             continue;
           }
         }
 
         // Rule D: Crevices/corners along ear, cheek, neck & collar pocket (multiple transparent neighbors)
-        if (transparentNeighbors >= 3 && !(isLikelySkin && a >= 95) && !isDarkHair && a < 165) {
+        if (transparentNeighbors >= 3 && !(isLikelySkin && a >= 85) && !isDarkHair && a < 140) {
           pixels[pIdx + 3] = 0;
           continue;
         }
@@ -5709,30 +5964,46 @@ function cleanLeftEdgeHalosFromEarToShoulder(
         const isDarkHair = lum < 85 && refLum > 110 && distToBg > 24;
 
         let shR = 0, shG = 0, shB = 0, shCnt = 0;
+        let stR = 0, stG = 0, stB = 0, stCnt = 0;
+        let minPatchDist = 999;
         for (let sy = y; sy <= Math.min(h - 1, y + 10); sy += 2) {
           const sRow = sy * w;
           for (let step = 2; step <= 20 && x - step >= coreCenterX + 2; step += 2) {
             const inIdx = sRow + x - step;
             if (pixels[inIdx * 4 + 3] >= 195) {
               const inp = inIdx * 4;
-              shR += pixels[inp]; shG += pixels[inp + 1]; shB += pixels[inp + 2]; shCnt++;
+              const sr = pixels[inp], sg = pixels[inp + 1], sb = pixels[inp + 2];
+              shR += sr; shG += sg; shB += sb; shCnt++;
+              const d = Math.hypot(r - sr, g - sg, b - sb);
+              if (d < minPatchDist) minPatchDist = d;
+              if (d <= 45) {
+                stR += sr; stG += sg; stB += sb; stCnt++;
+              }
             }
           }
         }
-        const avgShR = shCnt > 0 ? shR / shCnt : r;
-        const avgShG = shCnt > 0 ? shG / shCnt : g;
-        const avgShB = shCnt > 0 ? shB / shCnt : b;
-        const distToSh = shCnt > 0 ? Math.hypot(r - avgShR, g - avgShG, b - avgShB) : 999;
+        const avgShR = stCnt >= 2 ? stR / stCnt : (shCnt > 0 ? shR / shCnt : r);
+        const avgShG = stCnt >= 2 ? stG / stCnt : (shCnt > 0 ? shG / shCnt : g);
+        const avgShB = stCnt >= 2 ? stB / stCnt : (shCnt > 0 ? shB / shCnt : b);
+        const distToSh = Math.min(minPatchDist, shCnt > 0 ? Math.hypot(r - avgShR, g - avgShG, b - avgShB) : 999);
 
         const isDarkJacketRim = isDarkHair && (isAboveRightSh || ((shCnt === 0 || distToSh <= distToBg * 1.15) && a >= 115));
-        const matchesRightGarment = shCnt > 0 && distToSh <= 38 && (distToSh <= distToBg * 1.05 || a >= 115);
+        const matchesRightGarment = shCnt > 0 && distToSh <= 36 && (distToSh <= distToBg * 0.96 || a >= 135);
+        const isLightOrCheckRimR = Math.max(r, g, b) >= 132 && (Math.max(r, g, b) - Math.min(r, g, b)) <= 82 && minPatchDist <= 32 && (distToBg > 16 || a >= 155);
         const onCurvedTopRim = rTop < h && y >= rTop - 2 && matchesRightGarment && a >= 55;
         if (isAboveRightSh && (a >= 190 || isDarkHair || onCurvedTopRim || matchesRightGarment || (isLikelySkin && a >= 85))) {
-          if (shCnt > 0 && a < 245 && (onCurvedTopRim || matchesRightGarment)) {
-            const blend = Math.min(0.90, (1 - a / 255.0) + 0.40);
-            pixels[pIdx] = Math.round(r * (1 - blend) + avgShR * blend);
-            pixels[pIdx + 1] = Math.round(g * (1 - blend) + avgShG * blend);
-            pixels[pIdx + 2] = Math.round(b * (1 - blend) + avgShB * blend);
+          if ((!isLightOrCheckRimR || a < 175) && shCnt > 0 && a < 236 && distToSh > 12 && (onCurvedTopRim || matchesRightGarment)) {
+            const aNorm = Math.max(0.26, a / 255.0);
+            const unmixR = Math.max(0, Math.min(255, (r - refR * (1 - aNorm)) / aNorm));
+            const unmixG = Math.max(0, Math.min(255, (g - refG * (1 - aNorm)) / aNorm));
+            const unmixB = Math.max(0, Math.min(255, (b - refB * (1 - aNorm)) / aNorm));
+            const anchorR = Math.max(Math.min(r, avgShR) - 10, Math.min(Math.max(r, avgShR) + 10, unmixR));
+            const anchorG = Math.max(Math.min(g, avgShG) - 10, Math.min(Math.max(g, avgShG) + 10, unmixG));
+            const anchorB = Math.max(Math.min(b, avgShB) - 10, Math.min(Math.max(b, avgShB) + 10, unmixB));
+            const blend = Math.min(0.88, (1 - aNorm) * 0.65 + 0.30);
+            pixels[pIdx] = Math.round(r * (1 - blend) + anchorR * blend);
+            pixels[pIdx + 1] = Math.round(g * (1 - blend) + anchorG * blend);
+            pixels[pIdx + 2] = Math.round(b * (1 - blend) + anchorB * blend);
           }
           continue;
         }
@@ -5748,30 +6019,45 @@ function cleanLeftEdgeHalosFromEarToShoulder(
             (transparentNeighbors >= 3 && !isLikelySkin && !isDarkHair && a < 155)
           ) {
             pixels[pIdx + 3] = 0;
-          } else if (shCnt > 0 && a < 245 && distToBg < distToSh * 1.25) {
-            const blend = Math.min(0.90, (1 - a / 255.0) + 0.40);
-            pixels[pIdx] = Math.round(r * (1 - blend) + avgShR * blend);
-            pixels[pIdx + 1] = Math.round(g * (1 - blend) + avgShG * blend);
-            pixels[pIdx + 2] = Math.round(b * (1 - blend) + avgShB * blend);
+          } else if ((!isLightOrCheckRimR || a < 175) && shCnt > 0 && a < 236 && distToSh > 12 && distToBg < distToSh * 1.25) {
+            const aNorm = Math.max(0.26, a / 255.0);
+            const unmixR = Math.max(0, Math.min(255, (r - refR * (1 - aNorm)) / aNorm));
+            const unmixG = Math.max(0, Math.min(255, (g - refG * (1 - aNorm)) / aNorm));
+            const unmixB = Math.max(0, Math.min(255, (b - refB * (1 - aNorm)) / aNorm));
+            const anchorR = Math.max(Math.min(r, avgShR) - 10, Math.min(Math.max(r, avgShR) + 10, unmixR));
+            const anchorG = Math.max(Math.min(g, avgShG) - 10, Math.min(Math.max(g, avgShG) + 10, unmixG));
+            const anchorB = Math.max(Math.min(b, avgShB) - 10, Math.min(Math.max(b, avgShB) + 10, unmixB));
+            const blend = Math.min(0.88, (1 - aNorm) * 0.65 + 0.30);
+            pixels[pIdx] = Math.round(r * (1 - blend) + anchorR * blend);
+            pixels[pIdx + 1] = Math.round(g * (1 - blend) + anchorG * blend);
+            pixels[pIdx + 2] = Math.round(b * (1 - blend) + anchorB * blend);
           }
           continue;
         }
 
         if (
-          a < 54 ||
+          a < 48 ||
           (!isLikelySkin &&
             !isDarkJacketRim &&
             !matchesRightGarment &&
-            a < 115 &&
-            ((distToBg < 26 && (shCnt === 0 || distToBg < distToSh * 0.68)) ||
-              (chromaToBg <= 13 && lumRatio >= 0.55 && lumRatio <= 1.12 && distToBg < 34 && distToSh > 34)))
+            a < 126 &&
+            distToSh > 26 &&
+            ((distToBg <= 28 && (shCnt === 0 || distToBg < distToSh * 0.78)) ||
+              (chromaToBg <= 13 && lumRatio >= 0.54 && lumRatio <= 1.12 && distToBg <= 36 && distToSh > 28)))
         ) {
           pixels[pIdx + 3] = 0;
-        } else if (shCnt > 0 && a < 245 && distToBg < Math.max(45, distToSh * 1.3)) {
-          const blend = Math.min(0.90, (1 - a / 255.0) + 0.40);
-          pixels[pIdx] = Math.round(r * (1 - blend) + avgShR * blend);
-          pixels[pIdx + 1] = Math.round(g * (1 - blend) + avgShG * blend);
-          pixels[pIdx + 2] = Math.round(b * (1 - blend) + avgShB * blend);
+        } else if ((!isLightOrCheckRimR || a < 175) && shCnt > 0 && a < 236 && distToBg < Math.max(48, distToSh * 1.35) && distToSh > 12) {
+          const aNorm = Math.max(0.26, a / 255.0);
+          const unmixR = Math.max(0, Math.min(255, (r - refR * (1 - aNorm)) / aNorm));
+          const unmixG = Math.max(0, Math.min(255, (g - refG * (1 - aNorm)) / aNorm));
+          const unmixB = Math.max(0, Math.min(255, (b - refB * (1 - aNorm)) / aNorm));
+          const anchorR = Math.max(Math.min(r, avgShR) - 10, Math.min(Math.max(r, avgShR) + 10, unmixR));
+          const anchorG = Math.max(Math.min(g, avgShG) - 10, Math.min(Math.max(g, avgShG) + 10, unmixG));
+          const anchorB = Math.max(Math.min(b, avgShB) - 10, Math.min(Math.max(b, avgShB) + 10, unmixB));
+          const blend = Math.min(0.88, (1 - aNorm) * 0.65 + 0.30);
+          pixels[pIdx] = Math.round(r * (1 - blend) + anchorR * blend);
+          pixels[pIdx + 1] = Math.round(g * (1 - blend) + anchorG * blend);
+          pixels[pIdx + 2] = Math.round(b * (1 - blend) + anchorB * blend);
         }
       }
     }
@@ -6236,15 +6522,15 @@ function cleanResidualBackgroundPatchesAndObjects(
       if (isDarkHair || (isRealSkin && a >= 75)) continue;
 
       let minLocalGarDist = 999;
-      if (!isUpper && solidDist[i] <= 4) {
-        for (let dy = -3; dy <= 3; dy++) {
+      if (!isUpper && solidDist[i] <= 5) {
+        for (let dy = -5; dy <= 5; dy++) {
           const ly = y + dy;
           if (ly < 0 || ly >= h) continue;
-          for (let dx = -3; dx <= 3; dx++) {
+          for (let dx = -5; dx <= 5; dx++) {
             const lx = x + dx;
             if (lx < 0 || lx >= w) continue;
             const lIdx = ly * w + lx;
-            if (alphaCopy[lIdx] >= 200) {
+            if (alphaCopy[lIdx] >= 195) {
               const lp = lIdx * 4;
               const ld = Math.hypot(r - pixels[lp], g - pixels[lp + 1], b - pixels[lp + 2]);
               if (ld < minLocalGarDist) minLocalGarDist = ld;
@@ -6258,27 +6544,36 @@ function cleanResidualBackgroundPatchesAndObjects(
         lSlvCnt > 4 ? Math.hypot(r - avgLSlvR, g - avgLSlvG, b - avgLSlvB) : 999,
         rSlvCnt > 4 ? Math.hypot(r - avgRSlvR, g - avgRSlvG, b - avgRSlvB) : 999
       );
+      const isOuterBgSpreadNearShirt =
+        solidDist[i] >= 2 &&
+        a < 145 &&
+        minBgD <= 30 &&
+        minLocalGarDist > 28 &&
+        minBgD < Math.min(minLocalGarDist, distGar) * 0.78;
       const isLowerShirtEdge =
         !isUpper &&
-        a >= 55 &&
-        ((distGar <= 40 && (minBgD > 14 || solidDist[i] <= 4)) ||
-          (isWhiteOrCheck && maxC >= 132 && maxC - minC <= 82 && a >= 70));
+        !isOuterBgSpreadNearShirt &&
+        a >= 65 &&
+        ((distGar <= 42 && (minBgD > 15 || solidDist[i] <= 3)) ||
+          (isWhiteOrCheck && maxC >= 132 && maxC - minC <= 82 && (minLocalGarDist <= 40 || distGar <= 42) && (minBgD > 16 || solidDist[i] <= 2)));
       if (isLowerShirtEdge && solidDist[i] <= 5) continue;
 
       const sDist = solidDist[i];
       if (isUpper) {
         if (
-          (sDist > 6 && a < 155) ||
-          (sDist > 3 && a < 120 && minBgD <= 42) ||
-          (isolateAll && a < 95 && minBgD <= 36)
+          (sDist > 5 && a < 155) ||
+          (sDist > 2 && a < 125 && minBgD <= 42) ||
+          (isolateAll && sDist > 2 && a < 105 && minBgD <= 36)
         ) {
           pixels[p + 3] = 0;
         }
       } else {
         if (
-          (sDist > 5 && a < 110 && (distGar > 38 || minBgD <= 26)) ||
-          (sDist > 2 && a < 54 && minBgD <= 26 && distGar > 36) ||
-          (a < 28 && distGar > 34)
+          (sDist > 5 && a < 145 && distGar > 36) ||
+          (sDist >= 2 && a < 140 && minBgD <= 44 && distGar > 38) ||
+          (sDist >= 2 && isOuterBgSpreadNearShirt) ||
+          (sDist > 2 && a < 90 && minBgD <= 34 && distGar > 34) ||
+          (a < 38 && distGar > 34)
         ) {
           pixels[p + 3] = 0;
         }
@@ -6286,7 +6581,7 @@ function cleanResidualBackgroundPatchesAndObjects(
     }
   }
 
-  // Pass 2: Global 360-degree Exterior-Seeded Background Color-Patch Flood Fill
+  // Pass 2: Global 360-degree Exterior-Seeded Background Color-Patch & Close-Object Flood Fill
   const visited = new Uint8Array(total);
   const cleared = new Uint8Array(total);
   const queue = new Int32Array(total);
@@ -6327,7 +6622,7 @@ function cleanResidualBackgroundPatchesAndObjects(
         queue[tail++] = n;
         continue;
       }
-      if (na >= 235) continue;
+      if (na >= 252 && !isolateAll) continue;
 
       const ny = Math.floor(n / w);
       const nx = n % w;
@@ -6349,15 +6644,15 @@ function cleanResidualBackgroundPatchesAndObjects(
       if (isDarkHair || (isRealSkin && na >= 75)) continue;
 
       let minLocalGarDist = 999;
-      if (!isUpper && solidDist[n] <= 4) {
-        for (let dy = -3; dy <= 3; dy++) {
+      if (!isUpper && solidDist[n] <= 5) {
+        for (let dy = -5; dy <= 5; dy++) {
           const ly = ny + dy;
           if (ly < 0 || ly >= h) continue;
-          for (let dx = -3; dx <= 3; dx++) {
+          for (let dx = -5; dx <= 5; dx++) {
             const lx = nx + dx;
             if (lx < 0 || lx >= w) continue;
             const lIdx = ly * w + lx;
-            if (alphaCopy[lIdx] >= 200) {
+            if (alphaCopy[lIdx] >= 195) {
               const lp = lIdx * 4;
               const ld = Math.hypot(r - pixels[lp], g - pixels[lp + 1], b - pixels[lp + 2]);
               if (ld < minLocalGarDist) minLocalGarDist = ld;
@@ -6371,17 +6666,24 @@ function cleanResidualBackgroundPatchesAndObjects(
         lSlvCnt > 4 ? Math.hypot(r - avgLSlvR, g - avgLSlvG, b - avgLSlvB) : 999,
         rSlvCnt > 4 ? Math.hypot(r - avgRSlvR, g - avgRSlvG, b - avgRSlvB) : 999
       );
+      const isWhiteCheckLowerProtected =
+        isWhiteOrCheck &&
+        na >= 95 &&
+        Math.max(r, g, b) >= 132 &&
+        Math.max(r, g, b) - Math.min(r, g, b) <= 82 &&
+        (minLocalGarDist <= 40 || distGar <= 42) &&
+        (minBgD > 16 || solidDist[n] <= 2);
       if (
         !isUpper &&
-        ((na >= 155 && solidDist[n] <= 4) ||
-          (na >= 70 && distGar <= 42 && solidDist[n] <= 4) ||
-          (na >= 120 && distGar <= 42 && minBgD > 16) ||
-          (isWhiteOrCheck && na >= 85 && Math.max(r, g, b) >= 132 && Math.max(r, g, b) - Math.min(r, g, b) <= 82))
+        ((na >= 155 && solidDist[n] <= 3) ||
+          (na >= 85 && distGar <= 40 && solidDist[n] <= 4 && (minBgD > 15 || minLocalGarDist <= 30)) ||
+          (na >= 125 && distGar <= 42 && minBgD > 18) ||
+          isWhiteCheckLowerProtected)
       ) {
         continue;
       }
 
-      // Compute 3x3 luminance variance to shield textured hair/clothes while clearing flat wall/curtain patches
+      // Compute 3x3 luminance variance to shield textured hair/clothes while clearing flat wall/curtain/chair patches
       let lVar = 0, vCnt = 0;
       for (let dy = -1; dy <= 1; dy++) {
         const vy = ny + dy;
@@ -6401,12 +6703,15 @@ function cleanResidualBackgroundPatchesAndObjects(
       const hasWarmTone = (r - b) - (lBgR - lBgB) >= 8;
 
       const canCleanPatch = isUpper
-        ? (na < 135 && minBgD <= 40 && stepDiff <= 28) ||
-          (hasOriginalRgb && na < 205 && minBgD <= 28 && stepDiff <= 15 && avgVar < 7.5) ||
-          (hasOriginalRgb && na < 235 && minBgD <= 20 && stepDiff <= 10 && avgVar < 5.0) ||
-          (hasOriginalRgb && !hasWarmTone && na < 220 && chromaLocal <= 13 && lumRatioLocal >= 0.50 && lumRatioLocal <= 1.15 && distLocal <= 46 && stepDiff <= 14 && avgVar < 6.0)
-        : (na < 70 && minBgD <= 30 && stepDiff <= 22 && (solidDist[n] > 2 || distGar > 36)) ||
-          (hasOriginalRgb && na < 130 && minBgD <= 24 && stepDiff <= 12 && avgVar < 5.5 && solidDist[n] > 3 && distGar > 36);
+        ? (na < 130 && minBgD <= 38 && stepDiff <= 24) ||
+          (hasOriginalRgb && na < 185 && minBgD <= 26 && stepDiff <= 14 && avgVar < 7.0) ||
+          (hasOriginalRgb && na < 220 && minBgD <= 18 && stepDiff <= 10 && avgVar < 4.5) ||
+          (hasOriginalRgb && isolateAll && solidDist[n] > 2 && na < 205 && !hasWarmTone && minBgD <= 20 && stepDiff <= 11 && chromaLocal <= 10 && avgVar < 5.0) ||
+          (hasOriginalRgb && !hasWarmTone && na < 195 && chromaLocal <= 12 && lumRatioLocal >= 0.52 && lumRatioLocal <= 1.14 && distLocal <= 40 && stepDiff <= 13 && avgVar < 5.5)
+        : (na < 85 && minBgD <= 34 && stepDiff <= 22 && (solidDist[n] >= 2 || distGar > 34)) ||
+          (na < 155 && distGar > 36 && minBgD <= 40 && stepDiff <= 20 && avgVar < 7.0 && solidDist[n] >= 2) ||
+          (hasOriginalRgb && na < 165 && minBgD <= 26 && stepDiff <= 14 && chromaLocal <= 12 && avgVar < 6.0 && solidDist[n] >= 3 && distGar > 34) ||
+          (hasOriginalRgb && isolateAll && solidDist[n] >= 3 && na < 175 && minBgD <= 22 && stepDiff <= 11 && chromaLocal <= 10 && avgVar < 5.0 && distGar > 34);
 
       if (canCleanPatch) {
         visited[n] = 1;
@@ -6450,6 +6755,116 @@ function cleanResidualBackgroundPatchesAndObjects(
       }
       if (solidN < 3 && (a < 65 || solidDist[i] > 3)) {
         pixels[i * 4 + 3] = 0;
+      }
+    }
+  }
+
+  // Pass 4: Zero-Tolerance Minor Speck & Disconnected Background Object Sweep across ALL remaining non-zero pixels (alpha >= 1)
+  if (isolateAll) {
+    const cLab = new Int32Array(total);
+    const cSz: number[] = [0];
+    const cSumX: number[] = [0];
+    const cSumY: number[] = [0];
+    const cMinX: number[] = [w];
+    const cMaxX: number[] = [0];
+    const cMinY: number[] = [h];
+    const cMaxY: number[] = [0];
+    const cSumR: number[] = [0];
+    const cSumG: number[] = [0];
+    const cSumB: number[] = [0];
+    const cQueue = new Int32Array(total);
+    let cCur = 0;
+
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        const idx = row + x;
+        if (pixels[idx * 4 + 3] > 0 && cLab[idx] === 0) {
+          cCur++;
+          let sz = 0, sx = 0, sy = 0, sr = 0, sg = 0, sb = 0;
+          let bx0 = w, bx1 = 0, by0 = h, by1 = 0;
+          let hd = 0, tl = 0;
+          cLab[idx] = cCur;
+          cQueue[tl++] = idx;
+          while (hd < tl) {
+            const curr = cQueue[hd++];
+            const cy = Math.floor(curr / w), cx = curr % w;
+            const cp = curr * 4;
+            sz++; sx += cx; sy += cy;
+            sr += pixels[cp]; sg += pixels[cp + 1]; sb += pixels[cp + 2];
+            if (cx < bx0) bx0 = cx;
+            if (cx > bx1) bx1 = cx;
+            if (cy < by0) by0 = cy;
+            if (cy > by1) by1 = cy;
+            for (let dy = -1; dy <= 1; dy++) {
+              const ny = cy + dy;
+              if (ny < 0 || ny >= h) continue;
+              for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                const nx = cx + dx;
+                if (nx < 0 || nx >= w) continue;
+                const ni = ny * w + nx;
+                if (pixels[ni * 4 + 3] > 0 && cLab[ni] === 0) {
+                  cLab[ni] = cCur;
+                  cQueue[tl++] = ni;
+                }
+              }
+            }
+          }
+          cSz.push(sz); cSumX.push(sx); cSumY.push(sy);
+          cMinX.push(bx0); cMaxX.push(bx1); cMinY.push(by0); cMaxY.push(by1);
+          cSumR.push(sr); cSumG.push(sg); cSumB.push(sb);
+        }
+      }
+    }
+
+    if (cCur > 1) {
+      let maxSz = 0;
+      for (let l = 1; l <= cCur; l++) if (cSz[l] > maxSz) maxSz = cSz[l];
+      let mainC = 1, bestSc = -1;
+      const minCand = Math.max(120, Math.round(maxSz * 0.08));
+      for (let l = 1; l <= cCur; l++) {
+        const sz = cSz[l];
+        if (sz < minCand) continue;
+        const cx = cSumX[l] / sz, cy = cSumY[l] / sz;
+        const dc = Math.hypot((cx - w * 0.5) / Math.max(1, w), (cy - h * 0.48) / Math.max(1, h));
+        const sc = sz / (1 + 2.4 * dc);
+        if (sc > bestSc) { bestSc = sc; mainC = l; }
+      }
+      const mSz = cSz[mainC];
+      const mY0 = cMinY[mainC], mY1 = cMaxY[mainC];
+      const mX0 = cMinX[mainC], mX1 = cMaxX[mainC];
+      const crownL = mX0 + Math.max(1, mX1 - mX0) * 0.14;
+      const crownR = mX1 - Math.max(1, mX1 - mX0) * 0.14;
+      const mH = Math.max(1, mY1 - mY0);
+
+      const keepC = new Uint8Array(cCur + 1);
+      keepC[mainC] = 1;
+      for (let l = 1; l <= cCur; l++) {
+        if (l === mainC) continue;
+        const sz = cSz[l];
+        const avgR = cSumR[l] / sz, avgG = cSumG[l] / sz, avgB = cSumB[l] / sz;
+        const lum = 0.299 * avgR + 0.587 * avgG + 0.114 * avgB;
+        const dPal = minPaletteDist(avgR, avgG, avgB);
+        const dFb = Math.hypot(avgR - fbBgR, avgG - fbBgG, avgB - fbBgB);
+        const touchesEdge = cMinX[l] <= 2 || cMaxX[l] >= w - 3 || cMinY[l] <= 2;
+        if (sz <= Math.min(32, mSz * 0.001) && cMaxY[l] <= mY0 + mH * 0.30 && cMinX[l] >= crownL && cMaxX[l] <= crownR) {
+          if (lum < 82 && Math.min(dPal, dFb) > 28) keepC[l] = 1;
+        } else if (
+          sz >= Math.max(400, mSz * 0.12) &&
+          cMinX[l] >= mX0 - 20 &&
+          cMaxX[l] <= mX1 + 20 &&
+          Math.min(dPal, dFb) > 20 &&
+          (!touchesEdge || sz >= mSz * 0.25)
+        ) {
+          keepC[l] = 1;
+        }
+      }
+      for (let i = 0; i < total; i++) {
+        const l = cLab[i];
+        if (l > 0 && keepC[l] === 0) {
+          pixels[i * 4 + 3] = 0;
+        }
       }
     }
   }
@@ -6514,9 +6929,9 @@ function polishLeftShoulderAndNeckContour(
     }
   }
 
-  // Cover directly beneath the left ear (earlobe -> jawline -> upper neck) + BOTH left & right shoulders down to maxY
+  // Cover directly beneath BOTH ears (earlobe -> jawline -> upper neck) + BOTH left & right shoulders down to maxY
   const startY = Math.max(1, Math.min(neckY, Math.floor(minY + subjH * 0.24)));
-  const rightStartY = Math.max(1, neckY);
+  const rightStartY = Math.max(1, Math.min(neckY, Math.floor(neckY - subjH * 0.05)));
   const endY = Math.min(h - 2, maxY);
   const fbBgR = bgModels?.global?.meanR ?? 245;
   const fbBgG = bgModels?.global?.meanG ?? 245;
@@ -6552,7 +6967,7 @@ function polishLeftShoulderAndNeckContour(
     for (let y = rowBegin; y <= endY - 2; y++) {
       const cur = edgeArr[y];
       if (cur === -1) continue;
-      const isUnderEarZone = isLeft && y < neckY;
+      const isUnderEarZone = y < neckY;
 
       // Sample local exterior background outside `cur`
       let bR = 0, bG = 0, bB = 0, bCnt = 0;
@@ -6650,12 +7065,12 @@ function polishLeftShoulderAndNeckContour(
         const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
         const dBg = Math.hypot(r - bgR, g - bgG, b - bgB);
 
-        // Closest solid neighbor in local 5x7 inward patch (check-shirt safe)
+        // Closest solid neighbor in local 5x12 inward patch at stride 1 (guarantees 1-2px check stripes are always matched)
         let minPatchGarDist = 999;
         let stR = 0, stG = 0, stB = 0, stCnt = 0;
         for (let sy = Math.max(startY, y - 3); sy <= Math.min(endY, y + 3); sy++) {
           const sRow = sy * w;
-          for (let st = 2; st <= 14; st += 2) {
+          for (let st = 1; st <= 12; st++) {
             const sx = x + dir * st;
             if (isLeft ? sx > coreCenterX : sx < coreCenterX) break;
             const sIdx = sRow + sx;
@@ -6674,7 +7089,8 @@ function polishLeftShoulderAndNeckContour(
         const toneGarG = stCnt > 0 ? stG / stCnt : garG;
         const toneGarB = stCnt > 0 ? stB / stCnt : garB;
         const dGar = Math.min(minPatchGarDist, gCnt > 0 ? Math.hypot(r - garR, g - garG, b - garB) : 999);
-        const isLightFabricPx = !isUnderEarZone && maxC >= 132 && (maxC - minC) <= 82 && (dGar <= 34 || dBg > 20);
+        const matchesCheckOrGarPx = !isUnderEarZone && minPatchGarDist <= 34 && (dBg > 16 || a >= 145);
+        const isLightFabricPx = !isUnderEarZone && maxC >= 132 && (maxC - minC) <= 82 && minPatchGarDist <= 34 && (dBg > 16 || a >= 145);
         const isDarkHairTone = lum < 82 && bgLum > 110 && dBg > 24;
         const isNearNeckHair = isDarkHairTone && y < neckY + Math.round(subjH * 0.08) && a >= 145;
         const isWarmSkin = r > g && g >= b * 0.85 && (r - b) >= 10 && dBg > 20;
@@ -6689,32 +7105,31 @@ function polishLeftShoulderAndNeckContour(
         if (!isUnderEarZone) {
           if (isWarmSkin || isNearNeckHair) continue;
 
-          // Clear genuine isolated outward spikes, faint < 54 exterior haze, or background-leaked fringe strictly outside cur
+          // Treat white squares and check stripes symmetrically: clear spikes & background-leaked outer fringes equally
           if (isOutsideOutlier(isOutsideOutSpikeSafe(isOutsideIsolatedSpike, a, dBg, dGar, gCnt))) {
             pixels[p + 3] = 0;
             continue;
           }
-          if (isOnOrOutsideRim && a < 54 && (gCnt === 0 || (!isLightFabricPx && dBg < dGar * 0.85) || dBg < 26)) {
+          if (isOnOrOutsideRim && a < 54 && (gCnt === 0 || (dBg < dGar * 0.88 && dBg <= 32) || dBg < 24)) {
             pixels[p + 3] = 0;
             continue;
           }
           if (
-            !isLightFabricPx &&
             gCnt > 0 &&
-            bgGarSep >= 22 &&
+            bgGarSep >= 20 &&
             isStrictlyOutsideRim &&
             a < 135 &&
-            dGar > 34 &&
-            dBg < dGar * 0.70 &&
+            minPatchGarDist > 28 &&
+            dBg < minPatchGarDist * 0.72 &&
             dBg <= 30
           ) {
             pixels[p + 3] = 0;
             continue;
           }
-          // Eliminate washed-out semi-transparency inside the garment boundary while keeping outer 1px curve smooth
+          // Solidify interior check/solid garment uniformly without unevenly locking faint outer fringes
           if (
             isDeepInsideRim &&
-            ((a >= 170) || (gCnt > 0 && a >= 120 && (dGar <= 36 || isLightFabricPx) && (bgGarSep < 22 || dBg > 18)))
+            ((a >= 170) || (gCnt > 0 && a >= 120 && (dGar <= 36 || matchesCheckOrGarPx) && (bgGarSep < 22 || dBg > 16)))
           ) {
             pixels[p + 3] = 255;
           } else if (isStrictlyInsideRim && a >= 210) {
@@ -6723,7 +7138,7 @@ function polishLeftShoulderAndNeckContour(
         } else {
           // Under-ear earlobe / jawline / neck contour: strip faint halo & outer bg crust while keeping genuine ear/jaw skin safe
           if (!isDarkHairTone && !(isWarmSkin && a >= 110)) {
-            if (isLeft && x < cur && (a < 115 || (gCnt > 0 && dBg < dGar * 0.85 && dBg < 38))) {
+            if (isStrictlyOutsideRim && (a < 115 || (gCnt > 0 && dBg < dGar * 0.85 && dBg < 38))) {
               pixels[p + 3] = 0;
               continue;
             }
@@ -6731,18 +7146,30 @@ function polishLeftShoulderAndNeckContour(
               pixels[p + 3] = 0;
               continue;
             }
-            if (isLeft && x <= cur && gCnt > 0 && dBg < 20 && dBg < dGar * 0.65) {
+            if (isOnOrOutsideRim && gCnt > 0 && dBg < 20 && dBg < dGar * 0.65) {
               pixels[p + 3] = 0;
               continue;
             }
           }
         }
 
-        // Decontaminate ALL surviving boundary pixels toward same-tone interior color (never dark-tinting white checks)
+        // Decontaminate only truly semi-transparent outer fringes toward same-tone interior color (check-shirt safe)
         const finalA = pixels[p + 3];
         const toneBgSep = Math.hypot(bgR - toneGarR, bgG - toneGarG, bgB - toneGarB);
-        if (!isLightFabricPx && finalA > 0 && finalA < 252 && gCnt > 0 && isNearOuterRim && toneBgSep > 16 && dBg < Math.max(48, toneBgSep * 1.35)) {
-          const blend = Math.min(0.88, (1 - finalA / 255.0) + (isUnderEarZone ? 0.36 : 0.48));
+        const maxDecontamAlpha = isUnderEarZone ? 242 : 215;
+        if (
+          !isLightFabricPx &&
+          finalA > 0 &&
+          finalA < maxDecontamAlpha &&
+          gCnt > 0 &&
+          isNearOuterRim &&
+          toneBgSep > 16 &&
+          minPatchGarDist > 14 &&
+          dBg < Math.max(48, toneBgSep * 1.35)
+        ) {
+          const blend = isUnderEarZone
+            ? Math.min(0.86, (1 - finalA / 255.0) + 0.34)
+            : Math.min(0.76, (1 - finalA / 255.0) * 0.92 + 0.14);
           pixels[p] = Math.round(r * (1 - blend) + toneGarR * blend);
           pixels[p + 1] = Math.round(g * (1 - blend) + toneGarG * blend);
           pixels[p + 2] = Math.round(b * (1 - blend) + toneGarB * blend);
@@ -6765,7 +7192,7 @@ function polishLeftShoulderAndNeckContour(
   const colLMaxX = Math.min(coreCenterX - 3, Math.max(neckLeftAtMin + 4, Math.round(minX + subjW * 0.44)));
   const colRMinX = Math.max(coreCenterX + 3, Math.min(neckRightAtMin - 4, Math.round(maxX - subjW * 0.44)));
   const colRMaxX = Math.min(w - 2, maxX);
-  const colTopStart = Math.max(1, Math.floor(minY + subjH * 0.36));
+  const colTopStart = Math.max(1, Math.min(Math.floor(minY + subjH * 0.34), neckY - 4));
   const colTopEnd = Math.min(h - 4, Math.floor(minY + subjH * 0.88));
   const rawShTopL = new Int32Array(w).fill(h);
   const rawShTopR = new Int32Array(w).fill(h);
@@ -6871,9 +7298,9 @@ function polishLeftShoulderAndNeckContour(
         const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
         const dBg = Math.hypot(r - locAbR, g - locAbG, b - locAbB);
 
-        // Compute distance to closest solid pixel & same-tone reference so check shirts never blend white with dark stripes
+        // Sample dense stride-1 inward patch so thin 1-2px check lines along the shoulder slope are always matched
         let minShDist = 999, toneShR = 0, toneShG = 0, toneShB = 0, toneShCnt = 0, bestShR = avgShR, bestShG = avgShG, bestShB = avgShB;
-        for (let sy = shTop + 2; sy <= Math.min(h - 1, shTop + 14); sy += 2) {
+        for (let sy = shTop + 1; sy <= Math.min(h - 1, shTop + 12); sy++) {
           const idx = sy * w + x;
           if (pixels[idx * 4 + 3] >= 215) {
             const sp = idx * 4;
@@ -6891,28 +7318,29 @@ function polishLeftShoulderAndNeckContour(
         const refShG = toneShCnt > 0 ? toneShG / toneShCnt : bestShG;
         const refShB = toneShCnt > 0 ? toneShB / toneShCnt : bestShB;
         const dSh = Math.min(minShDist, Math.hypot(r - avgShR, g - avgShG, b - avgShB));
-        const isLightOrCheckPx = ((maxC >= 132 && (maxC - minC) <= 82) || lum >= 168) && minShDist <= 38 && (dBg > 14 || a >= 130);
+        const matchesTopGarPx = minShDist <= 34 && (dBg > 16 || a >= 145);
+        const isLightOrCheckPx = ((maxC >= 132 && (maxC - minC) <= 82) || lum >= 168) && minShDist <= 34 && (dBg > 16 || a >= 145);
 
         const isNearNeckHair = y < neckY + Math.round(subjH * 0.08) && lum < 82 && locAbLum > 110 && dBg > 24 && a >= 145;
         const isWarmSkin = r > g && g >= b * 0.85 && (r - b) >= 14 && dBg > 22;
         if (isNearNeckHair || isWarmSkin) continue;
 
-        if (!isLightOrCheckPx && y < shTop - 1 && a < 58 && dBg < dSh * 0.85 && dBg < 34) {
+        if (y < shTop - 1 && a < 58 && (dBg < minShDist * 0.88 || minShDist > 30) && dBg < 34) {
           pixels[p + 3] = 0;
           continue;
         }
-        if (!isLightOrCheckPx && y < shTop - 1 && bgShSep >= 22 && a < 140 && dSh > 32 && dBg < dSh * 0.72 && dBg <= 32) {
+        if (y < shTop - 1 && bgShSep >= 20 && a < 140 && minShDist > 28 && dBg < minShDist * 0.72 && dBg <= 32) {
           pixels[p + 3] = 0;
           continue;
         }
-        if (y >= shTop + 1 && ((a >= 180) || (a >= 140 && dSh <= 36 && (bgShSep < 22 || dBg > 18)) || (isLightOrCheckPx && a >= 115))) {
+        if (y >= shTop + 1 && ((a >= 180) || (a >= 135 && (dSh <= 36 || matchesTopGarPx) && (bgShSep < 22 || dBg > 16)))) {
           pixels[p + 3] = 255;
         }
 
         const curA = pixels[p + 3];
         const toneBgSep = Math.hypot(locAbR - refShR, locAbG - refShG, locAbB - refShB);
-        if (!isLightOrCheckPx && minShDist > 16 && curA > 0 && curA < 252 && toneBgSep > 16 && dBg < Math.max(48, toneBgSep * 1.35)) {
-          const blend = Math.min(0.86, (1 - curA / 255.0) + 0.44);
+        if (!isLightOrCheckPx && minShDist > 16 && curA > 0 && curA < 215 && toneBgSep > 16 && dBg < Math.max(48, toneBgSep * 1.35)) {
+          const blend = Math.min(0.76, (1 - curA / 255.0) * 0.92 + 0.14);
           pixels[p] = Math.round(r * (1 - blend) + refShR * blend);
           pixels[p + 1] = Math.round(g * (1 - blend) + refShG * blend);
           pixels[p + 2] = Math.round(b * (1 - blend) + refShB * blend);
@@ -7025,10 +7453,11 @@ function polishLeftShoulderAndNeckContour(
     const isLeft = side === "left";
     const ptsX: number[] = [];
     const ptsY: number[] = [];
-    const seedEndY = Math.min(h - 4, neckY + Math.max(12, Math.round(subjH * 0.12)));
+    const minValidY = Math.max(1, neckY - Math.round(subjH * 0.05));
+    const seedEndY = Math.min(h - 4, neckY + Math.max(14, Math.round(subjH * 0.14)));
     let sx = -1, sy = -1;
 
-    for (let y = Math.max(2, neckY + 1); y <= seedEndY && sx === -1; y++) {
+    for (let y = minValidY; y <= seedEndY && sx === -1; y++) {
       const row = y * w;
       if (isLeft) {
         for (let x = 2; x < coreCenterX - 6; x++) {
@@ -7052,10 +7481,7 @@ function polishLeftShoulderAndNeckContour(
 
     let cx = sx, cy = sy;
     let extDir = isLeft ? 6 : 2;
-    let px = cx + DX[extDir];
-    let py = cy + DY[extDir];
     const maxSteps = Math.min(total, 2 * (w + h));
-    const minValidY = Math.max(1, neckY - 4);
 
     for (let s = 0; s < maxSteps; s++) {
       ptsX.push(cx);
@@ -7064,6 +7490,8 @@ function polishLeftShoulderAndNeckContour(
       if (isLeft && cx >= coreCenterX - 2) break;
       if (!isLeft && cx <= coreCenterX + 2) break;
 
+      let px = cx + DX[extDir];
+      let py = cy + DY[extDir];
       let found = false;
       for (let step = 1; step <= 8; step++) {
         const d = isLeft ? (extDir - step + 8) % 8 : (extDir + step) % 8;
@@ -7071,7 +7499,9 @@ function polishLeftShoulderAndNeckContour(
         const ny = cy + DY[d];
         if (nx >= 1 && nx <= w - 2 && ny >= minValidY && ny <= endY) {
           if (fg[ny * w + nx] === 1) {
-            extDir = DIR_LUT[(py - ny + 1) * 3 + (px - nx + 1)];
+            const ldx = Math.max(-1, Math.min(1, px - nx));
+            const ldy = Math.max(-1, Math.min(1, py - ny));
+            extDir = DIR_LUT[(ldy + 1) * 3 + (ldx + 1)];
             cx = nx;
             cy = ny;
             found = true;
@@ -7103,9 +7533,10 @@ function polishLeftShoulderAndNeckContour(
       return { xs, ys, inNx, inNy };
     }
 
+    // Smooth bilateral arc-length fit (radius 8, perpendicular outlier gate <= 2.6, shift clamp <= 2.2px)
+    // so check-shirt staircase ripples along rounded shoulders become a clean continuous curve while sharp neck turns stay crisp.
     const radius = 8;
     for (let i = 0; i < n; i++) {
-      // Gently preserve endpoints at neck/bottom frame
       if (i < 2 || i > n - 3) {
         xs[i] = ptsX[i];
         ys[i] = ptsY[i];
@@ -7121,11 +7552,11 @@ function polishLeftShoulderAndNeckContour(
         for (let d = -radius; d <= radius; d++) {
           const j = i + d;
           if (j < 0 || j >= n) continue;
-          let wgt = Math.exp(-(d * d) / 22.0);
+          let wgt = Math.exp(-(d * d) / 20.0);
           if (prevX !== undefined && prevY !== undefined && prevTx !== undefined && prevTy !== undefined) {
             const perp = Math.abs((ptsX[j] - prevX) * (-prevTy) + (ptsY[j] - prevY) * prevTx);
-            if (perp > 3.5) continue;
-            wgt *= Math.exp(-(perp * perp) / 6.0);
+            if (perp > 3.2) continue;
+            wgt *= Math.exp(-(perp * perp) / 4.8);
           }
           const d2 = d * d;
           s0 += wgt;
@@ -7168,8 +7599,9 @@ function polishLeftShoulderAndNeckContour(
       const dxS = pass2.x0 - ptsX[i];
       const dyS = pass2.y0 - ptsY[i];
       const mag = Math.hypot(dxS, dyS);
-      if (mag > 2.3) {
-        const s = 2.3 / mag;
+      const maxShift = 2.2;
+      if (mag > maxShift) {
+        const s = maxShift / mag;
         xs[i] = ptsX[i] + dxS * s;
         ys[i] = ptsY[i] + dyS * s;
       } else {
@@ -7197,6 +7629,7 @@ function polishLeftShoulderAndNeckContour(
   const nearestK = new Int32Array(total).fill(-1);
   const nearestDistSq = new Float32Array(total).fill(999);
   const upperSkinHairCutoffY = neckY + Math.round(subjH * 0.11);
+  const finishMinY = Math.max(1, neckY - 2);
 
   const applyPhotographicShoulderFinish = (side: "left" | "right") => {
     const isLeft = side === "left";
@@ -7211,7 +7644,7 @@ function polishLeftShoulderAndNeckContour(
       const cy = Math.round(sm.ys[k]);
       for (let dy = -3; dy <= 3; dy++) {
         const y = cy + dy;
-        if (y <= neckY || y >= endY) continue;
+        if (y < finishMinY || y >= endY) continue;
         const row = y * w;
         for (let dx = -3; dx <= 3; dx++) {
           const x = cx + dx;
@@ -7242,20 +7675,25 @@ function polishLeftShoulderAndNeckContour(
       const origLum = 0.299 * origR + 0.587 * origG + 0.114 * origB;
       const maxC = Math.max(origR, origG, origB), minC = Math.min(origR, origG, origB);
 
-      // Sample along inward normal (+2..+9px) & outward normal (-2..-9px)
+      // Dense inward normal (+1..+8px) & outward normal (-2..-8px) sampling so 1-2px check stripes never go unmatched
       let garR = 0, garG = 0, garB = 0, garCnt = 0;
       let sameToneR = 0, sameToneG = 0, sameToneB = 0, sameToneCnt = 0;
       let minPatchGarD = 999;
+      let minGarLum = 255, maxGarLum = 0;
       let bgR = 0, bgG = 0, bgB = 0, bgCnt = 0;
 
-      for (let step = 2; step <= 9; step += 2) {
-        for (let lat = -2; lat <= 2; lat += 2) {
+      const inSteps = [1, 2, 3, 4, 6, 8];
+      for (const step of inSteps) {
+        for (let lat = -2; lat <= 2; lat++) {
           const ix = Math.max(0, Math.min(w - 1, Math.round(sm.xs[k] + nx * step - ny * lat)));
           const iy = Math.max(0, Math.min(h - 1, Math.round(sm.ys[k] + ny * step + nx * lat)));
           const inIdx = iy * w + ix;
-          if (snapPx[inIdx * 4 + 3] >= 210) {
+          if (snapPx[inIdx * 4 + 3] >= 200) {
             const inp = inIdx * 4;
             const ir = snapPx[inp], ig = snapPx[inp + 1], ib = snapPx[inp + 2];
+            const iLum = 0.299 * ir + 0.587 * ig + 0.114 * ib;
+            if (iLum < minGarLum) minGarLum = iLum;
+            if (iLum > maxGarLum) maxGarLum = iLum;
             garR += ir; garG += ig; garB += ib; garCnt++;
             const d = Math.hypot(origR - ir, origG - ig, origB - ib);
             if (d < minPatchGarD) minPatchGarD = d;
@@ -7263,20 +7701,23 @@ function polishLeftShoulderAndNeckContour(
               sameToneR += ir; sameToneG += ig; sameToneB += ib; sameToneCnt++;
             }
           }
-          const ox = Math.max(0, Math.min(w - 1, Math.round(sm.xs[k] - nx * (step + 1) - ny * lat)));
-          const oy = Math.max(0, Math.min(h - 1, Math.round(sm.ys[k] - ny * (step + 1) + nx * lat)));
-          const outIdx = oy * w + ox;
-          const oa = snapPx[outIdx * 4 + 3];
-          if ((hasOriginalRgb && oa <= 15) || (!hasOriginalRgb && oa > 5 && oa < 100)) {
-            const outp = outIdx * 4;
-            bgR += snapPx[outp]; bgG += snapPx[outp + 1]; bgB += snapPx[outp + 2]; bgCnt++;
+          if (step >= 2 && (lat === -2 || lat === 0 || lat === 2)) {
+            const ox = Math.max(0, Math.min(w - 1, Math.round(sm.xs[k] - nx * (step + 1) - ny * lat)));
+            const oy = Math.max(0, Math.min(h - 1, Math.round(sm.ys[k] - ny * (step + 1) + nx * lat)));
+            const outIdx = oy * w + ox;
+            const oa = snapPx[outIdx * 4 + 3];
+            if ((hasOriginalRgb && oa <= 15) || (!hasOriginalRgb && oa > 5 && oa < 100)) {
+              const outp = outIdx * 4;
+              bgR += snapPx[outp]; bgG += snapPx[outp + 1]; bgB += snapPx[outp + 2]; bgCnt++;
+            }
           }
         }
       }
 
-      const toneGarR = sameToneCnt >= 2 ? sameToneR / sameToneCnt : (garCnt > 0 ? garR / garCnt : origR);
-      const toneGarG = sameToneCnt >= 2 ? sameToneG / sameToneCnt : (garCnt > 0 ? garG / garCnt : origG);
-      const toneGarB = sameToneCnt >= 2 ? sameToneB / sameToneCnt : (garCnt > 0 ? garB / garCnt : origB);
+      const isCheckOrPatternPatch = garCnt >= 6 && (maxGarLum - minGarLum) >= 34;
+      const toneGarR = sameToneCnt >= 1 ? sameToneR / sameToneCnt : (garCnt > 0 ? garR / garCnt : origR);
+      const toneGarG = sameToneCnt >= 1 ? sameToneG / sameToneCnt : (garCnt > 0 ? garG / garCnt : origG);
+      const toneGarB = sameToneCnt >= 1 ? sameToneB / sameToneCnt : (garCnt > 0 ? garB / garCnt : origB);
       const avgBgR = bgCnt >= 2 ? bgR / bgCnt : fbBgR;
       const avgBgG = bgCnt >= 2 ? bgG / bgCnt : fbBgG;
       const avgBgB = bgCnt >= 2 ? bgB / bgCnt : fbBgB;
@@ -7285,7 +7726,7 @@ function polishLeftShoulderAndNeckContour(
       const dGar = Math.min(minPatchGarD, garCnt > 0 ? Math.hypot(origR - toneGarR, origG - toneGarG, origB - toneGarB) : 999);
       const dBg = Math.hypot(origR - avgBgR, origG - avgBgG, origB - avgBgB);
       const bgGarSep = garCnt > 0 ? Math.hypot(toneGarR - avgBgR, toneGarG - avgBgG, toneGarB - avgBgB) : 0;
-      const isLightOrCheckEdge = maxC >= 132 && (maxC - minC) <= 82 && (dGar <= 36 || dBg > 18);
+      const isLightOrCheckEdge = maxC >= 132 && (maxC - minC) <= 82 && minPatchGarD <= 34 && (dBg > 16 || origA >= 165);
 
       // Protect warm neck/collar skin or dark hair strands near neck corner
       if (y <= upperSkinHairCutoffY && origA >= 85) {
@@ -7294,31 +7735,58 @@ function polishLeftShoulderAndNeckContour(
         if (isWarmSkin || isDarkHairStr) continue;
       }
 
-      if (sd <= -0.85) {
-        // Outside smooth shoulder line: strip jagged outer nubs & background fringe
+      // Align optical shoulder contour symmetrically across both white squares & check stripes (sSurf = sd + 0.42):
+      // protruding sawtooth bumps outside the smooth curve (sSurf <= -0.58) are cleanly shaved off even if solid-locked earlier,
+      // while pixels on/inside the curve keep crisp visibility + smooth 1.10px anti-aliasing.
+      const sSurf = sd + 0.42;
+
+      if (sSurf <= -0.58) {
         if (origA === 0) continue;
-        if (origA < 220 || (!isLightOrCheckEdge && bgGarSep > 18 && dBg < dGar * 0.90)) {
+        if (origA < 220 || sSurf <= -0.82 || isCheckOrPatternPatch || (bgGarSep > 16 && dBg <= dGar * 1.02)) {
           pixels[p + 3] = 0;
+        } else {
+          // Taper any residual sub-pixel boundary pixel smoothly instead of leaving a sharp 255-alpha tooth
+          const fadeOut = Math.max(0, (sSurf + 0.82) / 0.24);
+          pixels[p + 3] = Math.round(origA * fadeOut * 0.16);
         }
-      } else if (sd < 0.85) {
-        // Sub-pixel natural edge transition (never paint fake outline onto empty sky)
-        const t = (sd + 0.85) / 1.70;
+      } else if (sSurf < 0.52) {
+        const t = (sSurf + 0.58) / 1.10;
         const targetA = Math.round(t * t * (3 - 2 * t) * 255);
         if (origA === 0) {
-          if (sd > 0.05 && dGar <= 36 && (bgGarSep <= 18 || dBg >= 18)) {
-            pixels[p + 3] = Math.min(targetA, 220);
+          // Smoothly heal 1px staircase notches along curved shoulders strictly from genuine garment pixels
+          if (
+            hasOriginalRgb &&
+            sSurf > 0.02 &&
+            (dGar <= 42 || isLightOrCheckEdge) &&
+            (bgGarSep <= 18 || (dBg >= 16 && dGar < dBg * 0.92))
+          ) {
+            pixels[p + 3] = Math.min(238, Math.max(95, targetA));
           }
           continue;
         }
-        if (sd < 0 && !isLightOrCheckEdge && bgGarSep > 18 && dBg < 20 && dGar > 38) {
-          pixels[p + 3] = Math.min(origA, Math.round(targetA * 0.55));
+        if (bgGarSep > 16 && dBg < dGar * 0.88 && (origA < 135 || (sSurf < -0.10 && origA < 210 && (dBg <= 30 || dGar > 24)))) {
+          pixels[p + 3] = (sSurf < -0.15 && origA < 175 && dBg <= 30 && dGar > 22) ? 0 : Math.min(origA, Math.round(targetA * 0.35));
+        } else if (origA >= 225 && sd >= -0.25 && (dGar <= 40 || isLightOrCheckEdge)) {
+          // Keep solid outer shoulder boundary pixels crisp & fully visible without jagged protrusions
+          pixels[p + 3] = Math.max(232, Math.min(origA, Math.max(targetA, 232)));
         } else {
-          pixels[p + 3] = Math.abs(origA - targetA) > 12 ? Math.round(origA * 0.22 + targetA * 0.78) : targetA;
+          pixels[p + 3] = Math.abs(origA - targetA) > 10 ? Math.round(origA * 0.22 + targetA * 0.78) : targetA;
         }
 
         const finalA = pixels[p + 3];
-        if (!isLightOrCheckEdge && finalA > 0 && finalA < 252 && garCnt > 0 && bgGarSep > 16 && dBg < dGar * 1.15 && dGar > 12) {
-          const aNorm = Math.max(0.28, Math.max(origA, finalA) / 255.0);
+        // Decontaminate mixed outer fringes using same-tone local core (check-safe since toneGar matches within <=44 RGB)
+        const needsOuterCheckUnmix = origA < 190 && dGar > 18 && dBg < dGar * 1.05;
+        if (
+          ((!isLightOrCheckEdge && !isCheckOrPatternPatch) || needsOuterCheckUnmix) &&
+          origA < 220 &&
+          finalA > 0 &&
+          finalA < 245 &&
+          garCnt > 0 &&
+          bgGarSep > 16 &&
+          dBg < dGar * 1.15 &&
+          dGar > 14
+        ) {
+          const aNorm = Math.max(0.28, origA / 255.0);
           const unmixR = Math.max(0, Math.min(255, (origR - avgBgR * (1 - aNorm)) / aNorm));
           const unmixG = Math.max(0, Math.min(255, (origG - avgBgG * (1 - aNorm)) / aNorm));
           const unmixB = Math.max(0, Math.min(255, (origB - avgBgB * (1 - aNorm)) / aNorm));
@@ -7327,17 +7795,17 @@ function polishLeftShoulderAndNeckContour(
           const anchorG = Math.max(Math.min(origG, toneGarG) - 10, Math.min(Math.max(origG, toneGarG) + 10, unmixG));
           const anchorB = Math.max(Math.min(origB, toneGarB) - 10, Math.min(Math.max(origB, toneGarB) + 10, unmixB));
 
-          const blend = Math.min(0.88, (1 - finalA / 255.0) * 0.48 + 0.36);
+          const blend = Math.min(0.86, (1 - finalA / 255.0) * 0.52 + 0.30);
           pixels[p] = Math.round(origR * (1 - blend) + anchorR * blend);
           pixels[p + 1] = Math.round(origG * (1 - blend) + anchorG * blend);
           pixels[p + 2] = Math.round(origB * (1 - blend) + anchorB * blend);
         }
       } else {
-        // Strictly >= 0.85px inside shoulder curve: lock interior opaque & clean
-        if (garCnt === 0 || origA >= 40 || dGar <= 42 || isLightOrCheckEdge || bgGarSep <= 22) {
+        // Strictly inside shoulder curve: lock interior 100% opaque & clean
+        if (garCnt === 0 || origA >= 35 || dGar <= 44 || isLightOrCheckEdge || bgGarSep <= 22) {
           pixels[p + 3] = 255;
-          if (!isLightOrCheckEdge && garCnt > 0 && bgGarSep > 16 && origA < 225 && dBg < dGar) {
-            const mix = Math.min(0.82, (1 - origA / 255.0) * 0.65 + 0.25);
+          if (!isLightOrCheckEdge && !isCheckOrPatternPatch && origA < 215 && garCnt > 0 && bgGarSep > 16 && dBg < dGar) {
+            const mix = Math.min(0.80, (1 - origA / 255.0) * 0.65 + 0.22);
             pixels[p] = Math.round(origR * (1 - mix) + toneGarR * mix);
             pixels[p + 1] = Math.round(origG * (1 - mix) + toneGarG * mix);
             pixels[p + 2] = Math.round(origB * (1 - mix) + toneGarB * mix);
@@ -7641,7 +8109,8 @@ export function removeSubjectBoundaryWhiteLine(
           a >= 135 &&
           (curBgDist > 20 || minFgDist <= 18);
 
-        if (!isLowerWhiteShirtEdge && minFgDist > 14 && fgBgDist > 24 && Math.min(minFgDist, curFgDist) > 14 && curBgDist < fgBgDist * 0.98) {
+        const maxDeconAlpha = isUpperZone ? 235 : 215;
+        if (!isLowerWhiteShirtEdge && a < maxDeconAlpha && minFgDist > 14 && fgBgDist > 24 && Math.min(minFgDist, curFgDist) > 14 && curBgDist < fgBgDist * 0.98) {
           const aNorm = Math.max(0.25, a / 255.0);
           const unmixR = Math.max(0, Math.min(255, (curR - sBgR * (1 - aNorm)) / aNorm));
           const unmixG = Math.max(0, Math.min(255, (curG - sBgG * (1 - aNorm)) / aNorm));
@@ -7651,7 +8120,9 @@ export function removeSubjectBoundaryWhiteLine(
           const anchorG = Math.max(Math.min(curG, refFgG) - 10, Math.min(Math.max(curG, refFgG) + 10, unmixG));
           const anchorB = Math.max(Math.min(curB, refFgB) - 10, Math.min(Math.max(curB, refFgB) + 10, unmixB));
 
-          const blend = Math.min(0.88, (1 - aNorm * 0.58));
+          const blend = isUpperZone
+            ? Math.min(0.88, 1 - aNorm * 0.58)
+            : Math.min(0.76, (1 - aNorm * 0.70) * 0.90);
           pixels[pIdx] = Math.round(curR * (1 - blend) + anchorR * blend);
           pixels[pIdx + 1] = Math.round(curG * (1 - blend) + anchorG * blend);
           pixels[pIdx + 2] = Math.round(curB * (1 - blend) + anchorB * blend);
@@ -7865,12 +8336,12 @@ function lockGarmentInteriorOpacity(
           if ((y >= colSolidTop[x] && a >= 20) || (insideNeckCol && a >= 40)) {
             pixels[pIdx + 3] = 255;
           }
-        } else if (!interiorOnly && x >= innerL && x <= innerR && y >= colSolidTop[x] + 1) {
+        } else if (!interiorOnly && x >= innerL + 1 && x <= innerR - 1 && y >= colSolidTop[x] + 2) {
           const r = pixels[pIdx], g = pixels[pIdx + 1], b = pixels[pIdx + 2];
           const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
           const distBg = Math.hypot(r - meanBgR, g - meanBgG, b - meanBgB);
-          const isProtectedLight = isWhiteOrCheck && maxC >= 132 && (maxC - minC) <= 82 && (distBg >= 16 || bgGarContrast < 22);
-          if (a >= 155 || (isProtectedLight && a >= 75)) {
+          const isProtectedLight = isWhiteOrCheck && maxC >= 132 && (maxC - minC) <= 82 && distBg >= 16;
+          if (a >= 155 || (isProtectedLight && a >= 110)) {
             pixels[pIdx + 3] = 255;
           }
         }
@@ -7937,6 +8408,527 @@ function lockGarmentInteriorOpacity(
   }
 }
 
+/**
+ * Universal 360-Degree Clean & Clear Subject Boundary Polisher:
+ * Tightens wide fuzzy perimeter ramps into a crisp, clear studio boundary edge,
+ * removes lingering outer background haze/halos around hair, face, ears, arms, torso & hem,
+ * and unmixes semi-transparent boundary colors against same-tone interior pixels.
+ */
+function polishFullSubjectBoundaryCleanAndClear(
+  pixels: Uint8ClampedArray,
+  w: number,
+  h: number,
+  bgModels?: BackgroundModels,
+  hasOriginalRgb = true
+) {
+  const total = w * h;
+  const alphaCopy = new Uint8Array(total);
+  for (let i = 0; i < total; i++) alphaCopy[i] = pixels[i * 4 + 3];
+
+  let minX = w, maxX = 0, minY = h, maxY = 0;
+  let sumX = 0, subjCnt = 0;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      if (alphaCopy[row + x] > 25) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        sumX += x;
+        subjCnt++;
+      }
+    }
+  }
+  if (subjCnt < 150 || maxX <= minX || maxY <= minY) return;
+
+  const subjH = maxY - minY;
+  const subjW = maxX - minX;
+  const centerX = Math.round(sumX / subjCnt);
+  let neckY = Math.floor(minY + subjH * 0.45);
+  let minSpan = Infinity;
+  for (let y = Math.floor(minY + subjH * 0.28); y <= Math.floor(minY + subjH * 0.56); y++) {
+    const row = y * w;
+    let l = -1, r = -1;
+    for (let x = minX; x <= maxX; x++) if (alphaCopy[row + x] >= 165) { l = x; break; }
+    for (let x = maxX; x >= minX; x--) if (alphaCopy[row + x] >= 165) { r = x; break; }
+    if (l !== -1 && r > l && r - l < minSpan) {
+      minSpan = r - l;
+      neckY = y;
+    }
+  }
+  const upperZoneEndY = Math.min(Math.floor(minY + subjH * 0.50), neckY + 2);
+
+  // Sample authentic face/neck skin reference so skin edges stay warm & intact
+  let skR = 0, skG = 0, skB = 0, skCnt = 0;
+  for (let y = Math.floor(minY + subjH * 0.22); y <= Math.floor(minY + subjH * 0.48); y += 2) {
+    const row = y * w;
+    for (let x = Math.max(0, centerX - Math.round(subjW * 0.12)); x <= Math.min(w - 1, centerX + Math.round(subjW * 0.12)); x += 2) {
+      const i = row + x;
+      if (alphaCopy[i] >= 220) {
+        const p = i * 4;
+        const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
+        if (r > g && g >= b * 0.85 && r - b >= 12) {
+          skR += r; skG += g; skB += b; skCnt++;
+        }
+      }
+    }
+  }
+  const avgSkR = skCnt > 0 ? skR / skCnt : 0;
+  const avgSkG = skCnt > 0 ? skG / skCnt : 0;
+  const avgSkB = skCnt > 0 ? skB / skCnt : 0;
+
+  // Build 24px spatial local background grid from clean exterior pixels
+  const cellSz = 24;
+  const gCols = Math.max(1, Math.ceil(w / cellSz));
+  const gRows = Math.max(1, Math.ceil(h / cellSz));
+  const gSumR = new Float32Array(gCols * gRows);
+  const gSumG = new Float32Array(gCols * gRows);
+  const gSumB = new Float32Array(gCols * gRows);
+  const gCnt = new Int32Array(gCols * gRows);
+
+  for (let y = 0; y < h; y += 2) {
+    const gy = Math.min(gRows - 1, Math.floor(y / cellSz));
+    const row = y * w;
+    for (let x = 0; x < w; x += 2) {
+      const idx = row + x;
+      const a = alphaCopy[idx];
+      if (!(hasOriginalRgb ? a <= 15 : (a > 5 && a < 95))) continue;
+      const p = idx * 4;
+      const c = gy * gCols + Math.min(gCols - 1, Math.floor(x / cellSz));
+      gSumR[c] += pixels[p]; gSumG[c] += pixels[p + 1]; gSumB[c] += pixels[p + 2]; gCnt[c]++;
+    }
+  }
+
+  const fbBgR = bgModels?.global?.meanR ?? 245;
+  const fbBgG = bgModels?.global?.meanG ?? 245;
+  const fbBgB = bgModels?.global?.meanB ?? 245;
+  const cellBgR = new Float32Array(gCols * gRows);
+  const cellBgG = new Float32Array(gCols * gRows);
+  const cellBgB = new Float32Array(gCols * gRows);
+  const cellDist = new Int32Array(gCols * gRows);
+  for (let i = 0; i < gCols * gRows; i++) {
+    if (gCnt[i] >= 3) {
+      cellBgR[i] = gSumR[i] / gCnt[i];
+      cellBgG[i] = gSumG[i] / gCnt[i];
+      cellBgB[i] = gSumB[i] / gCnt[i];
+      cellDist[i] = 0;
+    } else {
+      cellBgR[i] = fbBgR; cellBgG[i] = fbBgG; cellBgB[i] = fbBgB; cellDist[i] = 9999;
+    }
+  }
+  for (let gy = 0; gy < gRows; gy++) {
+    for (let gx = 0; gx < gCols; gx++) {
+      const i = gy * gCols + gx;
+      if (cellDist[i] === 0) continue;
+      if (gx > 0 && cellDist[i - 1] + 1 < cellDist[i]) {
+        cellDist[i] = cellDist[i - 1] + 1;
+        cellBgR[i] = cellBgR[i - 1]; cellBgG[i] = cellBgG[i - 1]; cellBgB[i] = cellBgB[i - 1];
+      }
+      if (gy > 0 && cellDist[i - gCols] + 1 < cellDist[i]) {
+        cellDist[i] = cellDist[i - gCols] + 1;
+        cellBgR[i] = cellBgR[i - gCols]; cellBgG[i] = cellBgG[i - gCols]; cellBgB[i] = cellBgB[i - gCols];
+      }
+    }
+  }
+  for (let gy = gRows - 1; gy >= 0; gy--) {
+    for (let gx = gCols - 1; gx >= 0; gx--) {
+      const i = gy * gCols + gx;
+      if (cellDist[i] === 0) continue;
+      if (gx < gCols - 1 && cellDist[i + 1] + 1 < cellDist[i]) {
+        cellDist[i] = cellDist[i + 1] + 1;
+        cellBgR[i] = cellBgR[i + 1]; cellBgG[i] = cellBgG[i + 1]; cellBgB[i] = cellBgB[i + 1];
+      }
+      if (gy < gRows - 1 && cellDist[i + gCols] + 1 < cellDist[i]) {
+        cellDist[i] = cellDist[i + gCols] + 1;
+        cellBgR[i] = cellBgR[i + gCols]; cellBgG[i] = cellBgG[i + gCols]; cellBgB[i] = cellBgB[i + gCols];
+      }
+    }
+  }
+
+  // Distance from solid foreground core (>= 220) AND exterior transparent air (<= 15)
+  const coreDist = new Uint8Array(total).fill(16);
+  const extDist = new Uint8Array(total).fill(16);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      const i = row + x;
+      const a = alphaCopy[i];
+      if (a >= 220) coreDist[i] = 0;
+      else {
+        let d = 16;
+        if (x > 0) d = Math.min(d, coreDist[i - 1] + 1);
+        if (y > 0) d = Math.min(d, coreDist[i - w] + 1);
+        coreDist[i] = d;
+      }
+      if (a <= 15) extDist[i] = 0;
+      else {
+        let d = 16;
+        if (x > 0) d = Math.min(d, extDist[i - 1] + 1);
+        if (y > 0) d = Math.min(d, extDist[i - w] + 1);
+        extDist[i] = d;
+      }
+    }
+  }
+  for (let y = h - 1; y >= 0; y--) {
+    const row = y * w;
+    for (let x = w - 1; x >= 0; x--) {
+      const i = row + x;
+      let dc = coreDist[i];
+      if (x < w - 1) dc = Math.min(dc, coreDist[i + 1] + 1);
+      if (y < h - 1) dc = Math.min(dc, coreDist[i + w] + 1);
+      coreDist[i] = dc;
+      let de = extDist[i];
+      if (x < w - 1) de = Math.min(de, extDist[i + 1] + 1);
+      if (y < h - 1) de = Math.min(de, extDist[i + w] + 1);
+      extDist[i] = de;
+    }
+  }
+
+  // Clean & clarify the 1-3px boundary band around the entire 360-degree contour
+  const preClean = new Uint8ClampedArray(pixels);
+  for (let y = 1; y < h - 1; y++) {
+    const row = y * w;
+    const isUpper = y <= upperZoneEndY;
+    const gy = Math.min(gRows - 1, Math.floor(y / cellSz));
+
+    for (let x = 1; x < w - 1; x++) {
+      const idx = row + x;
+      const a = alphaCopy[idx];
+      if (a === 0 || extDist[idx] > 3 || (a >= 242 && coreDist[idx] <= 1)) continue;
+
+      const p = idx * 4;
+      const r = preClean[p], g = preClean[p + 1], b = preClean[p + 2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
+
+      const cIdx = gy * gCols + Math.min(gCols - 1, Math.floor(x / cellSz));
+      let bgR = 0, bgG = 0, bgB = 0, bgC = 0;
+      let sameR = 0, sameG = 0, sameB = 0, sameC = 0;
+      let fgR = 0, fgG = 0, fgB = 0, fgC = 0;
+      let minFgD = 999, minFgLum = 255, maxFgLum = 0;
+
+      for (let dy = -3; dy <= 3; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= h) continue;
+        const nRow = ny * w;
+        for (let dx = -3; dx <= 3; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= w) continue;
+          const nIdx = nRow + nx;
+          const na = alphaCopy[nIdx];
+          const np = nIdx * 4;
+          const nr = preClean[np], ng = preClean[np + 1], nb = preClean[np + 2];
+          if (na >= 215) {
+            const d = Math.hypot(r - nr, g - ng, b - nb);
+            if (d < minFgD) minFgD = d;
+            if (d <= 42) {
+              sameR += nr; sameG += ng; sameB += nb; sameC++;
+            }
+            const nLum = 0.299 * nr + 0.587 * ng + 0.114 * nb;
+            if (nLum < minFgLum) minFgLum = nLum;
+            if (nLum > maxFgLum) maxFgLum = nLum;
+            fgR += nr; fgG += ng; fgB += nb; fgC++;
+          } else if ((hasOriginalRgb && na <= 15) || (!hasOriginalRgb && na > 5 && na < 90)) {
+            bgR += nr; bgG += ng; bgB += nb; bgC++;
+          }
+        }
+      }
+
+      const locBgR = bgC >= 2 ? bgR / bgC : cellBgR[cIdx];
+      const locBgG = bgC >= 2 ? bgG / bgC : cellBgG[cIdx];
+      const locBgB = bgC >= 2 ? bgB / bgC : cellBgB[cIdx];
+      const locBgLum = 0.299 * locBgR + 0.587 * locBgG + 0.114 * locBgB;
+      const dBg = Math.hypot(r - locBgR, g - locBgG, b - locBgB);
+      const refFgR = sameC > 0 ? sameR / sameC : (fgC > 0 ? fgR / fgC : r);
+      const refFgG = sameC > 0 ? sameG / sameC : (fgC > 0 ? fgG / fgC : g);
+      const refFgB = sameC > 0 ? sameB / sameC : (fgC > 0 ? fgB / fgC : b);
+      const dFg = Math.min(minFgD, fgC > 0 ? Math.hypot(r - refFgR, g - refFgG, b - refFgB) : 999);
+      const fgBgSep = fgC > 0 ? Math.hypot(refFgR - locBgR, refFgG - locBgG, refFgB - locBgB) : 0;
+
+      const isWarmSkin = r > g && g >= b * 0.85 && (r - b) >= 12;
+      const dSkin = skCnt > 0 ? Math.hypot(r - avgSkR, g - avgSkG, b - avgSkB) : 999;
+      const isRealSkin = isWarmSkin && (skCnt === 0 ? dBg > 22 : (dSkin < dBg * 0.92 || (dSkin <= 28 && dBg > 18)));
+      const isDarkHair = isUpper && lum < 88 && locBgLum > 110 && dBg > 24 && a >= 48;
+      const isCheckPatch = fgC >= 5 && maxFgLum - minFgLum >= 34;
+
+      const cDist = coreDist[idx];
+
+      // 1. Strip blurry >= 2px outer haze/halo & background-matched spread patches (never eat dark hair wisps or smooth shoulder rim)
+      if (cDist >= 2) {
+        if (!isDarkHair && !(isRealSkin && a >= 95)) {
+          if (a < 64 || (a < 155 && (minFgD > 26 || (fgBgSep > 18 && dBg < minFgD * 0.88)) && dBg <= 42)) {
+            pixels[p + 3] = 0;
+            continue;
+          }
+          if (a < 192 && dBg <= 32 && minFgD > 24 && dBg < minFgD * 0.86) {
+            pixels[p + 3] = 0;
+            continue;
+          }
+          if (a < 170) {
+            // Tighten soft outer blur without cutting solid limbs/shoulders
+            pixels[p + 3] = Math.round(a * 0.50);
+          }
+        }
+      } else {
+        // cDist <= 1: Right on the 1px contour
+        if (a < 36 && !isDarkHair && !(isRealSkin && a >= 25)) {
+          pixels[p + 3] = 0;
+          continue;
+        }
+        if (a < 120 && !isDarkHair && !isRealSkin && fgBgSep > 20 && dBg < 26 && minFgD > 26) {
+          pixels[p + 3] = 0;
+          continue;
+        }
+        if (a >= 228 && (minFgD <= 30 || (maxC >= 132 && maxC - minC <= 82 && minFgD <= 34)) && (dBg > 16 || a >= 235)) {
+          pixels[p + 3] = 255;
+        }
+      }
+
+      // 2. Decontaminate surviving boundary RGB tints cleanly using same-tone local core
+      const curA = pixels[p + 3];
+      const allowOuterUnmix = curA < 195 && dBg < minFgD * 0.92 && minFgD > 18;
+      if (
+        curA > 0 &&
+        curA < 236 &&
+        fgC > 0 &&
+        fgBgSep > 18 &&
+        minFgD > (isCheckPatch ? 18 : 12) &&
+        (!(isCheckPatch && maxC >= 132 && maxC - minC <= 82 && minFgD <= 32) || allowOuterUnmix)
+      ) {
+        const aNorm = Math.max(0.28, curA / 255.0);
+        const unmixR = Math.max(0, Math.min(255, (r - locBgR * (1 - aNorm)) / aNorm));
+        const unmixG = Math.max(0, Math.min(255, (g - locBgG * (1 - aNorm)) / aNorm));
+        const unmixB = Math.max(0, Math.min(255, (b - locBgB * (1 - aNorm)) / aNorm));
+
+        const anchorR = Math.max(Math.min(r, refFgR) - 10, Math.min(Math.max(r, refFgR) + 10, unmixR));
+        const anchorG = Math.max(Math.min(g, refFgG) - 10, Math.min(Math.max(g, refFgG) + 10, unmixG));
+        const anchorB = Math.max(Math.min(b, refFgB) - 10, Math.min(Math.max(b, refFgB) + 10, unmixB));
+
+        const blend = Math.min(0.86, (1 - aNorm) * 0.65 + (dFg > 20 ? 0.25 : 0.14));
+        pixels[p] = Math.round(r * (1 - blend) + anchorR * blend);
+        pixels[p + 1] = Math.round(g * (1 - blend) + anchorG * blend);
+        pixels[p + 2] = Math.round(b * (1 - blend) + anchorB * blend);
+      }
+    }
+  }
+}
+
+/**
+ * Adaptive Studio Lighting Controller for Subject & Both Shoulders:
+ * Balances uneven directional side-lighting between left & right shoulders,
+ * gently recovers blown-out bright white highlights so shoulder contours remain visible
+ * even against bright/white backgrounds, and lifts crushed shadows on dark shoulders
+ * while strictly preserving natural skin tones, check/print patterns, and overall mood.
+ */
+function controlPhotoLightingForShouldersAndSubject(
+  pixels: Uint8ClampedArray,
+  w: number,
+  h: number
+) {
+  const total = w * h;
+  let minX = w, maxX = 0, minY = h, maxY = 0;
+  let sumX = 0, subjCnt = 0;
+
+  for (let y = 0; y < h; y += 2) {
+    const row = y * w;
+    for (let x = 0; x < w; x += 2) {
+      if (pixels[(row + x) * 4 + 3] >= 180) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        sumX += x;
+        subjCnt++;
+      }
+    }
+  }
+  if (subjCnt < 120 || maxX <= minX + 12 || maxY <= minY + 12) return;
+
+  const subjW = maxX - minX;
+  const subjH = maxY - minY;
+  const centerX = Math.round(sumX / subjCnt);
+
+  // Locate neck Y so shoulder left/right exposure metrics stay decoupled from face lighting
+  let neckY = Math.floor(minY + subjH * 0.45);
+  let minSpan = Infinity;
+  for (let y = Math.floor(minY + subjH * 0.26); y <= Math.floor(minY + subjH * 0.56); y += 2) {
+    const row = y * w;
+    let l = -1, r = -1;
+    for (let x = minX; x <= maxX; x += 2) if (pixels[(row + x) * 4 + 3] >= 165) { l = x; break; }
+    for (let x = maxX; x >= minX; x -= 2) if (pixels[(row + x) * 4 + 3] >= 165) { r = x; break; }
+    if (l !== -1 && r > l && r - l < minSpan) {
+      minSpan = r - l;
+      neckY = y;
+    }
+  }
+  const shoulderStartY = Math.min(Math.floor(minY + subjH * 0.58), Math.max(Math.floor(minY + subjH * 0.40), neckY + Math.round(subjH * 0.02)));
+
+  let subjLumSum = 0, subjSamples = 0;
+  let lLumSum = 0, lCnt = 0, lBrightCnt = 0;
+  let rLumSum = 0, rCnt = 0, rBrightCnt = 0;
+  let shBrightCnt = 0, shTotalCnt = 0;
+
+  for (let y = minY; y <= maxY; y += 2) {
+    const row = y * w;
+    for (let x = minX; x <= maxX; x += 2) {
+      const idx = row + x;
+      const p = idx * 4;
+      if (pixels[p + 3] < 180) continue;
+      const lum = 0.299 * pixels[p] + 0.587 * pixels[p + 1] + 0.114 * pixels[p + 2];
+      subjLumSum += lum;
+      subjSamples++;
+
+      if (y >= shoulderStartY) {
+        shTotalCnt++;
+        if (lum >= 216) shBrightCnt++;
+        const offset = x - centerX;
+        if (offset < -Math.round(subjW * 0.06)) {
+          lLumSum += lum;
+          lCnt++;
+          if (lum >= 216) lBrightCnt++;
+        } else if (offset > Math.round(subjW * 0.06)) {
+          rLumSum += lum;
+          rCnt++;
+          if (lum >= 216) rBrightCnt++;
+        }
+      }
+    }
+  }
+
+  if (subjSamples < 80) return;
+  const avgSubjLum = subjLumSum / subjSamples;
+  const avgLLum = lCnt >= 20 ? lLumSum / lCnt : avgSubjLum;
+  const avgRLum = rCnt >= 20 ? rLumSum / rCnt : avgSubjLum;
+  const shoulderLumAvg = (avgLLum + avgRLum) * 0.5;
+  const shBrightFrac = shTotalCnt > 0 ? shBrightCnt / shTotalCnt : 0;
+  const lBrightFrac = lCnt > 0 ? lBrightCnt / lCnt : 0;
+  const rBrightFrac = rCnt > 0 ? rBrightCnt / rCnt : 0;
+
+  // 1. Directional Left vs. Right Shoulder Fill-Light Balance
+  const sideDiff = avgLLum - avgRLum; // >0 => left brighter & right darker; <0 => left darker & right brighter
+  const absSideDiff = Math.abs(sideDiff);
+  const darkerLeftBoost = sideDiff < -8 ? Math.min(0.28, ((-sideDiff - 8) / 85) * 0.28) : 0;
+  const darkerRightBoost = sideDiff > 8 ? Math.min(0.28, ((sideDiff - 8) / 85) * 0.28) : 0;
+
+  // 2. Underexposed Shoulder & Overall Portrait Shadow Lift
+  const dualShoulderLift = shoulderLumAvg < 82 ? Math.min(0.22, ((82 - shoulderLumAvg) / 60) * 0.22) : 0;
+  const globalShadowLift = avgSubjLum < 105 ? Math.min(0.14, ((105 - avgSubjLum) / 55) * 0.14) : 0;
+
+  // 3. Overexposed Highlight Recovery (prevents bright white/pastel shoulders from blowing out)
+  const globalHighlightPull =
+    avgSubjLum > 185 || shBrightFrac > 0.24
+      ? Math.min(0.095, Math.max((avgSubjLum - 185) / 140, (shBrightFrac - 0.24) * 0.22) * 0.095)
+      : 0;
+  const leftHighlightPull = lBrightFrac > 0.28 ? Math.min(0.07, (lBrightFrac - 0.28) * 0.18) : 0;
+  const rightHighlightPull = rBrightFrac > 0.28 ? Math.min(0.07, (rBrightFrac - 0.28) * 0.18) : 0;
+
+  // Fast boundary proximity flag (extDist <= 2) for subtle bright-shoulder edge definition
+  const isNearExt = new Uint8Array(total);
+  for (let y = Math.max(1, shoulderStartY); y < h - 1; y++) {
+    const row = y * w;
+    for (let x = 1; x < w - 1; x++) {
+      const i = row + x;
+      if (pixels[i * 4 + 3] === 0) continue;
+      if (
+        pixels[(i - 1) * 4 + 3] <= 20 ||
+        pixels[(i + 1) * 4 + 3] <= 20 ||
+        pixels[(i - w) * 4 + 3] <= 20 ||
+        pixels[(i + w) * 4 + 3] <= 20
+      ) {
+        isNearExt[i] = 1;
+      }
+    }
+  }
+  const tmpExt = new Uint8Array(isNearExt);
+  for (let y = Math.max(1, shoulderStartY); y < h - 1; y++) {
+    const row = y * w;
+    for (let x = 1; x < w - 1; x++) {
+      const i = row + x;
+      if (tmpExt[i] === 1 && pixels[i * 4 + 3] > 0) {
+        if (pixels[(i - 1) * 4 + 3] > 0) isNearExt[i - 1] = 1;
+        if (pixels[(i + 1) * 4 + 3] > 0) isNearExt[i + 1] = 1;
+        if (pixels[(i - w) * 4 + 3] > 0) isNearExt[i - w] = 1;
+        if (pixels[(i + w) * 4 + 3] > 0) isNearExt[i + w] = 1;
+      }
+    }
+  }
+
+  // Skip if photo already has balanced exposure & controlled highlights on both shoulders
+  const needsAnyAdjustment =
+    absSideDiff >= 8 || dualShoulderLift > 0.01 || globalShadowLift > 0.01 || globalHighlightPull > 0.01 || shBrightFrac > 0.12;
+  if (!needsAnyAdjustment) return;
+
+  const halfSpanX = Math.max(24, subjW * 0.36);
+  const neckBlendH = Math.max(12, Math.round(subjH * 0.10));
+
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    // Apply full shoulder fill/recovery on shoulders & torso; keep face modulation subtle (<= 45%) for natural sculpting
+    const vertFactor =
+      y >= shoulderStartY
+        ? 1.0
+        : y >= shoulderStartY - neckBlendH
+          ? 0.45 + 0.55 * ((y - (shoulderStartY - neckBlendH)) / neckBlendH)
+          : 0.45;
+
+    for (let x = 0; x < w; x++) {
+      const i = row + x;
+      const p = i * 4;
+      if (pixels[p + 3] === 0) continue;
+
+      const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (lum < 4) continue; // Keep pure true-black shadows anchored
+
+      const dxNorm = (x - centerX) / halfSpanX; // -1 (left shoulder) .. +1 (right shoulder)
+      const leftWeight = Math.max(0, Math.min(1, (-dxNorm + 0.15) / 0.85));
+      const rightWeight = Math.max(0, Math.min(1, (dxNorm + 0.15) / 0.85));
+
+      const isWarmSkin = r > g && g >= b * 0.85 && (r - b) >= 12;
+      const skinDamp = isWarmSkin ? 0.55 : 1.0;
+
+      // Shadow & Midtone Fill-Light Gain (concentrated on darker areas, tapering cleanly near highlights)
+      const shadowCurve = Math.pow(Math.max(0, Math.min(1, (205 - lum) / 195)), 0.90);
+      const deepFloorGuard = lum < 22 ? lum / 22 : 1.0;
+      const spatialFill =
+        (darkerLeftBoost * leftWeight + darkerRightBoost * rightWeight + dualShoulderLift) * vertFactor +
+        globalShadowLift * (y >= shoulderStartY ? 1.0 : 0.75);
+      const liftGain = spatialFill * shadowCurve * deepFloorGuard * skinDamp;
+
+      // Highlight Recovery Pull (concentrated smoothly on lum > 200 to stop blown white shoulders from vanishing)
+      let pullLoss = 0;
+      if (lum > 198) {
+        const hiCurve = Math.pow((lum - 198) / 57.0, 1.15);
+        const sidePull = (leftHighlightPull * leftWeight + rightHighlightPull * rightWeight) * vertFactor;
+        const basePull = (globalHighlightPull + sidePull) * (y >= shoulderStartY ? 1.0 : 0.45);
+        pullLoss = basePull * hiCurve * (isWarmSkin ? 0.40 : 1.0);
+      }
+
+      // Subtle 1-2px bright-shoulder contour definition so white/pastel shoulders always read cleanly against light/white BGs
+      const brightRimDef =
+        isNearExt[i] === 1 && y >= shoulderStartY && lum >= 216 && !isWarmSkin
+          ? 0.045 * Math.min(1, (lum - 210) / 42)
+          : 0;
+
+      let scale = 1.0 + liftGain - pullLoss - brightRimDef;
+      scale = Math.max(0.86, Math.min(1.28, scale));
+
+      if (Math.abs(scale - 1.0) > 0.004) {
+        // Soft channel headroom roll-off so boosted shoulders never clip a single R/G/B channel
+        const maxCh = Math.max(r, g, b);
+        if (scale > 1.0 && maxCh * scale > 248) {
+          const safeScale = (248 - maxCh) / Math.max(1, maxCh * (scale - 1.0));
+          scale = 1.0 + (scale - 1.0) * Math.max(0, Math.min(1, safeScale));
+        }
+        pixels[p] = Math.min(255, Math.max(0, Math.round(r * scale)));
+        pixels[p + 1] = Math.min(255, Math.max(0, Math.round(g * scale)));
+        pixels[p + 2] = Math.min(255, Math.max(0, Math.round(b * scale)));
+      }
+    }
+  }
+}
+
 // -------------------------------------------------------------
 // MAIN ORCHESTRATION PIPELINE
 // -------------------------------------------------------------
@@ -7956,15 +8948,27 @@ export async function removeBackground(
   onProgress("Initializing AI Engine...");
 
   const {
-    engine = 'rmbg',
+    engine = 'auto',
+    isolateMainSubject = true,
+    severTouchingObjects = true,
+    objectStrictness = 82,
     removeBackgroundNoise = true,
     decontaminateHalos = true,
     extendLeftShoulder = true,
     leftShoulderExtensionAmount,
   } = options;
 
-  // Always ensure state-of-the-art RMBG-1.4 is loaded
-  await ensureIsnetLoaded().catch(console.error);
+  // Load Dual-AI Engines (RMBG-1.4 + MODNet) cleanly so both are ready
+  if (engine === 'modnet') {
+    await ensureModnetLoaded().catch(console.error);
+  } else if (engine === 'auto' || engine === 'strict_subject') {
+    await Promise.all([
+      ensureIsnetLoaded().catch(console.error),
+      ensureModnetLoaded().catch(console.error),
+    ]);
+  } else {
+    await ensureIsnetLoaded().catch(console.error);
+  }
 
   // Ensure input is a string (DataURL or URL)
   let imageSrcForDownscale: string;
@@ -7982,13 +8986,13 @@ export async function removeBackground(
   const imageSrc = await downscaleImageIfNeeded(imageSrcForDownscale, 1024);
 
   try {
-    onProgress("Segmenting Subject & Details...");
+    onProgress("Running RMBG-1.4 & MODNet Dual-AI...");
 
     let resSegmentation = null;
     let resModnet = null;
 
     // Dual-AI Consensus Pipeline:
-    // Run RMBG-1.4 (universal/sharp subject & clothing) AND MODNet (portrait/hair/ear/chair specialist)
+    // Run RMBG-1.4 (universal/sharp subject & clothing) AND MODNet (portrait/hair/ear/object specialist)
     if (engine === 'modnet') {
       await ensureModnetLoaded().catch(console.error);
       if (modnetPipeline) {
@@ -7998,21 +9002,41 @@ export async function removeBackground(
         });
       }
     } else if (engine === 'auto' || engine === 'strict_subject') {
-      await ensureModnetLoaded().catch(() => {});
-      const [rmbgRes, modnetRes] = await Promise.all([
-        isnetPipeline
-          ? isnetPipeline(imageSrc).catch((e: any) => {
-              console.warn("RMBG-1.4 inference failed:", e);
-              return null;
-            })
-          : Promise.resolve(null),
-        modnetPipeline
-          ? modnetPipeline(imageSrc).catch((e: any) => {
-              console.warn("MODNet auxiliary inference failed:", e);
-              return null;
-            })
-          : Promise.resolve(null),
-      ]);
+      const canRunModnet = Boolean(modnetPipeline && isnetModelId !== "Xenova/modnet");
+      let rmbgRes = null;
+      let modnetRes = null;
+
+      if (hasWebGPU) {
+        [rmbgRes, modnetRes] = await Promise.all([
+          isnetPipeline
+            ? isnetPipeline(imageSrc).catch((e: any) => {
+                console.warn("RMBG-1.4 inference failed:", e);
+                return null;
+              })
+            : Promise.resolve(null),
+          canRunModnet
+            ? modnetPipeline(imageSrc).catch((e: any) => {
+                console.warn("MODNet inference failed:", e);
+                return null;
+              })
+            : Promise.resolve(null),
+        ]);
+      } else {
+        // Sequential execution under WASM keeps single-worker memory predictable and guarantees both masks finish cleanly
+        if (isnetPipeline) {
+          rmbgRes = await isnetPipeline(imageSrc).catch((e: any) => {
+            console.warn("RMBG-1.4 WASM inference failed:", e);
+            return null;
+          });
+        }
+        if (canRunModnet) {
+          modnetRes = await modnetPipeline(imageSrc).catch((e: any) => {
+            console.warn("MODNet WASM inference failed:", e);
+            return null;
+          });
+        }
+      }
+
       resSegmentation = rmbgRes || modnetRes;
       if (rmbgRes && modnetRes) {
         resModnet = modnetRes;
@@ -8033,25 +9057,38 @@ export async function removeBackground(
       }
     }
 
-    if (!resSegmentation && hasWebGPU) {
-      console.warn("[AI] WebGPU inference failed, forcing WASM fallback...");
-      hasWebGPU = false; 
+    // If WebGPU failed for either/both models, retry BOTH cleanly on WASM so Dual-AI consensus never silently drops
+    if ((!resSegmentation || ((engine === 'auto' || engine === 'strict_subject') && !resModnet)) && hasWebGPU) {
+      console.warn("[AI] WebGPU inference incomplete, retrying on WASM for full RMBG + MODNet Dual-AI...");
+      hasWebGPU = false;
       isnetPipeline = null;
+      isnetModelId = "";
       modnetPipeline = null;
-      await ensureIsnetLoaded().catch(console.error);
-      if (isnetPipeline) {
-        resSegmentation = await isnetPipeline(imageSrc).catch((e: any) => {
-          console.error("WASM RMBG pass failed", e);
-          return null;
-        });
-      }
+      await Promise.all([
+        ensureIsnetLoaded().catch(console.error),
+        ensureModnetLoaded().catch(console.error),
+      ]);
+      const rmbgWasm = isnetPipeline
+        ? await isnetPipeline(imageSrc).catch((e: any) => {
+            console.error("WASM RMBG pass failed", e);
+            return null;
+          })
+        : null;
+      const modnetWasm = (modnetPipeline && isnetModelId !== "Xenova/modnet")
+        ? await modnetPipeline(imageSrc).catch((e: any) => {
+            console.warn("WASM MODNet pass failed", e);
+            return null;
+          })
+        : null;
+      resSegmentation = rmbgWasm || modnetWasm;
+      resModnet = rmbgWasm && modnetWasm ? modnetWasm : null;
     }
 
     if (!resSegmentation) {
       throw new Error("AI models failed to process the image.");
     }
 
-    onProgress("Processing Subject & Preserving Details...");
+    onProgress("Fusing Dual-AI Subject & Close-Object Masks...");
 
     const getMask = (result: any) => {
       if (!result || result.length === 0) return null;
@@ -8072,8 +9109,8 @@ export async function removeBackground(
     if (rawMask) {
       maskData = extractAlphaArrayFromMask(rawMask);
       isolateAndCleanSubjectMask(maskData, {
-        isolateMainSubject: options.isolateMainSubject ?? engine === 'strict_subject',
-        objectStrictness: options.objectStrictness ?? 75,
+        isolateMainSubject,
+        objectStrictness,
         removeNoise: removeBackgroundNoise,
       });
     }
@@ -8141,6 +9178,7 @@ export async function removeBackground(
     if (maskData) {
       // 1. Bilinear Upscale of Primary Prediction Mask to Full Resolution
       const rawAlphas = upscaleMask(maskData);
+      const preRmbgSnapshot = new Float32Array(rawAlphas);
 
       // 1a. Dual-AI Consensus Fusion (RMBG-1.4 + MODNet for clean human portrait separation)
       let portraitModnetAlphas: Float32Array | undefined = undefined;
@@ -8179,24 +9217,46 @@ export async function removeBackground(
         const modnetContainedInRmbg = overlapFg / Math.max(1, modnetFg);
 
         // Apply MODNet consensus whenever MODNet clearly isolates the foreground person inside RMBG's mask
-        // (including scenes where RMBG also grabbed large chairs, sofas, or walls reducing overlapRatio)
+        // (including zoomed-out frames OR scenes where RMBG also grabbed large chairs, sofas, or walls)
         if (
-          modnetRatio >= 0.035 &&
-          modnetRatio <= 0.92 &&
-          (overlapRatio >= 0.40 || (modnetContainedInRmbg >= 0.55 && overlapRatio >= 0.10))
+          modnetRatio >= 0.018 &&
+          modnetRatio <= 0.94 &&
+          (overlapRatio >= 0.35 || (modnetContainedInRmbg >= 0.50 && overlapRatio >= 0.10))
         ) {
+          const preFusionAlphas = new Float32Array(rawAlphas);
           portraitModnetAlphas = modnetAlphas;
           const strict =
             engine === 'strict_subject' ||
-            Boolean(options.isolateMainSubject) ||
-            (options.objectStrictness ?? 75) >= 65;
+            isolateMainSubject ||
+            objectStrictness >= 65;
           const strictSever =
-            Boolean(options.severTouchingObjects) ||
-            Boolean(options.isolateMainSubject) ||
+            severTouchingObjects ||
+            isolateMainSubject ||
             engine === 'strict_subject';
           const mBgR = bgCnt > 10 ? sumBgR / bgCnt : 245;
           const mBgG = bgCnt > 10 ? sumBgG / bgCnt : 245;
           const mBgB = bgCnt > 10 ? sumBgB / bgCnt : 245;
+
+          // Sample true face/neck skin reference from overlapping dual-AI core so close warm objects never hide behind skin heuristics
+          let faceSkR = 0, faceSkG = 0, faceSkB = 0, faceSkCnt = 0;
+          const fY0 = Math.floor(minSubjY + (maxSubjY - minSubjY) * 0.20);
+          const fY1 = Math.floor(minSubjY + (maxSubjY - minSubjY) * 0.44);
+          for (let y = fY0; y <= fY1; y += 3) {
+            const row = y * w;
+            for (let x = Math.floor(w * 0.34); x <= Math.floor(w * 0.66); x += 3) {
+              const i = row + x;
+              if (rawAlphas[i] >= 180 && modnetAlphas[i] >= 165) {
+                const p = i * 4;
+                const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
+                if (r > g && g >= b * 0.85 && r - b >= 12) {
+                  faceSkR += r; faceSkG += g; faceSkB += b; faceSkCnt++;
+                }
+              }
+            }
+          }
+          const avgFaceSkR = faceSkCnt > 5 ? faceSkR / faceSkCnt : 0;
+          const avgFaceSkG = faceSkCnt > 5 ? faceSkG / faceSkCnt : 0;
+          const avgFaceSkB = faceSkCnt > 5 ? faceSkB / faceSkCnt : 0;
 
           // Build MODNet human silhouette row spans & fast distance map from confident MODNet core (ma >= 110)
           const mLeft = new Int32Array(h).fill(-1);
@@ -8278,8 +9338,8 @@ export async function removeBackground(
           }
           const bodyCenterX = centerCntX > 0 ? Math.round(centerSumX / centerCntX) : Math.round((headMinX + headMaxX) * 0.5);
 
-          const maxHalfCap = Math.max(48, Math.round((headMaxX - headMinX) * 2.5));
-          const maxStepEnv = Math.max(12, Math.round(w * 0.045));
+          const maxHalfCap = Math.max(56, Math.round((headMaxX - headMinX) * 2.8));
+          const maxStepEnv = Math.max(14, Math.round(w * 0.05));
           const rawDistL = new Int32Array(h).fill(0);
           const rawDistR = new Int32Array(h).fill(0);
 
@@ -8287,14 +9347,14 @@ export async function removeBackground(
             const row = y * w;
             for (let x = 0; x < w; x++) {
               const ra = rawAlphas[row + x], ma = modnetAlphas[row + x];
-              if ((ra >= 155 && ma >= 100) || ma >= 155) {
+              if ((ra >= 155 && ma >= 85) || ma >= 150 || ra >= 228) {
                 torsoMinX[y] = x;
                 break;
               }
             }
             for (let x = w - 1; x >= 0; x--) {
               const ra = rawAlphas[row + x], ma = modnetAlphas[row + x];
-              if ((ra >= 155 && ma >= 100) || ma >= 155) {
+              if ((ra >= 155 && ma >= 85) || ma >= 150 || ra >= 228) {
                 torsoMaxX[y] = x;
                 break;
               }
@@ -8307,7 +9367,7 @@ export async function removeBackground(
             }
           }
 
-          const envPad = Math.max(10, Math.round(w * 0.025));
+          const envPad = Math.max(8, Math.round(w * 0.015));
           let prevHalfL = Math.max(14, Math.round((headMaxX - headMinX) * 0.52));
           let prevHalfR = prevHalfL;
           for (let y = cStartY; y <= cEndY; y++) {
@@ -8407,50 +9467,58 @@ export async function removeBackground(
               }
 
               if (isUpperPortrait) {
-                // Upper head/hair/ears/neck: protect hair/skin/ears while strictly severing MODNet-rejected
-                // chairs, headrests, wall objects, poles & bystanders
+                // Upper head/hair/ears/neck: protect genuine hair/skin/ears while strictly severing close
+                // MODNet-rejected chairs, headrests, wall objects, poles & bystanders (even 1-3px away)
                 const p = i * 4;
                 const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
                 const lum = 0.299 * r + 0.587 * g + 0.114 * b;
                 const mBgLum = 0.299 * mBgR + 0.587 * mBgG + 0.114 * mBgB;
                 const dToBg = Math.hypot(r - mBgR, g - mBgG, b - mBgB);
-                const aboveHeadCrown = y < mMinY + 8 && x >= headMinX - 16 && x <= headMaxX + 16;
+                const dToFaceSkin = faceSkCnt > 5 ? Math.hypot(r - avgFaceSkR, g - avgFaceSkG, b - avgFaceSkB) : 999;
+                const aboveHeadCrown = y < mMinY + 6 && x >= headMinX - 10 && x <= headMaxX + 10;
                 const isHairCrown = y <= mMinY + Math.max(1, maxSubjY - minSubjY) * 0.34;
-                const insideModnetRow = mRowL !== -1 && x >= mRowL - 4 && x <= mRowR + 4;
+                const insideModnetRow = ma >= 12 || (mRowL !== -1 && x >= mRowL - 3 && x <= mRowR + 3 && modnetDist[i] <= 5);
                 const inEarBand = y >= mMinY + Math.max(1, maxSubjY - minSubjY) * 0.16;
-                const closeToModnet = modnetDist[i] <= 6;
-                const hairDistMax = ma >= 12 ? 12 : (isHairCrown ? 6 : 3);
-                const isProtectedHairOrSkin =
-                  (lum < 92 && mBgLum > 110 && dToBg > 24 && modnetDist[i] <= hairDistMax) ||
-                  (r > g && g >= b * 0.85 && (r - b) >= 10 && dToBg > 20 && modnetDist[i] <= 11);
+                const closeToModnet = modnetDist[i] <= 5;
+                const hairDistMax = ma >= 14 ? 9 : (isHairCrown ? 5 : 3);
+                const isTrueHairWisp = lum < 92 && mBgLum > 110 && dToBg > 24 && modnetDist[i] <= hairDistMax && (ma >= 8 || isHairCrown);
+                const isHeadwearOrLightHair =
+                  insideModnetRow && ra >= 175 && dToBg > 20 && (ma >= 10 || modnetDist[i] <= 4);
+                const isTrueWarmSkin =
+                  r > g && g >= b * 0.85 && (r - b) >= 10 && dToBg > 20 &&
+                  modnetDist[i] <= 6 &&
+                  (ma >= 12 || (dToFaceSkin < 36 && modnetDist[i] <= 4));
                 const isProtectedEarEdge =
-                  isProtectedHairOrSkin ||
-                  (inEarBand && insideModnetRow && ra >= 185 && dToBg > 22 && modnetDist[i] <= 3) ||
-                  (inEarBand && ra >= 165 && ma >= 24 && modnetDist[i] <= 7);
+                  isTrueHairWisp ||
+                  isHeadwearOrLightHair ||
+                  isTrueWarmSkin ||
+                  (ra >= 225 && (insideModnetRow || modnetDist[i] <= 5 || ma >= 12)) ||
+                  (inEarBand && insideModnetRow && ra >= 180 && dToBg > 20 && modnetDist[i] <= 3) ||
+                  (inEarBand && ra >= 165 && ma >= 24 && modnetDist[i] <= 5);
 
                 if (ma < 26 && !isProtectedEarEdge) {
-                  if (strictSever && ma < 22 && !aboveHeadCrown && (modnetDist[i] > 4 || !insideModnetRow)) {
+                  if (strictSever && !aboveHeadCrown && ra < 215 && (ma < 16 || modnetDist[i] > 3 || !insideModnetRow)) {
                     rawAlphas[i] = 0;
-                  } else if (strictSever && !aboveHeadCrown && (!insideModnetRow || !closeToModnet)) {
-                    rawAlphas[i] = ma < 18 ? 0 : Math.min(ra, ma * 0.30);
-                  } else if (ra < 228 || (strict && !aboveHeadCrown && modnetDist[i] > 6)) {
-                    rawAlphas[i] = Math.min(ra, ma * 0.35);
+                  } else if (strictSever && !aboveHeadCrown && (!insideModnetRow || !closeToModnet) && modnetDist[i] > 5) {
+                    rawAlphas[i] = ma < 16 && ra < 210 ? 0 : Math.min(ra, ma * 0.30);
+                  } else if (ra < 225 || (strict && !aboveHeadCrown && modnetDist[i] > 5)) {
+                    rawAlphas[i] = Math.min(ra, Math.max(ma * 0.35, ra * 0.45));
                   }
-                } else if (ma >= 205 && ra >= 70 && ra < 185) {
-                  // Recover fine hair strands slightly softened by RMBG
-                  rawAlphas[i] = Math.min(240, ra * 0.55 + ma * 0.45);
+                } else if (ma >= 200 && ra >= 70 && ra < 195) {
+                  // Recover fine hair wisps softened by RMBG using MODNet's crisp portrait hair matte
+                  rawAlphas[i] = Math.min(245, ra * 0.50 + ma * 0.50);
                 } else if (ma < ra && !isProtectedEarEdge) {
-                  if (strictSever && ma < 42 && modnetDist[i] > 6 && !aboveHeadCrown) {
+                  if (strictSever && ma < 38 && modnetDist[i] > 4 && !aboveHeadCrown && ra < 215) {
                     rawAlphas[i] = 0;
-                  } else if (strictSever && ma < 62 && (!insideModnetRow || modnetDist[i] > 6) && ra < 235) {
-                    rawAlphas[i] = Math.min(ra, ma * 0.30);
-                  } else if (ra < 240 || (strictSever && !insideModnetRow && modnetDist[i] > 8)) {
-                    rawAlphas[i] = strict ? (ra * 0.25 + ma * 0.75) : (ra * 0.5 + ma * 0.5);
+                  } else if (strictSever && ma < 58 && (!insideModnetRow || modnetDist[i] > 4) && ra < 235) {
+                    rawAlphas[i] = Math.min(ra, Math.max(ma * 0.30, ra * 0.40));
+                  } else if (ra < 235 || (strictSever && !insideModnetRow && modnetDist[i] > 5)) {
+                    rawAlphas[i] = strict ? (ra * 0.30 + ma * 0.70) : (ra * 0.50 + ma * 0.50);
                   }
                 }
               } else {
                 // Lower collar/shoulder/torso: preserve complete natural shoulders, rounded curves, sleeves & tone-on-tone fabrics
-                // while clearing chairs, sofas, beds, and close background objects rejected by MODNet.
+                // while clearing chairs, sofas, beds, and ultra-close background objects rejected by MODNet.
                 const p = i * 4;
                 const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
                 const maxC = Math.max(r, g, b);
@@ -8480,9 +9548,13 @@ export async function removeBackground(
                   rawAlphas[i] = Math.max(ra, 245);
                   continue;
                 }
+                if (ra >= 228 && (insideSymEnv || modnetDist[i] <= 6 || ma >= 14)) {
+                  rawAlphas[i] = Math.max(ra, ma);
+                  continue;
+                }
                 if (insideShirtSpan && isTorsoWhiteOrCheck && (isWhiteOrNeutralLight || ra >= 110)) {
-                  const safeShirtMargin = x >= tLeft + 5 && x <= tRight - 5;
-                  if (!isShoulderTransition || insideChestCore || (safeShirtMargin && (ma >= 30 || ra >= 145)) || ma >= 45 || ra >= 205) {
+                  const safeShirtMargin = tRight > tLeft + 14 && x >= tLeft + 5 && x <= tRight - 5;
+                  if (insideChestCore || (safeShirtMargin && (ma >= 35 || ra >= 155))) {
                     rawAlphas[i] = 255;
                     continue;
                   }
@@ -8494,7 +9566,12 @@ export async function removeBackground(
                   const distToLGar = lShCnt > 6 ? Math.hypot(r - avgLShR, g - avgLShG, b - avgLShB) : 999;
                   const distToRGar = rShCnt > 6 ? Math.hypot(r - avgRShR, g - avgRShG, b - avgRShB) : 999;
                   const distToAnyGar = Math.min(distToCoreGar, distToLGar, distToRGar);
-                  const matchesGarmentRGB = (gCnt > 10 || lShCnt > 6 || rShCnt > 6) && distToAnyGar <= 38 && (distToBg > 18 || ra >= 150);
+                  const matchesGarmentRGB = (gCnt > 10 || lShCnt > 6 || rShCnt > 6) && distToAnyGar <= 38 && (distToBg > 16 || ra >= 145);
+                  const isNeckVeeSkin =
+                    r > g && g >= b * 0.85 && (r - b) >= 14 && distToBg > 18 &&
+                    Math.abs(x - bodyCenterX) <= (headMaxX - headMinX) * 0.48 &&
+                    y <= upperShoulderTransitionY &&
+                    (ma >= 16 || modnetDist[i] <= 4);
 
                   if (
                     isTorsoWhiteOrCheck &&
@@ -8502,27 +9579,50 @@ export async function removeBackground(
                     (insideChestCore ||
                       (insideSymEnv &&
                         (distToBg > 16 || ra >= 155) &&
-                        (insideShirtSpan || (!isShoulderTransition && (ma >= 24 || (ra >= 165 && modnetDist[i] <= 5))))))
+                        (insideShirtSpan || (!isShoulderTransition && (ma >= 20 || (ra >= 160 && modnetDist[i] <= 4 && ma >= 6))))))
                   ) {
                     rawAlphas[i] = Math.max(ra, 255);
                   } else if (
-                    ra >= 135 &&
-                    insideSymEnv &&
-                    ((ma >= 18 && modnetDist[i] <= 7) || (matchesGarmentRGB && modnetDist[i] <= 7) || modnetDist[i] <= 5)
+                    isNeckVeeSkin ||
+                    (ra >= 110 &&
+                      insideSymEnv &&
+                      ((ma >= 20 && modnetDist[i] <= 5) ||
+                        (matchesGarmentRGB && modnetDist[i] <= 5 && ma >= 8) ||
+                        (ra >= 205 && modnetDist[i] <= 5)))
                   ) {
-                    // Genuine outer shoulder/sleeve/fold (both left & right, including clothing with colors close to background) -> preserve intact
+                    // Genuine outer shoulder/sleeve/fold or collar skin -> preserve natural silhouette intact
                     rawAlphas[i] = ra;
                   } else if (
                     !insideChestCore &&
-                    ((strictSever && ma < 22 && !matchesGarmentRGB && (modnetDist[i] > 5 || !insideSymEnv)) ||
-                      (strictSever && !insideSymEnv && (modnetDist[i] > 6 || ma < 38)) ||
-                      (strictSever && distToAnyGar > 44 && ma < 42 && modnetDist[i] > 6) ||
-                      (strict && ma < 34 && !matchesGarmentRGB && ra < 195 && distToBg < 32))
+                    ((strictSever && ma < 16 && (!matchesGarmentRGB || !insideSymEnv || modnetDist[i] > 3) && ra < 215) ||
+                      (strictSever && ma < 28 && (!insideSymEnv || modnetDist[i] > 4 || distToAnyGar > 38) && ra < 210) ||
+                      (strictSever && !insideSymEnv && (modnetDist[i] > 4 || ma < 42) && ra < 220) ||
+                      (strictSever && distToAnyGar > 40 && ma < 38 && modnetDist[i] > 4 && ra < 215) ||
+                      (strict && ma < 32 && !matchesGarmentRGB && ra < 210 && distToBg < 30))
                   ) {
-                    rawAlphas[i] = ma < 26 && strictSever ? 0 : Math.min(ra, ra * 0.25 + ma * 0.45);
+                    rawAlphas[i] = ma < 20 && strictSever && modnetDist[i] > 3 ? 0 : Math.min(ra, ra * 0.25 + ma * 0.45);
                   }
                 }
               }
+            }
+          }
+
+          // Dual-AI Subject Integrity Check: if MODNet consensus cut > 42% of strong RMBG foreground
+          // (e.g., full-body pose, extended arms, non-portrait subject, or missed dark clothing),
+          // safely restore high-confidence RMBG subject regions so the subject never gets truncated.
+          let preFusionFg = 0, postFusionFg = 0;
+          for (let i = 0; i < total; i += 4) {
+            if (preFusionAlphas[i] >= 165) preFusionFg++;
+            if (rawAlphas[i] >= 145) postFusionFg++;
+          }
+          if (preFusionFg > 150 && postFusionFg < preFusionFg * 0.58) {
+            for (let i = 0; i < total; i++) {
+              if (preFusionAlphas[i] >= 145) {
+                rawAlphas[i] = Math.max(rawAlphas[i], preFusionAlphas[i]);
+              }
+            }
+            if (postFusionFg < preFusionFg * 0.48) {
+              portraitModnetAlphas = undefined;
             }
           }
         }
@@ -8530,11 +9630,11 @@ export async function removeBackground(
 
       // 1a-clean. Immediately strip disconnected & touching background objects BEFORE shoulder extension & solidification
       // so detached chairs/objects cannot skew shoulder bounds or get bridged back onto the garment!
-      if (options.isolateMainSubject || options.severTouchingObjects || engine === 'strict_subject') {
+      if (isolateMainSubject || severTouchingObjects || engine === 'strict_subject') {
         eliminateChairAndBackrestObjects(pixels, rawAlphas, w, h, {
-          severTouchingObjects: options.severTouchingObjects ?? false,
-          objectStrictness: options.objectStrictness ?? 50,
-          isolateMainSubject: options.isolateMainSubject ?? engine === 'strict_subject',
+          severTouchingObjects,
+          objectStrictness,
+          isolateMainSubject: isolateMainSubject || engine === 'strict_subject',
         }, portraitModnetAlphas);
       }
 
@@ -8549,9 +9649,9 @@ export async function removeBackground(
 
       // 3. Eliminate disconnected background noise, chair islands, and touching furniture
       eliminateChairAndBackrestObjects(pixels, rawAlphas, w, h, {
-        severTouchingObjects: options.severTouchingObjects ?? false,
-        objectStrictness: options.objectStrictness ?? 50,
-        isolateMainSubject: options.isolateMainSubject ?? engine === 'strict_subject',
+        severTouchingObjects,
+        objectStrictness,
+        isolateMainSubject: isolateMainSubject || engine === 'strict_subject',
       }, portraitModnetAlphas);
 
       // 4. Sample Local Spatial Sector Background Color Models for De-fringing
@@ -8569,20 +9669,29 @@ export async function removeBackground(
         }
       }
 
+      // Snapshot pre-cleanup alpha & RGB baseline to prevent accidental subject over-cutting
+      const prePolishAlphas = new Float32Array(w * h);
+      let prePolishSubjectCount = 0;
+      for (let i = 0; i < w * h; i++) {
+        const a = pixels[i * 4 + 3];
+        prePolishAlphas[i] = a;
+        if (a > 30) prePolishSubjectCount++;
+      }
+
       // 7. Re-apply chair elimination check after de-fringing using synced pixel alphas
-      if (options.severTouchingObjects || options.isolateMainSubject || engine === 'strict_subject') {
+      if (severTouchingObjects || isolateMainSubject || engine === 'strict_subject') {
         for (let i = 0; i < w * h; i++) {
           refinedAlphas[i] = pixels[i * 4 + 3];
         }
         eliminateChairAndBackrestObjects(pixels, refinedAlphas, w, h, {
-          severTouchingObjects: options.severTouchingObjects ?? false,
-          objectStrictness: options.objectStrictness ?? 50,
-          isolateMainSubject: options.isolateMainSubject ?? engine === 'strict_subject',
+          severTouchingObjects,
+          objectStrictness,
+          isolateMainSubject: isolateMainSubject || engine === 'strict_subject',
         }, portraitModnetAlphas);
       }
 
-      // 9. HD Photo Clarity & Feature Enhancement
-      enhanceForegroundSubjectClarity(pixels, w, h, 0.10);
+      // 9. Studio-HD Luminance Clarity & Feature Enhancement
+      enhanceForegroundSubjectClarity(pixels, w, h, 0.18);
 
       // 10. Left & Right Ear-to-Shoulder Concave Pocket + Enclosed Holes Background Cleaners
       cleanLeftEarToShoulderPocket(pixels, w, h, bgModels, true);
@@ -8595,7 +9704,7 @@ export async function removeBackground(
       cleanLeftEdgeHalosFromEarToShoulder(pixels, w, h, bgModels);
 
       // 10d. Symmetric Left & Right Perimeter Halo Peeling & Detached Island Cleanup
-      const isolateAll = Boolean(options.isolateMainSubject || options.severTouchingObjects || engine === 'strict_subject');
+      const isolateAll = Boolean(isolateMainSubject || severTouchingObjects || engine === 'strict_subject');
       cleanLeftPerimeterHaloPatches(pixels, w, h, bgModels, true, isolateAll);
 
       // 11. Quality Control Pass
@@ -8610,22 +9719,54 @@ export async function removeBackground(
       // 12c. Global Multi-Color Border Palette & Exterior Residual Patch/Object Sweeper
       cleanResidualBackgroundPatchesAndObjects(pixels, w, h, bgModels, true, isolateAll);
 
-      // 12d. Left & Right Shoulder & Neck-Slope Edge Polish (halo strip, color unmix & natural AA bevel)
+      // 12d. Universal 360-Degree Clean & Clear Subject Boundary Polisher (cleans head/hair/ears/torso/close haze BEFORE final shoulder curve finish)
+      polishFullSubjectBoundaryCleanAndClear(pixels, w, h, bgModels, true);
+
+      // 12e. Left & Right Shoulder & Neck-Slope Edge Polish (final arc-length S-curve AA bevel, color unmix & symmetry)
       polishLeftShoulderAndNeckContour(pixels, w, h, bgModels, true);
 
-      // 12e. Post-polish interior opacity lock (guarantees 255 solid inside check/light shirts while keeping outer AA edges intact)
+      // 12f. Post-polish interior opacity lock (guarantees 255 solid inside check/light shirts while keeping outer AA edges intact)
       lockGarmentInteriorOpacity(pixels, w, h, true);
+
+      // 12g. Adaptive Subject & Shoulder Photo Lighting Control (balances shadowed vs. bright shoulders & recovers highlights)
+      controlPhotoLightingForShouldersAndSubject(pixels, w, h);
 
       // 13. Final Sync & Detached Background Island Sweep
       for (let i = 0; i < w * h; i++) {
         refinedAlphas[i] = pixels[i * 4 + 3];
       }
       eliminateChairAndBackrestObjects(pixels, refinedAlphas, w, h, {
-        severTouchingObjects: options.severTouchingObjects ?? false,
-        objectStrictness: options.objectStrictness ?? 50,
-        isolateMainSubject: options.isolateMainSubject ?? engine === 'strict_subject',
+        severTouchingObjects,
+        objectStrictness,
+        isolateMainSubject: isolateMainSubject || engine === 'strict_subject',
         preservePolishedEdges: true,
       }, portraitModnetAlphas);
+
+      // Subject Integrity Guard: if post-processing accidentally eroded/cut > 55% of the subject matte,
+      // restore cleanly from the guided pre-cleanup matte with gentle anti-aliasing and lighting control.
+      let postPolishCount = 0;
+      for (let i = 0; i < w * h; i++) {
+        if (pixels[i * 4 + 3] > 30) postPolishCount++;
+      }
+      const totalPxCheck = w * h;
+      if (
+        (prePolishSubjectCount > totalPxCheck * 0.018 && postPolishCount < prePolishSubjectCount * 0.45) ||
+        postPolishCount < totalPxCheck * 0.015
+      ) {
+        console.warn("[AI] Warning: Post-processing over-cut subject. Restoring verified AI segmentation matte...");
+        ctx.drawImage(origImg, 0, 0);
+        const rescueData = ctx.getImageData(0, 0, w, h);
+        const rescuePx = rescueData.data;
+        const useRawRmbg = prePolishSubjectCount < totalPxCheck * 0.015;
+        const rescueAlphaSrc = useRawRmbg ? preRmbgSnapshot : prePolishAlphas;
+        for (let i = 0; i < totalPxCheck; i++) {
+          const a = rescueAlphaSrc[i];
+          rescuePx[i * 4 + 3] = a < 24 ? 0 : Math.round(Math.min(255, a));
+        }
+        pixels.set(rescuePx);
+        antiAliasBoundaryEdges(pixels, w, h);
+        controlPhotoLightingForShouldersAndSubject(pixels, w, h);
+      }
     }
 
     // Verify subject preservation: check that at least 1.5% of pixels remain opaque
@@ -8640,28 +9781,16 @@ export async function removeBackground(
     const subjectRatio = subjectPixelCount / totalPx;
     console.log(`[AI] Subject verification: ${(subjectRatio * 100).toFixed(1)}% pixels retained`);
 
-    // If subject was somehow lost/missing (< 1.5% subject pixels), restore subject silhouette
-    if (subjectRatio < 0.015) {
-      console.warn("[AI] Warning: Subject was missing in cutout. Restoring subject silhouette...");
+    // Final safety net if subject is still below 1.2%: restore raw primary neural matte instead of cropping
+    if (subjectRatio < 0.012 && maskData) {
+      console.warn("[AI] Warning: Subject ratio critically low. Restoring primary neural matte...");
+      const fallbackAlphas = upscaleMask(maskData);
       ctx.drawImage(origImg, 0, 0);
       const restoredData = ctx.getImageData(0, 0, w, h);
       const rPixels = restoredData.data;
-      const cx = w * 0.5;
-      const cy = h * 0.48;
-      const rx = w * 0.44;
-      const ry = h * 0.50;
-      for (let y = 0; y < h; y++) {
-        const dy = (y - cy) / ry;
-        for (let x = 0; x < w; x++) {
-          const dx = (x - cx) / rx;
-          const d2 = dx * dx + dy * dy;
-          const p = (y * w + x) * 4;
-          if (d2 > 1.05) {
-            rPixels[p + 3] = 0;
-          } else if (d2 > 0.95) {
-            rPixels[p + 3] = Math.round(255 * (1 - (d2 - 0.95) / 0.1));
-          }
-        }
+      for (let i = 0; i < totalPx; i++) {
+        const a = fallbackAlphas[i];
+        rPixels[i * 4 + 3] = a < 22 ? 0 : Math.round(a);
       }
       ctx.putImageData(restoredData, 0, 0);
     } else {
@@ -8817,9 +9946,9 @@ export async function cleanEdgeHalosAndDeFringe(
 ): Promise<string> {
   const {
     haloThreshold = 25,
-    severTouchingObjects = Boolean(options.isolateMainSubject),
-    objectStrictness = options.isolateMainSubject ? 78 : 40,
-    isolateMainSubject = severTouchingObjects,
+    severTouchingObjects = options.severTouchingObjects ?? true,
+    isolateMainSubject = options.isolateMainSubject ?? severTouchingObjects,
+    objectStrictness = options.objectStrictness ?? 82,
   } = options;
 
   return new Promise((resolve) => {
@@ -9000,10 +10129,13 @@ export async function cleanEdgeHalosAndDeFringe(
       // 8b. Global Residual Background Patch & Halo Sweeper
       cleanResidualBackgroundPatchesAndObjects(pixels, w, h, undefined, false, isolateMainSubject);
 
-      // 8c. Left & Right Shoulder & Neck-Slope Edge Polish
+      // 8c. Universal 360-Degree Clean & Clear Subject Boundary Polisher (cleans perimeter haze BEFORE final shoulder finish)
+      polishFullSubjectBoundaryCleanAndClear(pixels, w, h, undefined, false);
+
+      // 8d. Left & Right Shoulder & Neck-Slope Edge Polish (final arc-length S-curve AA bevel, color unmix & symmetry)
       polishLeftShoulderAndNeckContour(pixels, w, h, undefined, false);
 
-      // 8d. Post-polish interior opacity lock (guarantees 255 solid inside check/light shirts while keeping outer AA edges intact)
+      // 8e. Post-polish interior opacity lock (guarantees 255 solid inside check/light shirts while keeping outer AA edges intact)
       lockGarmentInteriorOpacity(pixels, w, h, true);
 
       // 9. Final Disconnected Island & Chair Wing Sweep
