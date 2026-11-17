@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw, Upload } from 'lucide-react';
+import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw, Upload, FileText } from 'lucide-react';
+import jsPDF from 'jspdf';
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
@@ -21,11 +22,11 @@ const PRESETS = [
 const PAPER_SIZES = [
   { id: 'single', name: 'Single Photo', width: 0, height: 0 },
   { id: 'a4', name: 'A4 (210 x 297 mm)', width: 210, height: 297 },
-  { id: 'a5', name: 'A5 (148 x 210 mm)', width: 148, height: 210 },
+  { id: 'a5', name: 'A5 / Half A4 (210 x 148 mm)', width: 210, height: 148 },
   { id: '4x6', name: '4 x 6 inch', width: 101.6, height: 152.4 },
   { id: '5x7', name: '5 x 7 inch', width: 127, height: 177.8 },
   { id: 'custom', name: 'Custom Size', width: 210, height: 297 },
-  { id: 'custom-grid', name: 'Custom Grid', width: 0, height: 0 },
+  { id: 'custom-grid', name: 'Custom Grid (A4)', width: 210, height: 297 },
 ];
 
 const COLORS = [
@@ -184,6 +185,15 @@ export default function PassportPhotoMaker() {
   const [hasBorder, setHasBorder] = useState(true);
   const [hasCutLines, setHasCutLines] = useState(true);
   const [printOrientation, setPrintOrientation] = useState<'vertical' | 'horizontal'>('vertical');
+  const [printError, setPrintError] = useState<string | null>(null);
+  const [printNotice, setPrintNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      document.getElementById('passport-direct-print-sheet')?.remove();
+      document.getElementById('passport-direct-print-style')?.remove();
+    };
+  }, []);
   
   // Processing State
   const [isProcessing, setIsProcessing] = useState(false);
@@ -1018,289 +1028,717 @@ export default function PassportPhotoMaker() {
     img.src = finalImageSrc;
   }, [finalImageSrc]);
 
+  // --- Physical DPI & Exact Print Layout Helpers ---
+  const dataURLtoBytes = (dataurl: string): { bytes: Uint8Array; mime: string } => {
+    if (!dataurl || typeof dataurl !== 'string') return { bytes: new Uint8Array(0), mime: 'image/png' };
+    const arr = dataurl.split(',');
+    if (arr.length < 2) return { bytes: new Uint8Array(0), mime: 'image/png' };
+    const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return { bytes: u8arr, mime };
+  };
+
+  const injectJpegDpiBytes = (bytes: Uint8Array, targetDpi: number): Uint8Array => {
+    const safeDpi = Math.max(72, Math.min(2400, Math.round(targetDpi)));
+    if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return bytes;
+
+    // Check existing JFIF APP0 marker right after SOI
+    if (
+      bytes.length >= 18 &&
+      bytes[2] === 0xff &&
+      bytes[3] === 0xe0 &&
+      bytes[6] === 0x4a && // 'J'
+      bytes[7] === 0x46 && // 'F'
+      bytes[8] === 0x49 && // 'I'
+      bytes[9] === 0x46 && // 'F'
+      bytes[10] === 0x00
+    ) {
+      const patched = new Uint8Array(bytes);
+      patched[13] = 1; // units = pixels per inch
+      patched[14] = (safeDpi >> 8) & 0xff;
+      patched[15] = safeDpi & 0xff;
+      patched[16] = (safeDpi >> 8) & 0xff;
+      patched[17] = safeDpi & 0xff;
+      return patched;
+    }
+
+    // Splice fresh JFIF APP0 segment after SOI (0xFF 0xD8)
+    const app0 = new Uint8Array([
+      0xff, 0xe0, 0x00, 0x10,
+      0x4a, 0x46, 0x49, 0x46, 0x00,
+      0x01, 0x01,
+      0x01,
+      (safeDpi >> 8) & 0xff, safeDpi & 0xff,
+      (safeDpi >> 8) & 0xff, safeDpi & 0xff,
+      0x00, 0x00,
+    ]);
+    const out = new Uint8Array(bytes.length + app0.length);
+    out.set(bytes.slice(0, 2), 0);
+    out.set(app0, 2);
+    out.set(bytes.slice(2), 2 + app0.length);
+    return out;
+  };
+
+  const crc32 = (data: Uint8Array): number => {
+    let c = 0xffffffff;
+    for (let i = 0; i < data.length; i++) {
+      c ^= data[i];
+      for (let k = 0; k < 8; k++) {
+        c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  };
+
+  const injectPngDpiBytes = (bytes: Uint8Array, targetDpi: number): Uint8Array => {
+    const safeDpi = Math.max(72, Math.min(2400, Math.round(targetDpi)));
+    // Verify PNG signature + IHDR chunk minimum size (8 + 25 = 33)
+    if (
+      bytes.length < 33 ||
+      bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47
+    ) {
+      return bytes;
+    }
+    const ihdrLength = ((bytes[8] << 24) | (bytes[9] << 16) | (bytes[10] << 8) | bytes[11]) >>> 0;
+    const insertPos = 8 + 4 + 4 + ihdrLength + 4;
+    if (insertPos > bytes.length) return bytes;
+
+    const ppm = Math.round(safeDpi / 0.0254);
+    const chunk = new Uint8Array(21);
+    // Chunk length = 9
+    chunk[0] = 0; chunk[1] = 0; chunk[2] = 0; chunk[3] = 9;
+    // Type = 'pHYs'
+    chunk[4] = 0x70; chunk[5] = 0x48; chunk[6] = 0x59; chunk[7] = 0x73;
+    // Pixels per unit X (big-endian uint32)
+    chunk[8] = (ppm >>> 24) & 0xff;
+    chunk[9] = (ppm >>> 16) & 0xff;
+    chunk[10] = (ppm >>> 8) & 0xff;
+    chunk[11] = ppm & 0xff;
+    // Pixels per unit Y (big-endian uint32)
+    chunk[12] = (ppm >>> 24) & 0xff;
+    chunk[13] = (ppm >>> 16) & 0xff;
+    chunk[14] = (ppm >>> 8) & 0xff;
+    chunk[15] = ppm & 0xff;
+    // Unit specifier = 1 (meter)
+    chunk[16] = 1;
+
+    const crc = crc32(chunk.slice(4, 17));
+    chunk[17] = (crc >>> 24) & 0xff;
+    chunk[18] = (crc >>> 16) & 0xff;
+    chunk[19] = (crc >>> 8) & 0xff;
+    chunk[20] = crc & 0xff;
+
+    const out = new Uint8Array(bytes.length + chunk.length);
+    out.set(bytes.slice(0, insertPos), 0);
+    out.set(chunk, insertPos);
+    out.set(bytes.slice(insertPos), insertPos + chunk.length);
+    return out;
+  };
+
+  const computePrintLayout = () => {
+    const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
+    const isHorizontal = printOrientation === 'horizontal';
+    const baseW = isHorizontal ? targetPreset.height : targetPreset.width;
+    const baseH = isHorizontal ? targetPreset.width : targetPreset.height;
+
+    if (paperSize.id === 'single') {
+      return {
+        isSingle: true,
+        sheetWidthMm: baseW,
+        sheetHeightMm: baseH,
+        photoWidthMm: baseW,
+        photoHeightMm: baseH,
+        origPhotoWidthMm: targetPreset.width,
+        origPhotoHeightMm: targetPreset.height,
+        gapMm: 0,
+        cols: 1,
+        rows: 1,
+        startXMm: 0,
+        startYMm: 0,
+        isHorizontal,
+        isScaledDown: false,
+        isValid: true,
+      };
+    }
+
+    let sheetWidthMm = paperSize.id === 'custom' ? Math.max(10, Number(customPaper.width) || 0) : paperSize.width;
+    let sheetHeightMm = paperSize.id === 'custom' ? Math.max(10, Number(customPaper.height) || 0) : paperSize.height;
+
+    if (paperSize.id === 'a5') {
+      // A5 = Half A4 (210 x 148 mm) -> strictly Row 1: 6 photos, Row 2: 6 photos, top-aligned
+      sheetWidthMm = 210;
+      sheetHeightMm = 148;
+      const cols = 6;
+      const rows = 2;
+      const gapMm = 1.2;
+      const outerMarginX = 2.4;
+      const outerMarginY = 5;
+      const maxFitW = (sheetWidthMm - 2 * outerMarginX - (cols - 1) * gapMm) / cols;
+      const maxFitH = (sheetHeightMm - 2 * outerMarginY - (rows - 1) * gapMm) / rows;
+      const scale = Math.min(1, maxFitW / baseW, maxFitH / baseH);
+      const photoWidthMm = baseW * scale;
+      const photoHeightMm = baseH * scale;
+      const origPhotoWidthMm = targetPreset.width * scale;
+      const origPhotoHeightMm = targetPreset.height * scale;
+      const gridW = cols * photoWidthMm + (cols - 1) * gapMm;
+      return {
+        isSingle: false,
+        sheetWidthMm,
+        sheetHeightMm,
+        photoWidthMm,
+        photoHeightMm,
+        origPhotoWidthMm,
+        origPhotoHeightMm,
+        gapMm,
+        cols,
+        rows,
+        startXMm: (sheetWidthMm - gridW) / 2,
+        startYMm: outerMarginY,
+        isHorizontal,
+        isScaledDown: scale < 0.999,
+        isValid: photoWidthMm > 0 && photoHeightMm > 0,
+      };
+    }
+
+    if (paperSize.id === 'custom-grid') {
+      // Anchor Custom Grid on A4 sheet (210 x 297 mm) so printer "Fit to Page" never blows up small grids
+      sheetWidthMm = 210;
+      sheetHeightMm = 297;
+      const cols = Math.max(1, Math.min(20, Math.round(customGrid.cols || 1)));
+      const rows = Math.max(1, Math.min(20, Math.round(customGrid.rows || 1)));
+      const gapMm = 1.5;
+      const padX = 4;
+      const padY = 8;
+      const maxFitW = (sheetWidthMm - 2 * padX - (cols - 1) * gapMm) / cols;
+      const maxFitH = (sheetHeightMm - 2 * padY - (rows - 1) * gapMm) / rows;
+      const scale = Math.min(1, maxFitW / baseW, maxFitH / baseH);
+      const photoWidthMm = baseW * scale;
+      const photoHeightMm = baseH * scale;
+      const origPhotoWidthMm = targetPreset.width * scale;
+      const origPhotoHeightMm = targetPreset.height * scale;
+      const gridW = cols * photoWidthMm + (cols - 1) * gapMm;
+      const gridH = rows * photoHeightMm + (rows - 1) * gapMm;
+      const startXMm = (sheetWidthMm - gridW) / 2;
+      const startYMm = gridH <= sheetHeightMm - 24 ? 10 : (sheetHeightMm - gridH) / 2;
+      return {
+        isSingle: false,
+        sheetWidthMm,
+        sheetHeightMm,
+        photoWidthMm,
+        photoHeightMm,
+        origPhotoWidthMm,
+        origPhotoHeightMm,
+        gapMm,
+        cols,
+        rows,
+        startXMm,
+        startYMm,
+        isHorizontal,
+        isScaledDown: scale < 0.999,
+        isValid: photoWidthMm > 0 && photoHeightMm > 0,
+      };
+    }
+
+    // Standard sheets (A4, 4x6, 5x7, Custom Size): exact true physical passport dimensions
+    const gapMm = 2;
+    const edgePadMm = 3;
+    const usableW = Math.max(0, sheetWidthMm - 2 * edgePadMm);
+    const usableH = Math.max(0, sheetHeightMm - 2 * edgePadMm);
+    let cols = Math.max(0, Math.floor((usableW + gapMm + 0.001) / (baseW + gapMm)));
+    let rows = Math.max(0, Math.floor((usableH + gapMm + 0.001) / (baseH + gapMm)));
+
+    if (cols === 0 && sheetWidthMm >= baseW + 2) {
+      cols = Math.max(0, Math.floor((sheetWidthMm - 2 + gapMm + 0.001) / (baseW + gapMm)));
+    }
+    if (rows === 0 && sheetHeightMm >= baseH + 2) {
+      rows = Math.max(0, Math.floor((sheetHeightMm - 2 + gapMm + 0.001) / (baseH + gapMm)));
+    }
+
+    const gridW = cols * baseW + Math.max(0, cols - 1) * gapMm;
+    const gridH = rows * baseH + Math.max(0, rows - 1) * gapMm;
+
+    return {
+      isSingle: false,
+      sheetWidthMm,
+      sheetHeightMm,
+      photoWidthMm: baseW,
+      photoHeightMm: baseH,
+      origPhotoWidthMm: targetPreset.width,
+      origPhotoHeightMm: targetPreset.height,
+      gapMm,
+      cols,
+      rows,
+      startXMm: (sheetWidthMm - gridW) / 2,
+      startYMm: (sheetHeightMm - gridH) / 2,
+      isHorizontal,
+      isScaledDown: false,
+      isValid: cols > 0 && rows > 0,
+    };
+  };
+
+  const createTileDataUrl = (
+    photoWidthMm: number,
+    photoHeightMm: number,
+    origPhotoWidthMm: number,
+    origPhotoHeightMm: number,
+    isHorizontal: boolean,
+    format: 'image/png' | 'image/jpeg' = 'image/jpeg'
+  ): string | null => {
+    if (!printImageElement) return null;
+    const wPx = Math.max(1, Math.round((photoWidthMm / 25.4) * dpi));
+    const hPx = Math.max(1, Math.round((photoHeightMm / 25.4) * dpi));
+    const origWPx = Math.max(1, Math.round((origPhotoWidthMm / 25.4) * dpi));
+    const origHPx = Math.max(1, Math.round((origPhotoHeightMm / 25.4) * dpi));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = wPx;
+    canvas.height = hPx;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    if (format === 'image/jpeg') {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, wPx, hPx);
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    if (isHorizontal) {
+      ctx.save();
+      ctx.translate(wPx / 2, hPx / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(printImageElement, -origWPx / 2, -origHPx / 2, origWPx, origHPx);
+      ctx.restore();
+    } else {
+      ctx.drawImage(printImageElement, 0, 0, wPx, hPx);
+    }
+
+    return canvas.toDataURL(format, 0.98);
+  };
+
   const handleDownloadSinglePhoto = () => {
     if (!finalImageSrc || !printImageElement) return;
+    setPrintError(null);
 
-    if (selectedPreset.id === 'free') {
-      const link = document.createElement('a');
-      link.href = finalImageSrc;
-      link.download = `passport-photo-${Date.now()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } else {
-      const photoWidth = Math.round((selectedPreset.width / 25.4) * dpi);
-      const photoHeight = Math.round((selectedPreset.height / 25.4) * dpi);
-      
+    let rawPngUrl = finalImageSrc;
+    if (selectedPreset.id !== 'free') {
+      const photoWidth = Math.max(1, Math.round((selectedPreset.width / 25.4) * dpi));
+      const photoHeight = Math.max(1, Math.round((selectedPreset.height / 25.4) * dpi));
       const canvas = document.createElement('canvas');
       canvas.width = photoWidth;
       canvas.height = photoHeight;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
-      
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(printImageElement, 0, 0, photoWidth, photoHeight);
-      
-      const dataURLtoBlob = (dataurl: string) => {
-        if (!dataurl || typeof dataurl !== 'string') return new Blob();
-        const arr = dataurl.split(',');
-        if (arr.length < 2) return new Blob();
-        const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
-        const bstr = atob(arr[1]);
-        let n = bstr.length;
-        const u8arr = new Uint8Array(n);
-        while (n--) {
-          u8arr[n] = bstr.charCodeAt(n);
-        }
-        return new Blob([u8arr], { type: mime });
-      };
-
-      const dataUrl = canvas.toDataURL('image/png', 1.0);
-      const blob = dataURLtoBlob(dataUrl);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `passport-photo-${Date.now()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-  };
-
-  // --- 5. Generate Print Layout ---
-  const handleDownload = () => {
-    if (!finalImageSrc || !printImageElement) return;
-    
-    if (paperSize.id === 'single') {
-      handleDownloadSinglePhoto();
-      return;
+      rawPngUrl = canvas.toDataURL('image/png', 1.0);
     }
 
-    // Generate A4/Grid
-    const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
-    const isHorizontal = printOrientation === 'horizontal';
-    
-    // Determine target dimensions based on orientation
-    const targetWidthMm = isHorizontal ? targetPreset.height : targetPreset.width;
-    const targetHeightMm = isHorizontal ? targetPreset.width : targetPreset.height;
-
-    const photoWidth = Math.round((targetWidthMm / 25.4) * dpi);
-    const photoHeight = Math.round((targetHeightMm / 25.4) * dpi);
-    
-    // Use original dimensions for drawing the unrotated image
-    const origPhotoWidth = Math.round((targetPreset.width / 25.4) * dpi);
-    const origPhotoHeight = Math.round((targetPreset.height / 25.4) * dpi);
-
-    const marginMm = 2; // Reduced from 5mm to make cutlines closer
-    const margin = Math.round((marginMm / 25.4) * dpi);
-
-    let sheetWidthMm = paperSize.id === 'custom' ? customPaper.width : paperSize.width;
-    let sheetHeightMm = paperSize.id === 'custom' ? customPaper.height : paperSize.height;
-
-    if (paperSize.id === 'custom-grid') {
-      sheetWidthMm = customGrid.cols * targetWidthMm + (customGrid.cols + 1) * marginMm;
-      sheetHeightMm = customGrid.rows * targetHeightMm + (customGrid.rows + 1) * marginMm;
-    }
-
-    const sheetWidth = Math.round((sheetWidthMm / 25.4) * dpi);
-    const sheetHeight = Math.round((sheetHeightMm / 25.4) * dpi);
-
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    canvas.width = sheetWidth;
-    canvas.height = sheetHeight;
-    
-    // Fill white background for paper
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, sheetWidth, sheetHeight);
-    
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    
-    let cols = 0;
-    let rows = 0;
-
-    if (paperSize.id === 'custom-grid') {
-      cols = customGrid.cols;
-      rows = customGrid.rows;
-    } else {
-      cols = Math.floor((sheetWidth - margin) / (photoWidth + margin));
-      rows = Math.floor((sheetHeight - margin) / (photoHeight + margin));
-    }
-    
-    if (cols <= 0 || rows <= 0) {
-      alert("Paper size is too small for even one photo.");
-      return;
-    }
-    
-    // Center the grid on the paper
-    const startX = (sheetWidth - (cols * photoWidth + (cols - 1) * margin)) / 2;
-    const startY = (sheetHeight - (rows * photoHeight + (rows - 1) * margin)) / 2;
-    
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const x = startX + c * (photoWidth + margin);
-        const y = startY + r * (photoHeight + margin);
-        
-        ctx.save();
-        if (isHorizontal) {
-          ctx.translate(x + photoWidth / 2, y + photoHeight / 2);
-          ctx.rotate(Math.PI / 2); // 90 degrees
-          ctx.drawImage(printImageElement, -origPhotoWidth / 2, -origPhotoHeight / 2, origPhotoWidth, origPhotoHeight);
-        } else {
-          ctx.drawImage(printImageElement, x, y, photoWidth, photoHeight);
-        }
-        ctx.restore();
-        
-        if (hasCutLines) {
-          ctx.strokeStyle = '#cccccc';
-          ctx.lineWidth = Math.max(1, Math.round(dpi / 150));
-          ctx.setLineDash([Math.round(dpi/10), Math.round(dpi/10)]);
-          ctx.strokeRect(x - margin/2, y - margin/2, photoWidth + margin, photoHeight + margin);
-          ctx.setLineDash([]);
-        }
-      }
-    }
-    
-    const dataURLtoBlob = (dataurl: string) => {
-      const arr = dataurl.split(',');
-      const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
-      const bstr = atob(arr[1]);
-      let n = bstr.length;
-      const u8arr = new Uint8Array(n);
-      while (n--) {
-        u8arr[n] = bstr.charCodeAt(n);
-      }
-      return new Blob([u8arr], { type: mime });
-    };
-
-    const dataUrl = canvas.toDataURL('image/jpeg', 1.0);
-    const blob = dataURLtoBlob(dataUrl);
+    const { bytes, mime } = dataURLtoBytes(rawPngUrl);
+    const dpiBytes = mime === 'image/png' ? injectPngDpiBytes(bytes, dpi) : bytes;
+    const blob = new Blob([dpiBytes], { type: mime });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `passport-print-${paperSize.name.replace(/\s+/g, '-')}.jpg`;
+    link.download = `passport-photo-${dpi}dpi-${Date.now()}.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  const renderSheetCanvas = () => {
+    if (!finalImageSrc || !printImageElement) return null;
+    const layout = computePrintLayout();
+    if (!layout.isValid) {
+      setPrintError('Paper size is too small for even one photo at this preset size.');
+      return null;
+    }
+    setPrintError(null);
+
+    const mmToPx = (mm: number) => (mm / 25.4) * dpi;
+    const sheetWidth = Math.max(1, Math.round(mmToPx(layout.sheetWidthMm)));
+    const sheetHeight = Math.max(1, Math.round(mmToPx(layout.sheetHeightMm)));
+    const photoWidth = Math.max(1, Math.round(mmToPx(layout.photoWidthMm)));
+    const photoHeight = Math.max(1, Math.round(mmToPx(layout.photoHeightMm)));
+    const origPhotoWidth = Math.max(1, Math.round(mmToPx(layout.origPhotoWidthMm)));
+    const origPhotoHeight = Math.max(1, Math.round(mmToPx(layout.origPhotoHeightMm)));
+    const gapPx = mmToPx(layout.gapMm);
+    const startX = mmToPx(layout.startXMm);
+    const startY = mmToPx(layout.startYMm);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = sheetWidth;
+    canvas.height = sheetHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, sheetWidth, sheetHeight);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    for (let r = 0; r < layout.rows; r++) {
+      for (let c = 0; c < layout.cols; c++) {
+        const x = startX + c * (photoWidth + gapPx);
+        const y = startY + r * (photoHeight + gapPx);
+
+        ctx.save();
+        if (layout.isHorizontal) {
+          ctx.translate(x + photoWidth / 2, y + photoHeight / 2);
+          ctx.rotate(Math.PI / 2);
+          ctx.drawImage(printImageElement, -origPhotoWidth / 2, -origPhotoHeight / 2, origPhotoWidth, origPhotoHeight);
+        } else {
+          ctx.drawImage(printImageElement, x, y, photoWidth, photoHeight);
+        }
+        ctx.restore();
+
+        if (hasCutLines) {
+          ctx.strokeStyle = '#bbbbbb';
+          ctx.lineWidth = Math.max(1, Math.round(dpi / 150));
+          ctx.setLineDash([Math.max(4, Math.round(dpi / 12)), Math.max(4, Math.round(dpi / 12))]);
+          ctx.strokeRect(x - gapPx / 2, y - gapPx / 2, photoWidth + gapPx, photoHeight + gapPx);
+          ctx.setLineDash([]);
+        }
+      }
+    }
+
+    return { canvas, layout };
+  };
+
+  // --- 5. Generate Print Layout (JPG with embedded physical DPI) ---
+  const handleDownload = () => {
+    if (!finalImageSrc || !printImageElement) return;
+    if (paperSize.id === 'single') {
+      handleDownloadSinglePhoto();
+      return;
+    }
+
+    const rendered = renderSheetCanvas();
+    if (!rendered) return;
+
+    const dataUrl = rendered.canvas.toDataURL('image/jpeg', 1.0);
+    const { bytes } = dataURLtoBytes(dataUrl);
+    const dpiBytes = injectJpegDpiBytes(bytes, dpi);
+    const blob = new Blob([dpiBytes], { type: 'image/jpeg' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `passport-print-${paperSize.id}-${dpi}dpi.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  // --- 6. Exact-Size Vector PDF Download ---
+  const handleDownloadPdf = () => {
+    if (!finalImageSrc || !printImageElement) return;
+    const layout = computePrintLayout();
+    if (!layout.isValid) {
+      setPrintError('Paper size is too small for even one photo at this preset size.');
+      return;
+    }
+    setPrintError(null);
+
+    const tileFormat = bgColor === 'transparent' ? 'image/png' : 'image/jpeg';
+    const tileDataUrl = createTileDataUrl(
+      layout.photoWidthMm,
+      layout.photoHeightMm,
+      layout.origPhotoWidthMm,
+      layout.origPhotoHeightMm,
+      layout.isHorizontal,
+      tileFormat
+    );
+    if (!tileDataUrl) return;
+
+    // For single photo PDF, place at exact mm size centered near top of A4 so printers don't scale it to fill paper
+    const pageW = layout.isSingle ? 210 : layout.sheetWidthMm;
+    const pageH = layout.isSingle ? 297 : layout.sheetHeightMm;
+    const startX = layout.isSingle ? (pageW - layout.photoWidthMm) / 2 : layout.startXMm;
+    const startY = layout.isSingle ? 15 : layout.startYMm;
+
+    const pdf = new jsPDF({
+      orientation: pageW >= pageH ? 'landscape' : 'portrait',
+      unit: 'mm',
+      format: [pageW, pageH],
+    });
+
+    const imgType = tileFormat === 'image/png' ? 'PNG' : 'JPEG';
+
+    for (let r = 0; r < layout.rows; r++) {
+      for (let c = 0; c < layout.cols; c++) {
+        const x = startX + c * (layout.photoWidthMm + layout.gapMm);
+        const y = startY + r * (layout.photoHeightMm + layout.gapMm);
+        pdf.addImage(tileDataUrl, imgType, x, y, layout.photoWidthMm, layout.photoHeightMm, undefined, 'NONE');
+
+        if (hasCutLines && !layout.isSingle) {
+          pdf.setDrawColor(180, 180, 180);
+          pdf.setLineWidth(0.2);
+          pdf.setLineDashPattern([1.5, 1.5], 0);
+          pdf.rect(
+            x - layout.gapMm / 2,
+            y - layout.gapMm / 2,
+            layout.photoWidthMm + layout.gapMm,
+            layout.photoHeightMm + layout.gapMm
+          );
+        }
+      }
+    }
+
+    pdf.save(`passport-print-${paperSize.id}-${Math.round(layout.photoWidthMm)}x${Math.round(layout.photoHeightMm)}mm.pdf`);
+  };
+
+  // --- 7. Direct Browser Print (Synchronous @media print canvas + sandbox PDF fallback) ---
+  const handlePrintSheet = () => {
+    if (!finalImageSrc || !printImageElement) {
+      setPrintError('Photo is still preparing. Please wait a moment and try Print again.');
+      return;
+    }
+    const layout = computePrintLayout();
+    if (!layout.isValid) {
+      setPrintError('Paper size is too small for even one photo at this preset size.');
+      return;
+    }
+    setPrintError(null);
+    setPrintNotice(null);
+
+    // For single photo, print on A4 at exact physical mm so printer never enlarges it to full page
+    const pageW = layout.isSingle ? 210 : layout.sheetWidthMm;
+    const pageH = layout.isSingle ? 297 : layout.sheetHeightMm;
+
+    let sheetCanvas: HTMLCanvasElement | null = null;
+    if (layout.isSingle) {
+      const printDpi = Math.max(300, Math.min(600, dpi));
+      const mmToPx = (mm: number) => (mm / 25.4) * printDpi;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(mmToPx(pageW)));
+      canvas.height = Math.max(1, Math.round(mmToPx(pageH)));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      const wPx = mmToPx(layout.photoWidthMm);
+      const hPx = mmToPx(layout.photoHeightMm);
+      const origWPx = mmToPx(layout.origPhotoWidthMm);
+      const origHPx = mmToPx(layout.origPhotoHeightMm);
+      const startX = (canvas.width - wPx) / 2;
+      const startY = mmToPx(15);
+
+      ctx.save();
+      if (layout.isHorizontal) {
+        ctx.translate(startX + wPx / 2, startY + hPx / 2);
+        ctx.rotate(Math.PI / 2);
+        ctx.drawImage(printImageElement, -origWPx / 2, -origHPx / 2, origWPx, origHPx);
+      } else {
+        ctx.drawImage(printImageElement, startX, startY, wPx, hPx);
+      }
+      ctx.restore();
+      sheetCanvas = canvas;
+    } else {
+      const rendered = renderSheetCanvas();
+      if (!rendered) return;
+      sheetCanvas = rendered.canvas;
+    }
+
+    document.getElementById('passport-direct-print-sheet')?.remove();
+    document.getElementById('passport-direct-print-style')?.remove();
+
+    const styleEl = document.createElement('style');
+    styleEl.id = 'passport-direct-print-style';
+    styleEl.textContent = `
+      @page {
+        size: ${pageW}mm ${pageH}mm;
+        margin: 0;
+      }
+      #passport-direct-print-sheet {
+        display: none;
+      }
+      @media print {
+        * {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          width: ${pageW}mm !important;
+          height: ${pageH}mm !important;
+          background: #ffffff !important;
+          overflow: hidden !important;
+        }
+        body > *:not(#passport-direct-print-sheet) {
+          display: none !important;
+        }
+        #passport-direct-print-sheet {
+          display: block !important;
+          position: relative !important;
+          width: ${pageW}mm !important;
+          height: ${pageH}mm !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #ffffff !important;
+          overflow: hidden !important;
+        }
+        #passport-direct-print-sheet canvas {
+          display: block !important;
+          width: ${pageW}mm !important;
+          height: ${pageH}mm !important;
+        }
+      }
+    `;
+
+    const container = document.createElement('div');
+    container.id = 'passport-direct-print-sheet';
+    container.appendChild(sheetCanvas);
+
+    document.head.appendChild(styleEl);
+    document.body.appendChild(container);
+
+    const cleanup = () => {
+      container.remove();
+      styleEl.remove();
+    };
+
+    let printDialogOpened = false;
+    const onBeforePrint = () => {
+      printDialogOpened = true;
+    };
+    window.addEventListener('beforeprint', onBeforePrint, { once: true });
+    window.addEventListener('afterprint', cleanup, { once: true });
+
+    // Call synchronously inside user click to preserve browser user activation gesture
+    const t0 = performance.now();
+    try {
+      window.print();
+    } catch {
+      // Fall through to PDF fallback check below
+    }
+    const elapsedMs = performance.now() - t0;
+
+    setTimeout(() => {
+      window.removeEventListener('beforeprint', onBeforePrint);
+      if (!printDialogOpened && elapsedMs < 80) {
+        cleanup();
+        handleDownloadPdf();
+        setPrintNotice(
+          'Your browser preview blocked the native print popup, so an exact-size printable PDF was downloaded instead. Open the PDF and print at 100% / Actual Size.'
+        );
+      }
+    }, 350);
+
+    setTimeout(cleanup, 60000);
+  };
+
   // --- Render Helpers ---
   const renderPrintPreview = () => {
     if (!finalImageSrc) return null;
-    if (paperSize.id === 'single') {
+    const layout = computePrintLayout();
+
+    if (layout.isSingle) {
+      const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
       return (
-        <div className="p-4">
-          <img 
-            src={finalImageSrc} 
-            alt="Single Print" 
-            className="object-contain shadow-2xl border border-gray-200 transition-all duration-300 mx-auto" 
-            style={{ 
+        <div className="p-4 flex flex-col items-center">
+          <img
+            src={finalImageSrc}
+            alt="Single Print"
+            className="object-contain shadow-2xl border border-gray-200 transition-all duration-300 mx-auto"
+            style={{
               zoom: zoom,
-              height: `70vh`,
-              maxWidth: `100%`,
-              imageRendering: 'high-quality' 
+              height: '55vh',
+              maxWidth: '100%',
+              imageRendering: 'high-quality',
             }}
           />
+          <div className="mt-4 text-xs text-gray-600 font-bold uppercase tracking-wider text-center">
+            Single Photo • {selectedPreset.id === 'free' ? 'Custom Crop' : `${targetPreset.width} × ${targetPreset.height} mm`} • {dpi} DPI
+          </div>
         </div>
       );
     }
 
-    const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
-    const isHorizontal = printOrientation === 'horizontal';
-    const photoWidthMm = isHorizontal ? targetPreset.height : targetPreset.width;
-    const photoHeightMm = isHorizontal ? targetPreset.width : targetPreset.height;
-    const origPhotoWidthMm = targetPreset.width;
-    const origPhotoHeightMm = targetPreset.height;
-
-    const marginMm = 2; // Reduced from 5mm to make cutlines closer
-    
-    let sheetWidthMm = paperSize.id === 'custom' ? customPaper.width : paperSize.width;
-    let sheetHeightMm = paperSize.id === 'custom' ? customPaper.height : paperSize.height;
-
-    if (paperSize.id === 'custom-grid') {
-      sheetWidthMm = customGrid.cols * photoWidthMm + (customGrid.cols + 1) * marginMm;
-      sheetHeightMm = customGrid.rows * photoHeightMm + (customGrid.rows + 1) * marginMm;
+    if (!layout.isValid) {
+      return (
+        <div className="p-6 text-center text-red-600 bg-red-50 border border-red-200 rounded-xl font-bold text-sm max-w-md mx-auto">
+          Paper size ({layout.sheetWidthMm} × {layout.sheetHeightMm} mm) is too small for even one {layout.photoWidthMm.toFixed(1)} × {layout.photoHeightMm.toFixed(1)} mm photo.
+        </div>
+      );
     }
-    
-    let cols = 0;
-    let rows = 0;
 
-    if (paperSize.id === 'custom-grid') {
-      cols = customGrid.cols;
-      rows = customGrid.rows;
-    } else {
-      cols = Math.floor((sheetWidthMm - marginMm) / (photoWidthMm + marginMm));
-      rows = Math.floor((sheetHeightMm - marginMm) / (photoHeightMm + marginMm));
-    }
-    
-    if (cols <= 0 || rows <= 0) return <div className="p-4 text-center text-gray-500 font-bold">Paper size too small.</div>;
-    
-    const startXMm = (sheetWidthMm - (cols * photoWidthMm + (cols - 1) * marginMm)) / 2;
-    const startYMm = (sheetHeightMm - (rows * photoHeightMm + (rows - 1) * marginMm)) / 2;
+    // Proportional real-world preview scale anchored to A4 height (297mm), so A5/4x6/5x7 never appear inflated
+    const maxPreviewHeightPx = typeof window !== 'undefined' ? Math.min(540, Math.max(320, window.innerHeight * 0.65)) : 460;
+    const a4RefScale = maxPreviewHeightPx / 297;
+    const pxPerMm = layout.sheetWidthMm > 240 ? Math.min(a4RefScale, 620 / layout.sheetWidthMm) : a4RefScale;
+    const sheetPxW = Math.round(layout.sheetWidthMm * pxPerMm);
+    const sheetPxH = Math.round(layout.sheetHeightMm * pxPerMm);
 
     return (
-      <div className="p-4">
-        <div 
-          className="bg-white shadow-2xl relative transition-all duration-300 mx-auto" 
-          style={{ 
+      <div className="p-4 flex flex-col items-center">
+        <div
+          className="bg-white shadow-2xl relative transition-all duration-300 mx-auto border border-gray-300"
+          style={{
             zoom: zoom,
-            height: `70vh`,
-            maxWidth: `100%`,
-            aspectRatio: `${sheetWidthMm} / ${sheetHeightMm}`,
+            width: `${sheetPxW}px`,
+            height: `${sheetPxH}px`,
           }}
         >
-          {Array.from({ length: rows }).map((_, r) => Array.from({ length: cols }).map((_, c) => {
-            const x = startXMm + c * (photoWidthMm + marginMm);
-            const y = startYMm + r * (photoHeightMm + marginMm);
-            return (
-              <div 
-                key={`${r}-${c}`} 
-                className="absolute flex items-center justify-center overflow-visible" 
-                style={{ 
-                  left: `${(x / sheetWidthMm) * 100}%`, 
-                  top: `${(y / sheetHeightMm) * 100}%`, 
-                  width: `${(photoWidthMm / sheetWidthMm) * 100}%`, 
-                  height: `${(photoHeightMm / sheetHeightMm) * 100}%` 
-                }}
-              >
-                {hasCutLines && (
-                  <div 
-                    className="absolute border border-dashed border-gray-400 pointer-events-none" 
-                    style={{ 
-                      left: `-${(marginMm/2 / photoWidthMm) * 100}%`, 
-                      top: `-${(marginMm/2 / photoHeightMm) * 100}%`, 
-                      width: `${((photoWidthMm + marginMm) / photoWidthMm) * 100}%`, 
-                      height: `${((photoHeightMm + marginMm) / photoHeightMm) * 100}%`,
-                      zIndex: 10
-                    }} 
-                  />
-                )}
-                <img 
-                  src={finalImageSrc} 
-                  alt="Copy" 
-                  className="shadow-sm absolute block" 
-                  style={{ 
-                    imageRendering: 'high-quality',
-                    width: isHorizontal ? `${(origPhotoWidthMm / photoWidthMm) * 100}%` : '100%',
-                    height: isHorizontal ? `${(origPhotoHeightMm / photoHeightMm) * 100}%` : '100%',
-                    top: '50%',
-                    left: '50%',
-                    transform: isHorizontal ? 'translate(-50%, -50%) rotate(90deg)' : 'translate(-50%, -50%)',
-                    objectFit: 'fill'
+          {Array.from({ length: layout.rows }).map((_, r) =>
+            Array.from({ length: layout.cols }).map((_, c) => {
+              const x = layout.startXMm + c * (layout.photoWidthMm + layout.gapMm);
+              const y = layout.startYMm + r * (layout.photoHeightMm + layout.gapMm);
+              return (
+                <div
+                  key={`${r}-${c}`}
+                  className="absolute flex items-center justify-center overflow-visible"
+                  style={{
+                    left: `${(x / layout.sheetWidthMm) * 100}%`,
+                    top: `${(y / layout.sheetHeightMm) * 100}%`,
+                    width: `${(layout.photoWidthMm / layout.sheetWidthMm) * 100}%`,
+                    height: `${(layout.photoHeightMm / layout.sheetHeightMm) * 100}%`,
                   }}
-                />
-              </div>
-            );
-          }))}
+                >
+                  {hasCutLines && (
+                    <div
+                      className="absolute border border-dashed border-gray-400 pointer-events-none"
+                      style={{
+                        left: `-${((layout.gapMm / 2) / layout.photoWidthMm) * 100}%`,
+                        top: `-${((layout.gapMm / 2) / layout.photoHeightMm) * 100}%`,
+                        width: `${((layout.photoWidthMm + layout.gapMm) / layout.photoWidthMm) * 100}%`,
+                        height: `${((layout.photoHeightMm + layout.gapMm) / layout.photoHeightMm) * 100}%`,
+                        zIndex: 10,
+                      }}
+                    />
+                  )}
+                  <img
+                    src={finalImageSrc}
+                    alt="Copy"
+                    className="shadow-sm absolute block"
+                    style={{
+                      imageRendering: 'high-quality',
+                      width: layout.isHorizontal ? `${(layout.origPhotoWidthMm / layout.photoWidthMm) * 100}%` : '100%',
+                      height: layout.isHorizontal ? `${(layout.origPhotoHeightMm / layout.photoHeightMm) * 100}%` : '100%',
+                      top: '50%',
+                      left: '50%',
+                      transform: layout.isHorizontal ? 'translate(-50%, -50%) rotate(90deg)' : 'translate(-50%, -50%)',
+                      objectFit: 'fill',
+                    }}
+                  />
+                </div>
+              );
+            })
+          )}
         </div>
-        <div className="mt-4 text-xs text-gray-500 font-bold uppercase tracking-widest">
-          Preview: {cols * rows} photos on {paperSize.name}
+        <div className="mt-4 text-xs text-gray-600 font-bold uppercase tracking-wider text-center">
+          Preview: {layout.cols} × {layout.rows} ({layout.cols * layout.rows} photos) • Sheet: {layout.sheetWidthMm} × {layout.sheetHeightMm} mm • Photo: {layout.photoWidthMm.toFixed(1)} × {layout.photoHeightMm.toFixed(1)} mm
         </div>
       </div>
     );
@@ -1716,7 +2154,7 @@ export default function PassportPhotoMaker() {
                         {PAPER_SIZES.map(paper => (
                           <button
                             key={paper.id}
-                            onClick={() => setPaperSize(paper)}
+                            onClick={() => { setPaperSize(paper); setPrintError(null); setPrintNotice(null); }}
                             className={`p-3 rounded-xl border text-left transition-all ${
                               paperSize.id === paper.id ? 'border-[#e8501a] bg-[#e8501a]/5 ring-1 ring-[#e8501a]' : 'border-gray-200 hover:border-gray-300'
                             }`}
@@ -1730,11 +2168,11 @@ export default function PassportPhotoMaker() {
                         <div className="grid grid-cols-2 gap-3 mt-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
                           <div>
                             <label className="text-[10px] font-bold text-gray-500 uppercase">Width (mm)</label>
-                            <input type="number" value={customPaper.width} onChange={e => setCustomPaper({...customPaper, width: Number(e.target.value)})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
+                            <input type="number" min="20" value={customPaper.width} onChange={e => { setPrintError(null); setCustomPaper({...customPaper, width: Math.max(10, Number(e.target.value))}); }} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
                           </div>
                           <div>
                             <label className="text-[10px] font-bold text-gray-500 uppercase">Height (mm)</label>
-                            <input type="number" value={customPaper.height} onChange={e => setCustomPaper({...customPaper, height: Number(e.target.value)})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
+                            <input type="number" min="20" value={customPaper.height} onChange={e => { setPrintError(null); setCustomPaper({...customPaper, height: Math.max(10, Number(e.target.value))}); }} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
                           </div>
                         </div>
                       )}
@@ -1743,12 +2181,42 @@ export default function PassportPhotoMaker() {
                         <div className="grid grid-cols-2 gap-3 mt-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
                           <div>
                             <label className="text-[10px] font-bold text-gray-500 uppercase">Photos per Row</label>
-                            <input type="number" min="1" value={customGrid.cols} onChange={e => setCustomGrid({...customGrid, cols: Math.max(1, Number(e.target.value))})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
+                            <input type="number" min="1" max="20" value={customGrid.cols} onChange={e => { setPrintError(null); setCustomGrid({...customGrid, cols: Math.max(1, Math.min(20, Number(e.target.value) || 1))}); }} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
                           </div>
                           <div>
                             <label className="text-[10px] font-bold text-gray-500 uppercase">Number of Rows</label>
-                            <input type="number" min="1" value={customGrid.rows} onChange={e => setCustomGrid({...customGrid, rows: Math.max(1, Number(e.target.value))})} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
+                            <input type="number" min="1" max="20" value={customGrid.rows} onChange={e => { setPrintError(null); setCustomGrid({...customGrid, rows: Math.max(1, Math.min(20, Number(e.target.value) || 1))}); }} className="w-full p-2 mt-1 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-[#e8501a]" />
                           </div>
+                        </div>
+                      )}
+
+                      {(() => {
+                        const layout = computePrintLayout();
+                        return (
+                          <div className="mt-3 p-3 bg-orange-50/70 border border-orange-200/80 rounded-xl space-y-1">
+                            <div className="flex justify-between text-[11px] font-bold text-gray-800">
+                              <span>Sheet: {layout.isSingle ? 'A4 Print / Exact Photo' : `${layout.sheetWidthMm} × ${layout.sheetHeightMm} mm`}</span>
+                              <span className="text-[#e8501a]">{layout.cols} × {layout.rows} ({layout.cols * layout.rows} photos)</span>
+                            </div>
+                            <div className="text-[11px] text-gray-600 font-medium">
+                              Photo Size: <strong className="text-gray-800">{layout.photoWidthMm.toFixed(1)} × {layout.photoHeightMm.toFixed(1)} mm</strong> ({dpi} DPI)
+                            </div>
+                            <p className="text-[10px] text-gray-600 leading-snug pt-1 border-t border-orange-200/60">
+                              Print Tip: Select <strong>Actual Size / 100%</strong> in printer settings (turn OFF &ldquo;Fit to Page&rdquo;) for true passport size.
+                            </p>
+                          </div>
+                        );
+                      })()}
+
+                      {printError && (
+                        <div className="mt-3 p-2.5 bg-red-50 border border-red-200 rounded-xl text-xs font-bold text-red-600">
+                          {printError}
+                        </div>
+                      )}
+
+                      {printNotice && (
+                        <div className="mt-3 p-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs font-medium text-blue-800">
+                          {printNotice}
                         </div>
                       )}
                     </div>
@@ -1874,21 +2342,40 @@ export default function PassportPhotoMaker() {
                   </div>
                 )}
                 {step === 'print' && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-end gap-1.5">
                     {paperSize.id !== 'single' && (
                       <button 
                         onClick={handleDownloadSinglePhoto}
-                        className="px-4 py-2 bg-gray-100 text-gray-800 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors flex items-center gap-2"
-                        title="Download the single photo by itself"
+                        disabled={!finalImageSrc || !printImageElement}
+                        className="px-2.5 py-2 bg-gray-100 text-gray-800 rounded-xl font-bold text-xs hover:bg-gray-200 transition-colors flex items-center gap-1 disabled:opacity-50"
+                        title="Download single passport photo (with exact DPI)"
                       >
-                        <Download className="w-4 h-4" /> Single Photo
+                        <Download className="w-3.5 h-3.5" /> Single
                       </button>
                     )}
+                    <button
+                      onClick={handlePrintSheet}
+                      disabled={!finalImageSrc || !printImageElement}
+                      className="px-2.5 py-2 bg-[#e8501a] text-white rounded-xl font-bold text-xs hover:bg-[#d04313] transition-colors flex items-center gap-1 shadow-sm disabled:opacity-50"
+                      title="Print sheet at exact millimeter size"
+                    >
+                      <Printer className="w-3.5 h-3.5" /> Print
+                    </button>
+                    <button
+                      onClick={handleDownloadPdf}
+                      disabled={!finalImageSrc || !printImageElement}
+                      className="px-2.5 py-2 bg-gray-100 text-gray-800 rounded-xl font-bold text-xs hover:bg-gray-200 transition-colors flex items-center gap-1 disabled:opacity-50"
+                      title="Download exact-size printable PDF"
+                    >
+                      <FileText className="w-3.5 h-3.5" /> PDF
+                    </button>
                     <button 
                       onClick={handleDownload}
-                      className="px-6 py-2 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-gray-800 transition-colors flex items-center gap-2 shadow-lg shadow-gray-900/20"
+                      disabled={!finalImageSrc || !printImageElement}
+                      className="px-3 py-2 bg-gray-900 text-white rounded-xl font-bold text-xs hover:bg-gray-800 transition-colors flex items-center gap-1 shadow-lg shadow-gray-900/20 disabled:opacity-50"
+                      title={paperSize.id === 'single' ? 'Download single PNG' : 'Download sheet JPG with physical DPI metadata'}
                     >
-                      <Download className="w-4 h-4" /> {paperSize.id === 'single' ? 'Download' : 'Download Layout'}
+                      <Download className="w-3.5 h-3.5" /> {paperSize.id === 'single' ? 'Download' : 'JPG'}
                     </button>
                   </div>
                 )}
