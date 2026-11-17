@@ -676,10 +676,11 @@ export default function PassportPhotoMaker() {
         false, // forceWhiteBackground
         false, // highPrecisionBoundary
         {
-          engine: 'auto',
+          engine: 'strict_subject',
+          isolateMainSubject: true,
           removeBackgroundNoise: true,
           severTouchingObjects: true,
-          objectStrictness: 75,
+          objectStrictness: 85,
           preserveEarsAndShoulders: true,
           extendLeftShoulder: true,
           decontaminateHalos: true,
@@ -762,7 +763,11 @@ export default function PassportPhotoMaker() {
     if (!targetSrc) return;
     try {
       setIsProcessing(true);
-      const cleaned = await removeChairFromImage(targetSrc, { objectStrictness: 85, severTouchingObjects: true });
+      const cleaned = await removeChairFromImage(targetSrc, {
+        objectStrictness: 85,
+        severTouchingObjects: true,
+        isolateMainSubject: true,
+      });
       if (bgRemovedImageSrc) {
         setBgRemovedImageSrc(cleaned);
       } else {
@@ -782,7 +787,11 @@ export default function PassportPhotoMaker() {
     if (!targetSrc) return;
     try {
       setIsProcessing(true);
-      const cleaned = await cleanEdgeHalosAndDeFringe(targetSrc, { deFringeStrength: 1.0, haloThreshold: 35 });
+      const cleaned = await cleanEdgeHalosAndDeFringe(targetSrc, {
+        deFringeStrength: 1.0,
+        haloThreshold: 35,
+        isolateMainSubject: true,
+      });
       if (bgRemovedImageSrc) {
         setBgRemovedImageSrc(cleaned);
       } else {

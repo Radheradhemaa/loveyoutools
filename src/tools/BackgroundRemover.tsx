@@ -506,7 +506,7 @@ export default function BackgroundRemover() {
     try {
       setIsProcessing(true);
       setStatusText('Removing Chair & Backrest Objects...');
-      const cleaned = await removeChairFromImage(targetSrc, { objectStrictness: 80, severTouchingObjects: true });
+      const cleaned = await removeChairFromImage(targetSrc, { objectStrictness: 85, severTouchingObjects: true, isolateMainSubject: true });
       setResultImage(cleaned);
       addToHistory(cleaned);
     } catch (err) {
@@ -523,7 +523,7 @@ export default function BackgroundRemover() {
     try {
       setIsProcessing(true);
       setStatusText('Removing Boundary White Line & Edge Halos...');
-      const cleaned = await cleanEdgeHalosAndDeFringe(targetSrc, { deFringeStrength: 1.0, haloThreshold: 35 });
+      const cleaned = await cleanEdgeHalosAndDeFringe(targetSrc, { deFringeStrength: 1.0, haloThreshold: 35, isolateMainSubject: true });
       setResultImage(cleaned);
       addToHistory(cleaned);
     } catch (err) {
