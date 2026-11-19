@@ -1,12 +1,23 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw, Upload, FileText } from 'lucide-react';
+import { Download, Layout, Sliders, Loader2, X, Scissors, Wand2, ArrowRight, Image as ImageIcon, Crop, Sparkles, Printer, Check, ZoomIn, ZoomOut, Maximize2, Undo, Redo, RefreshCw, Upload, FileText, Shirt, RotateCw, FlipHorizontal2, Move, Eye, EyeOff, ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import jsPDF from 'jspdf';
 import ReactCrop, { type Crop as CropType, centerCrop, makeAspectCrop, PixelCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import ToolLayout from '../components/tool-system/ToolLayout';
 import { removeBackground as runBgRemoval, ensurePreloaded } from '../lib/bgRemoval';
 import { drawSteppedHighQuality } from '../lib/touchupCanvas';
+import {
+  SUIT_CATALOG,
+  DEFAULT_SUIT_TRANSFORM,
+  loadProcessedSuit,
+  detectAutoSuitPlacement,
+  compositeSubjectWithSuit,
+  getSuitFrameBox,
+  type SuitCategory,
+  type SuitTransform,
+  type ProcessedSuit,
+} from '../lib/suitOverlay';
 
 // --- Configuration ---
 const PRESETS = [
@@ -89,6 +100,51 @@ export default function PassportPhotoMaker() {
   
   // Frame Border Controls
   const [borderThickness, setBorderThickness] = useState(2); // Standard 2px thin border
+
+  // Formal Suit / Outfit Overlay States
+  const [suitCategory, setSuitCategory] = useState<SuitCategory>('all');
+  const [selectedSuitId, setSelectedSuitId] = useState<string | null>(null);
+  const [customSuitSrc, setCustomSuitSrc] = useState<string | null>(null);
+  const suitUploadInputRef = useRef<HTMLInputElement>(null);
+  const [processedSuit, setProcessedSuit] = useState<ProcessedSuit | null>(null);
+  const [isLoadingSuit, setIsLoadingSuit] = useState(false);
+  const [suitThumbs, setSuitThumbs] = useState<Record<string, string>>({});
+  const [suitTransform, setSuitTransform] = useState<SuitTransform>(DEFAULT_SUIT_TRANSFORM);
+  const [showSuitHandles, setShowSuitHandles] = useState(true);
+  const [isDraggingSuit, setIsDraggingSuit] = useState(false);
+  const hasAutoFittedSuitRef = useRef(false);
+
+  // Fast Two-Stage Composite Refs (instant 60fps suit adjustment + background switch)
+  const refinedSubjectCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const compositeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const editLiveCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const editFrameRef = useRef<HTMLDivElement | null>(null);
+  const lastFinalBlobUrlRef = useRef<string | null>(null);
+  const [subjectVersion, setSubjectVersion] = useState(0);
+
+  type SuitDragMode =
+    | 'move'
+    | 'scale-nw'
+    | 'scale-ne'
+    | 'scale-sw'
+    | 'scale-se'
+    | 'width-w'
+    | 'width-e'
+    | 'height-s'
+    | 'rotate';
+
+  const suitDragRef = useRef<{
+    mode: SuitDragMode;
+    startClientX: number;
+    startClientY: number;
+    frameW: number;
+    frameH: number;
+    anchorClientX: number;
+    anchorClientY: number;
+    startDist: number;
+    startAngleDeg: number;
+    initial: SuitTransform;
+  } | null>(null);
   
   // Debounced Adjustments for Performance
   const [appliedAdjustments, setAppliedAdjustments] = useState({
@@ -768,11 +824,210 @@ export default function PassportPhotoMaker() {
     await removeBackgroundFromSrc(croppedImageSrc);
   };
 
-  // --- 4. Apply Adjustments & Background Color ---
+  // --- Suit Thumbnail Preloading & Selection Loader ---
+  useEffect(() => {
+    if (step !== 'edit') return;
+    let cancelled = false;
+    SUIT_CATALOG.forEach((item) => {
+      if (suitThumbs[item.id]) return;
+      loadProcessedSuit(item.id, item.src, item.isChromaKey)
+        .then((res) => {
+          if (cancelled) return;
+          setSuitThumbs((prev) => (prev[item.id] ? prev : { ...prev, [item.id]: res.thumbDataUrl }));
+        })
+        .catch(() => {
+          // Ignore thumbnail preload error; fallback displays catalog src
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [step]);
+
+  useEffect(() => {
+    if (!selectedSuitId) {
+      setProcessedSuit(null);
+      setIsLoadingSuit(false);
+      hasAutoFittedSuitRef.current = false;
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingSuit(true);
+
+    const catalogItem = SUIT_CATALOG.find((s) => s.id === selectedSuitId);
+    const src = selectedSuitId === 'custom' ? customSuitSrc : catalogItem?.src;
+    const forceKey = selectedSuitId === 'custom' ? undefined : catalogItem?.isChromaKey;
+
+    if (!src) {
+      setProcessedSuit(null);
+      setIsLoadingSuit(false);
+      return;
+    }
+
+    loadProcessedSuit(selectedSuitId, src, forceKey)
+      .then((loaded) => {
+        if (cancelled) return;
+        setProcessedSuit(loaded);
+        setIsLoadingSuit(false);
+        setShowSuitHandles(true);
+        if (!hasAutoFittedSuitRef.current) {
+          hasAutoFittedSuitRef.current = true;
+          const autoFit = detectAutoSuitPlacement(refinedSubjectCanvasRef.current, loaded);
+          setSuitTransform((prev) => ({
+            ...prev,
+            ...autoFit,
+          }));
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to process suit overlay:', err);
+        if (!cancelled) {
+          setIsLoadingSuit(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSuitId, customSuitSrc]);
+
+  const handleAutoFitSuit = () => {
+    if (!processedSuit) return;
+    const autoFit = detectAutoSuitPlacement(refinedSubjectCanvasRef.current, processedSuit);
+    setSuitTransform((prev) => ({
+      ...prev,
+      ...autoFit,
+      flipX: false,
+      neckCutOffset: 0,
+    }));
+  };
+
+  const handleResetSuitAdjustments = () => {
+    setSuitTransform({ ...DEFAULT_SUIT_TRANSFORM });
+  };
+
+  const nudgeSuit = (dx: number, dy: number) => {
+    setSuitTransform((prev) => ({
+      ...prev,
+      x: Math.max(-45, Math.min(45, Math.round((prev.x + dx) * 10) / 10)),
+      y: Math.max(25, Math.min(110, Math.round((prev.y + dy) * 10) / 10)),
+    }));
+  };
+
+  const startSuitDrag = (
+    e: React.PointerEvent,
+    mode: SuitDragMode,
+    frameW: number,
+    frameH: number
+  ) => {
+    if (!processedSuit || !editFrameRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = editFrameRef.current.getBoundingClientRect();
+    const box = getSuitFrameBox(frameW, frameH, processedSuit, suitTransform);
+    const scaleCssX = rect.width / Math.max(1, frameW);
+    const scaleCssY = rect.height / Math.max(1, frameH);
+    const anchorClientX = rect.left + box.anchorX * scaleCssX;
+    const anchorClientY = rect.top + box.anchorY * scaleCssY;
+
+    const dx = e.clientX - anchorClientX;
+    const dy = e.clientY - anchorClientY;
+    const startDist = Math.max(16, Math.hypot(dx, dy));
+    const startAngleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+
+    suitDragRef.current = {
+      mode,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      frameW: rect.width,
+      frameH: rect.height,
+      anchorClientX,
+      anchorClientY,
+      startDist,
+      startAngleDeg,
+      initial: { ...suitTransform },
+    };
+    setIsDraggingSuit(true);
+  };
+
+  useEffect(() => {
+    if (!isDraggingSuit) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const drag = suitDragRef.current;
+      if (!drag) return;
+      e.preventDefault();
+
+      const dxPx = e.clientX - drag.startClientX;
+      const dyPx = e.clientY - drag.startClientY;
+
+      if (drag.mode === 'move') {
+        let nextX = drag.initial.x + (dxPx / Math.max(1, drag.frameW)) * 100;
+        if (Math.abs(nextX) < 0.9) nextX = 0; // Soft magnetic center snap
+        const nextY = drag.initial.y + (dyPx / Math.max(1, drag.frameH)) * 100;
+        setSuitTransform((prev) => ({
+          ...prev,
+          x: Math.max(-45, Math.min(45, Math.round(nextX * 10) / 10)),
+          y: Math.max(25, Math.min(110, Math.round(nextY * 10) / 10)),
+        }));
+      } else if (
+        drag.mode === 'scale-nw' ||
+        drag.mode === 'scale-ne' ||
+        drag.mode === 'scale-sw' ||
+        drag.mode === 'scale-se'
+      ) {
+        const curDist = Math.max(16, Math.hypot(e.clientX - drag.anchorClientX, e.clientY - drag.anchorClientY));
+        const ratio = curDist / drag.startDist;
+        const nextScale = Math.max(0.45, Math.min(1.85, Math.round(drag.initial.scale * ratio * 100) / 100));
+        setSuitTransform((prev) => ({ ...prev, scale: nextScale }));
+      } else if (drag.mode === 'width-w' || drag.mode === 'width-e') {
+        const rad = (-drag.initial.rotation * Math.PI) / 180;
+        const localDx = dxPx * Math.cos(rad) - dyPx * Math.sin(rad);
+        const signedDx = drag.mode === 'width-e' ? localDx : -localDx;
+        const deltaRatio = (signedDx * 2) / Math.max(40, drag.frameW * drag.initial.scale);
+        const nextScaleX = Math.max(0.7, Math.min(1.45, Math.round((drag.initial.scaleX + deltaRatio) * 100) / 100));
+        setSuitTransform((prev) => ({ ...prev, scaleX: nextScaleX }));
+      } else if (drag.mode === 'height-s') {
+        const rad = (-drag.initial.rotation * Math.PI) / 180;
+        const localDy = dxPx * Math.sin(rad) + dyPx * Math.cos(rad);
+        const deltaRatio = localDy / Math.max(40, drag.frameH * 0.55);
+        const nextScaleY = Math.max(0.7, Math.min(1.5, Math.round((drag.initial.scaleY + deltaRatio) * 100) / 100));
+        setSuitTransform((prev) => ({ ...prev, scaleY: nextScaleY }));
+      } else if (drag.mode === 'rotate') {
+        const curAngle = (Math.atan2(e.clientY - drag.anchorClientY, e.clientX - drag.anchorClientX) * 180) / Math.PI;
+        let diff = curAngle - drag.startAngleDeg;
+        while (diff > 180) diff -= 360;
+        while (diff < -180) diff += 360;
+        let nextRot = drag.initial.rotation + diff;
+        if (Math.abs(nextRot) < 1.2) nextRot = 0; // Magnetic snap to 0°
+        nextRot = Math.max(-25, Math.min(25, Math.round(nextRot * 2) / 2));
+        setSuitTransform((prev) => ({ ...prev, rotation: nextRot }));
+      }
+    };
+
+    const handlePointerUp = () => {
+      suitDragRef.current = null;
+      setIsDraggingSuit(false);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: false });
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+  }, [isDraggingSuit]);
+
+  // --- 4A. Stage 1: Subject Adjustments, Skin Smoothing & Sharpness (Cached Canvas) ---
   useEffect(() => {
     if (isManualMode) return;
     const sourceImage = bgRemovedImageSrc || croppedImageSrc;
     if (!sourceImage) {
+      refinedSubjectCanvasRef.current = null;
       setFinalImageSrc(null);
       return;
     }
@@ -782,55 +1037,44 @@ export default function PassportPhotoMaker() {
     img.onload = () => {
       if (!isMounted) return;
       setIsProcessingFilters(true);
-      
-      // Use requestAnimationFrame to avoid blocking the UI thread immediately after AI finishes
+
       requestAnimationFrame(() => {
         if (!isMounted) return;
-        
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d', { alpha: true });
-        if (!ctx) {
+
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = img.width;
+        tempCanvas.height = img.height;
+        const tempCtx = tempCanvas.getContext('2d', { alpha: true });
+        if (!tempCtx) {
           setIsProcessingFilters(false);
           return;
         }
 
-        // We need a temporary canvas to process the subject independently of the background
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = canvas.width;
-        tempCanvas.height = canvas.height;
-        const tempCtx = tempCanvas.getContext('2d', { alpha: true });
-        if (!tempCtx) return;
-
-        // Apply Filters to the subject (excluding blurs which are handled via skin-selective CPU bilateral filters)
         const b = appliedAdjustments.brightness;
         let c = appliedAdjustments.contrast;
         let s = appliedAdjustments.saturation;
-        
+
         if (appliedAdjustments.isUltraHD) {
           c += 15;
           s += 20;
         }
-        
+
         let filterString = `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
-        
         if (appliedAdjustments.edgeSoftness > 0) {
           const edgeBlur = appliedAdjustments.edgeSoftness / 50;
           filterString += ` drop-shadow(0 0 ${edgeBlur}px rgba(0,0,0,0.15)) blur(${edgeBlur / 2}px)`;
         }
-        
+
         tempCtx.filter = filterString;
         tempCtx.imageSmoothingEnabled = true;
         tempCtx.imageSmoothingQuality = 'high';
         tempCtx.drawImage(img, 0, 0);
         tempCtx.filter = 'none';
 
-        // Apply Advanced Skin-Selective Bilateral Smoothing, Beautification, and Sharpness
         const finalSharpness = appliedAdjustments.isUltraHD ? (appliedAdjustments.sharpness + 60) : appliedAdjustments.sharpness;
         const smoothnessVal = appliedAdjustments.smoothness;
         const beautyVal = appliedAdjustments.beautyFace;
-        
+
         if (finalSharpness > 0 || smoothnessVal > 0 || beautyVal > 0) {
           const sw = tempCanvas.width;
           const sh = tempCanvas.height;
@@ -859,7 +1103,7 @@ export default function PassportPhotoMaker() {
               const i = offset + x;
               const p = pixels[i];
               const alpha = (p >> 24) & 0xff;
-              
+
               if (alpha === 0) continue;
 
               if (x === 0 || x === sw - 1 || y === 0 || y === sh - 1) {
@@ -867,9 +1111,9 @@ export default function PassportPhotoMaker() {
                 continue;
               }
 
-              let r_orig = p & 0xff;
-              let g_orig = (p >> 8) & 0xff;
-              let b_orig = (p >> 16) & 0xff;
+              const r_orig = p & 0xff;
+              const g_orig = (p >> 8) & 0xff;
+              const b_orig = (p >> 16) & 0xff;
 
               let finalR = r_orig;
               let finalG = g_orig;
@@ -946,9 +1190,9 @@ export default function PassportPhotoMaker() {
                 const g_sharp = (finalG * b_val - (getG(pUp) + getG(pDown) + getG(pLeft) + getG(pRight)) * a);
                 const b_sharp = (finalB * b_val - (getB(pUp) + getB(pDown) + getB(pLeft) + getB(pRight)) * a);
 
-                let fR = r_sharp < 0 ? 0 : r_sharp > 255 ? 255 : (r_sharp | 0);
-                let fG = g_sharp < 0 ? 0 : g_sharp > 255 ? 255 : (g_sharp | 0);
-                let fB = b_sharp < 0 ? 0 : b_sharp > 255 ? 255 : (b_sharp | 0);
+                const fR = r_sharp < 0 ? 0 : r_sharp > 255 ? 255 : (r_sharp | 0);
+                const fG = g_sharp < 0 ? 0 : g_sharp > 255 ? 255 : (g_sharp | 0);
+                const fB = b_sharp < 0 ? 0 : b_sharp > 255 ? 255 : (b_sharp | 0);
 
                 const skinWeight = isSkin ? 0.15 : 1.0;
                 finalR = (finalR * (1 - skinWeight) + fR * skinWeight) | 0;
@@ -956,7 +1200,6 @@ export default function PassportPhotoMaker() {
                 finalB = (finalB * (1 - skinWeight) + fB * skinWeight) | 0;
               }
 
-              // Preserve smooth natural sub-pixel hair & clothing alpha edges
               const finalAlpha = alpha <= 2 ? 0 : alpha;
               dst[i] = finalR | (finalG << 8) | (finalB << 16) | (finalAlpha << 24);
             }
@@ -964,48 +1207,9 @@ export default function PassportPhotoMaker() {
           tempCtx.putImageData(output, 0, 0);
         }
 
-        // Now composite everything onto the final canvas AFTER mask refinement
-        // 1. Draw Background
-        if (bgColor === 'custom-image' && customBgImgRef.current) {
-          const bgImg = customBgImgRef.current;
-          const imgRatio = bgImg.width / Math.max(1, bgImg.height);
-          const targetRatio = canvas.width / Math.max(1, canvas.height);
-          let drawW = canvas.width, drawH = canvas.height, offsetX = 0, offsetY = 0;
-          if (imgRatio > targetRatio) {
-            drawH = canvas.height;
-            drawW = canvas.height * imgRatio;
-            offsetX = (canvas.width - drawW) / 2;
-          } else {
-            drawW = canvas.width;
-            drawH = canvas.width / imgRatio;
-            offsetY = (canvas.height - drawH) / 2;
-          }
-          ctx.drawImage(bgImg, offsetX, offsetY, drawW, drawH);
-        } else if (bgColor !== 'transparent') {
-          ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-
-        // 2. Draw the processed subject
-        ctx.drawImage(tempCanvas, 0, 0);
-
-        // 3. Add Border if requested on opaque studio backgrounds (never stamp black border on transparent PNGs)
-        if (hasBorder && bgColor !== 'transparent') {
-          ctx.strokeStyle = '#000000';
-          const thickness = Math.max(1, Math.round((appliedAdjustments.borderThickness / 2) * Math.max(1, canvas.width / 350)));
-          ctx.lineWidth = thickness;
-          ctx.strokeRect(thickness / 2, thickness / 2, canvas.width - thickness, canvas.height - thickness);
-        }
-        
         if (isMounted) {
-          canvas.toBlob((blob) => {
-            if (blob && isMounted) {
-              const url = URL.createObjectURL(blob);
-              setFinalImageSrc(url);
-            }
-            setIsProcessingFilters(false);
-          }, 'image/png');
-        } else {
+          refinedSubjectCanvasRef.current = tempCanvas;
+          setSubjectVersion((v) => v + 1);
           setIsProcessingFilters(false);
         }
       });
@@ -1015,8 +1219,116 @@ export default function PassportPhotoMaker() {
       setIsProcessingFilters(false);
     };
     img.src = sourceImage;
-    return () => { isMounted = false; };
-  }, [croppedImageSrc, bgRemovedImageSrc, bgColor, customColor, customBgImage, appliedAdjustments, hasBorder, isManualMode]);
+    return () => {
+      isMounted = false;
+    };
+  }, [croppedImageSrc, bgRemovedImageSrc, appliedAdjustments, isManualMode]);
+
+  // --- 4B. Stage 2: Instant Real-Time Compositing (Background + Suit + Subject + Border) ---
+  useEffect(() => {
+    if (isManualMode) return;
+    const subjectCanvas = refinedSubjectCanvasRef.current;
+    if (!subjectCanvas) return;
+
+    let isMounted = true;
+    const canvas = compositeCanvasRef.current || document.createElement('canvas');
+    compositeCanvasRef.current = canvas;
+    canvas.width = subjectCanvas.width;
+    canvas.height = subjectCanvas.height;
+    const ctx = canvas.getContext('2d', { alpha: true });
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 1. Background
+    if (bgColor === 'custom-image' && customBgImgRef.current) {
+      const bgImg = customBgImgRef.current;
+      const imgRatio = bgImg.width / Math.max(1, bgImg.height);
+      const targetRatio = canvas.width / Math.max(1, canvas.height);
+      let drawW = canvas.width, drawH = canvas.height, offsetX = 0, offsetY = 0;
+      if (imgRatio > targetRatio) {
+        drawH = canvas.height;
+        drawW = canvas.height * imgRatio;
+        offsetX = (canvas.width - drawW) / 2;
+      } else {
+        drawW = canvas.width;
+        drawH = canvas.width / imgRatio;
+        offsetY = (canvas.height - drawH) / 2;
+      }
+      ctx.drawImage(bgImg, offsetX, offsetY, drawW, drawH);
+    } else if (bgColor !== 'transparent') {
+      ctx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // 2. Subject + Formal Suit (rear collar behind neck + optional old-shoulder mask + front tailored suit)
+    compositeSubjectWithSuit(
+      ctx,
+      canvas.width,
+      canvas.height,
+      subjectCanvas,
+      processedSuit,
+      suitTransform,
+      Boolean(bgRemovedImageSrc)
+    );
+
+    // 3. Border on opaque studio backgrounds
+    if (hasBorder && bgColor !== 'transparent') {
+      ctx.strokeStyle = '#000000';
+      const thickness = Math.max(1, Math.round((appliedAdjustments.borderThickness / 2) * Math.max(1, canvas.width / 350)));
+      ctx.lineWidth = thickness;
+      ctx.strokeRect(thickness / 2, thickness / 2, canvas.width - thickness, canvas.height - thickness);
+    }
+
+    // 4. Blit immediately to live Edit preview canvas for smooth 60fps suit adjustment
+    const liveCanvas = editLiveCanvasRef.current;
+    if (liveCanvas) {
+      if (liveCanvas.width !== canvas.width || liveCanvas.height !== canvas.height) {
+        liveCanvas.width = canvas.width;
+        liveCanvas.height = canvas.height;
+      }
+      const liveCtx = liveCanvas.getContext('2d');
+      if (liveCtx) {
+        liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+        liveCtx.drawImage(canvas, 0, 0);
+      }
+    }
+
+    // 5. Bake full-resolution PNG blob for Print / PDF / JPG / Single export (debounced while actively dragging)
+    const blobDelay = isDraggingSuit ? 120 : 0;
+    const blobTimer = setTimeout(() => {
+      if (!isMounted) return;
+      canvas.toBlob((blob) => {
+        if (blob && isMounted) {
+          const url = URL.createObjectURL(blob);
+          const prevUrl = lastFinalBlobUrlRef.current;
+          lastFinalBlobUrlRef.current = url;
+          setFinalImageSrc(url);
+          if (prevUrl) {
+            setTimeout(() => URL.revokeObjectURL(prevUrl), 1500);
+          }
+        }
+      }, 'image/png');
+    }, blobDelay);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(blobTimer);
+    };
+  }, [
+    subjectVersion,
+    bgColor,
+    customColor,
+    customBgImage,
+    hasBorder,
+    appliedAdjustments.borderThickness,
+    processedSuit,
+    suitTransform,
+    bgRemovedImageSrc,
+    isManualMode,
+    isDraggingSuit,
+    step,
+  ]);
 
   useEffect(() => {
     if (!finalImageSrc) {
@@ -1763,6 +2075,12 @@ export default function PassportPhotoMaker() {
       setCroppedImageSrc(null);
       setBgRemovedImageSrc(null);
       setFinalImageSrc(null);
+      setSelectedSuitId(null);
+      setProcessedSuit(null);
+      setSuitTransform(DEFAULT_SUIT_TRANSFORM);
+      hasAutoFittedSuitRef.current = false;
+      refinedSubjectCanvasRef.current = null;
+      setSubjectVersion(0);
       setHistory([]);
       setHistoryIndex(-1);
       setStep('crop');
@@ -1774,6 +2092,12 @@ export default function PassportPhotoMaker() {
       setCroppedImageSrc(null);
       setBgRemovedImageSrc(null);
       setFinalImageSrc(null);
+      setSelectedSuitId(null);
+      setProcessedSuit(null);
+      setSuitTransform(DEFAULT_SUIT_TRANSFORM);
+      hasAutoFittedSuitRef.current = false;
+      refinedSubjectCanvasRef.current = null;
+      setSubjectVersion(0);
       setHistory([]);
       setHistoryIndex(-1);
       setStep('crop');
@@ -2068,6 +2392,431 @@ export default function PassportPhotoMaker() {
                               Remove
                             </button>
                           )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Formal Suit / Outfit */}
+                    <div className="pt-4 border-t border-gray-100">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                          <Shirt className="w-4 h-4" /> Formal Suit
+                        </h3>
+                        {selectedSuitId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSuitId(null);
+                              setProcessedSuit(null);
+                            }}
+                            className="text-[10px] text-red-500 font-bold hover:underline"
+                          >
+                            Remove Suit
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Category Tabs */}
+                      <div className="grid grid-cols-3 gap-1 p-1 bg-gray-100 rounded-xl mb-3">
+                        {(
+                          [
+                            { id: 'all', label: 'All' },
+                            { id: 'men', label: 'Men' },
+                            { id: 'women', label: 'Women' },
+                          ] as { id: SuitCategory; label: string }[]
+                        ).map((cat) => (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => setSuitCategory(cat.id)}
+                            className={`py-1.5 text-[11px] font-bold rounded-lg transition-all ${
+                              suitCategory === cat.id
+                                ? 'bg-white text-[#e8501a] shadow-xs'
+                                : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                          >
+                            {cat.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Suit Gallery Grid */}
+                      <div className="grid grid-cols-3 gap-2">
+                        {/* None Option */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedSuitId(null);
+                            setProcessedSuit(null);
+                          }}
+                          className={`p-2 rounded-xl border-2 flex flex-col items-center justify-center gap-1 transition-all h-24 ${
+                            selectedSuitId === null
+                              ? 'border-[#e8501a] bg-[#e8501a]/5 shadow-xs'
+                              : 'border-gray-200 hover:border-gray-300 bg-gray-50'
+                          }`}
+                        >
+                          <X className="w-5 h-5 text-gray-500" />
+                          <span className="text-[10px] font-bold text-gray-700">No Suit</span>
+                        </button>
+
+                        {SUIT_CATALOG.filter((s) => suitCategory === 'all' || s.category === suitCategory).map((suit) => (
+                          <button
+                            key={suit.id}
+                            type="button"
+                            onClick={() => {
+                              if (isManualMode) setIsManualMode(false);
+                              setSelectedSuitId(suit.id);
+                            }}
+                            className={`p-1.5 rounded-xl border-2 flex flex-col items-center justify-between transition-all h-24 overflow-hidden ${
+                              selectedSuitId === suit.id
+                                ? 'border-[#e8501a] bg-[#e8501a]/5 shadow-xs'
+                                : 'border-gray-200 hover:border-gray-300 bg-gray-50'
+                            }`}
+                            title={`${suit.name} (${suit.subtitle})`}
+                          >
+                            <div className="w-full h-14 flex items-center justify-center overflow-hidden">
+                              {suitThumbs[suit.id] ? (
+                                <img
+                                  src={suitThumbs[suit.id]}
+                                  alt={suit.name}
+                                  className="max-w-full max-h-full object-contain"
+                                />
+                              ) : (
+                                <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                              )}
+                            </div>
+                            <span className="text-[9px] font-bold text-gray-800 leading-tight text-center truncate w-full">
+                              {suit.name}
+                            </span>
+                          </button>
+                        ))}
+
+                        {/* Custom PNG / Suit Upload */}
+                        <button
+                          type="button"
+                          onClick={() => suitUploadInputRef.current?.click()}
+                          className={`p-2 rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-all h-24 ${
+                            selectedSuitId === 'custom'
+                              ? 'border-[#e8501a] bg-[#e8501a]/5'
+                              : 'border-gray-300 hover:border-[#e8501a] bg-gray-50'
+                          }`}
+                          title="Upload custom transparent PNG suit"
+                        >
+                          <Upload className="w-4 h-4 text-gray-600" />
+                          <span className="text-[10px] font-bold text-gray-700 text-center leading-tight">
+                            Custom PNG
+                          </span>
+                        </button>
+                      </div>
+
+                      <input
+                        ref={suitUploadInputRef}
+                        type="file"
+                        accept="image/png,image/webp,image/jpeg"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            const src = ev.target?.result as string;
+                            if (src) {
+                              if (isManualMode) setIsManualMode(false);
+                              setCustomSuitSrc(src);
+                              setSelectedSuitId('custom');
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                          e.target.value = '';
+                        }}
+                      />
+
+                      {/* Full Precision Suit Adjustment Controls */}
+                      {selectedSuitId && (
+                        <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-3 animate-in fade-in slide-in-from-top-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-gray-600 uppercase flex items-center gap-1">
+                              <Move className="w-3 h-3 text-[#e8501a]" /> Adjust Suit Fit
+                            </span>
+                            {isLoadingSuit && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#e8501a]" />}
+                          </div>
+
+                          {/* Quick Action Row */}
+                          <div className="grid grid-cols-4 gap-1">
+                            <button
+                              type="button"
+                              onClick={handleAutoFitSuit}
+                              className="py-1.5 px-1 bg-[#e8501a] text-white rounded-lg text-[10px] font-bold hover:bg-[#d04313] transition-colors flex items-center justify-center gap-1"
+                              title="Automatically align suit collar to neck and shoulders"
+                            >
+                              <Sparkles className="w-3 h-3" /> Auto
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSuitTransform((prev) => ({ ...prev, flipX: !prev.flipX }))}
+                              className={`py-1.5 px-1 rounded-lg text-[10px] font-bold border transition-colors flex items-center justify-center gap-1 ${
+                                suitTransform.flipX
+                                  ? 'bg-gray-900 text-white border-gray-900'
+                                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-100'
+                              }`}
+                              title="Flip suit horizontally"
+                            >
+                              <FlipHorizontal2 className="w-3 h-3" /> Flip
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowSuitHandles((v) => !v)}
+                              className={`py-1.5 px-1 rounded-lg text-[10px] font-bold border transition-colors flex items-center justify-center gap-1 ${
+                                showSuitHandles
+                                  ? 'bg-white text-[#e8501a] border-[#e8501a]/40'
+                                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-100'
+                              }`}
+                              title="Toggle interactive drag/resize handles on photo"
+                            >
+                              {showSuitHandles ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />} Box
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleResetSuitAdjustments}
+                              className="py-1.5 px-1 bg-white text-gray-700 border border-gray-200 rounded-lg text-[10px] font-bold hover:bg-gray-100 transition-colors"
+                              title="Reset suit position and size"
+                            >
+                              Reset
+                            </button>
+                          </div>
+
+                          {/* Precision Nudge Pad */}
+                          <div className="flex items-center justify-between gap-2 p-2 bg-white rounded-lg border border-gray-200">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase">Fine Nudge</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => nudgeSuit(-0.5, 0)}
+                                className="p-1 bg-gray-100 hover:bg-gray-200 rounded-md text-gray-700"
+                                title="Move Left"
+                              >
+                                <ChevronLeft className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => nudgeSuit(0, -0.5)}
+                                className="p-1 bg-gray-100 hover:bg-gray-200 rounded-md text-gray-700"
+                                title="Move Up"
+                              >
+                                <ChevronUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSuitTransform((prev) => ({ ...prev, x: 0 }))}
+                                className="px-1.5 py-1 bg-gray-100 hover:bg-gray-200 rounded-md text-[9px] font-bold text-gray-700"
+                                title="Center Horizontally"
+                              >
+                                Ctr
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => nudgeSuit(0, 0.5)}
+                                className="p-1 bg-gray-100 hover:bg-gray-200 rounded-md text-gray-700"
+                                title="Move Down"
+                              >
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => nudgeSuit(0.5, 0)}
+                                className="p-1 bg-gray-100 hover:bg-gray-200 rounded-md text-gray-700"
+                                title="Move Right"
+                              >
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Position, Scale, Shoulder Width, Height, Rotation Sliders */}
+                          <div className="space-y-2.5">
+                            <div>
+                              <div className="flex justify-between text-[11px] font-bold text-gray-700 mb-0.5">
+                                <span>Left / Right (X)</span>
+                                <span className="tabular-nums text-[#e8501a]">{suitTransform.x > 0 ? `+${suitTransform.x.toFixed(1)}` : suitTransform.x.toFixed(1)}%</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="-40"
+                                max="40"
+                                step="0.5"
+                                value={suitTransform.x}
+                                onChange={(e) => setSuitTransform((prev) => ({ ...prev, x: Number(e.target.value) }))}
+                                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between text-[11px] font-bold text-gray-700 mb-0.5">
+                                <span>Up / Down (Collar Y)</span>
+                                <span className="tabular-nums text-[#e8501a]">{suitTransform.y.toFixed(1)}%</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="30"
+                                max="105"
+                                step="0.5"
+                                value={suitTransform.y}
+                                onChange={(e) => setSuitTransform((prev) => ({ ...prev, y: Number(e.target.value) }))}
+                                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between text-[11px] font-bold text-gray-700 mb-0.5">
+                                <span>Overall Size</span>
+                                <span className="tabular-nums text-[#e8501a]">{Math.round(suitTransform.scale * 100)}%</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0.45"
+                                max="1.80"
+                                step="0.01"
+                                value={suitTransform.scale}
+                                onChange={(e) => setSuitTransform((prev) => ({ ...prev, scale: Number(e.target.value) }))}
+                                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between text-[11px] font-bold text-gray-700 mb-0.5">
+                                <span>Shoulder Width</span>
+                                <span className="tabular-nums text-[#e8501a]">{Math.round(suitTransform.scaleX * 100)}%</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0.70"
+                                max="1.45"
+                                step="0.01"
+                                value={suitTransform.scaleX}
+                                onChange={(e) => setSuitTransform((prev) => ({ ...prev, scaleX: Number(e.target.value) }))}
+                                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between text-[11px] font-bold text-gray-700 mb-0.5">
+                                <span>Torso Height</span>
+                                <span className="tabular-nums text-[#e8501a]">{Math.round(suitTransform.scaleY * 100)}%</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0.70"
+                                max="1.50"
+                                step="0.01"
+                                value={suitTransform.scaleY}
+                                onChange={(e) => setSuitTransform((prev) => ({ ...prev, scaleY: Number(e.target.value) }))}
+                                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                              />
+                            </div>
+
+                            <div>
+                              <div className="flex justify-between text-[11px] font-bold text-gray-700 mb-0.5">
+                                <span>Tilt / Rotation</span>
+                                <span className="tabular-nums text-[#e8501a]">{suitTransform.rotation > 0 ? `+${suitTransform.rotation}` : suitTransform.rotation}°</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="-25"
+                                max="25"
+                                step="0.5"
+                                value={suitTransform.rotation}
+                                onChange={(e) => setSuitTransform((prev) => ({ ...prev, rotation: Number(e.target.value) }))}
+                                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Clean Old Shoulders (when BG removed) */}
+                          {bgRemovedImageSrc && (
+                            <div className="pt-2 border-t border-gray-200 space-y-2">
+                              <label className="flex items-center justify-between cursor-pointer">
+                                <span className="text-[11px] font-bold text-gray-700">Hide Old Shoulders</span>
+                                <input
+                                  type="checkbox"
+                                  checked={suitTransform.hideOldClothes}
+                                  onChange={(e) =>
+                                    setSuitTransform((prev) => ({ ...prev, hideOldClothes: e.target.checked }))
+                                  }
+                                  className="accent-[#e8501a] w-4 h-4"
+                                />
+                              </label>
+                              {suitTransform.hideOldClothes && (
+                                <div>
+                                  <div className="flex justify-between text-[10px] font-bold text-gray-600 mb-0.5">
+                                    <span>Collar Trim Line</span>
+                                    <span className="tabular-nums">{suitTransform.neckCutOffset > 0 ? `+${suitTransform.neckCutOffset}` : suitTransform.neckCutOffset}%</span>
+                                  </div>
+                                  <input
+                                    type="range"
+                                    min="-12"
+                                    max="12"
+                                    step="0.5"
+                                    value={suitTransform.neckCutOffset}
+                                    onChange={(e) =>
+                                      setSuitTransform((prev) => ({ ...prev, neckCutOffset: Number(e.target.value) }))
+                                    }
+                                    className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Suit Lighting Match */}
+                          <div className="pt-2 border-t border-gray-200 space-y-2">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase block">Match Suit Lighting</span>
+                            <div>
+                              <div className="flex justify-between text-[10px] font-bold text-gray-600 mb-0.5">
+                                <span>Brightness</span>
+                                <span className="tabular-nums">{suitTransform.brightness}%</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="60"
+                                max="140"
+                                value={suitTransform.brightness}
+                                onChange={(e) => setSuitTransform((prev) => ({ ...prev, brightness: Number(e.target.value) }))}
+                                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                              />
+                            </div>
+                            <div>
+                              <div className="flex justify-between text-[10px] font-bold text-gray-600 mb-0.5">
+                                <span>Contrast</span>
+                                <span className="tabular-nums">{suitTransform.contrast}%</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="60"
+                                max="140"
+                                value={suitTransform.contrast}
+                                onChange={(e) => setSuitTransform((prev) => ({ ...prev, contrast: Number(e.target.value) }))}
+                                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                              />
+                            </div>
+                            <div>
+                              <div className="flex justify-between text-[10px] font-bold text-gray-600 mb-0.5">
+                                <span>Saturation</span>
+                                <span className="tabular-nums">{suitTransform.saturation}%</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="50"
+                                max="150"
+                                value={suitTransform.saturation}
+                                onChange={(e) => setSuitTransform((prev) => ({ ...prev, saturation: Number(e.target.value) }))}
+                                className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                              />
+                            </div>
+                          </div>
+
+                          <p className="text-[10px] text-gray-500 leading-snug">
+                            Tip: Drag directly on the photo to move the suit, use corner handles to resize, side handles for shoulder width, or top handle to tilt.
+                          </p>
                         </div>
                       )}
                     </div>
@@ -2427,6 +3176,29 @@ export default function PassportPhotoMaker() {
                   >
                     <Maximize2 className="w-4 h-4" />
                   </button>
+
+                  {step === 'edit' && selectedSuitId && !isManualMode && (
+                    <>
+                      <div className="w-px h-4 bg-gray-300 mx-1" />
+                      <button
+                        type="button"
+                        onClick={handleAutoFitSuit}
+                        className="px-2.5 py-1 bg-[#e8501a]/10 hover:bg-[#e8501a]/20 text-[#e8501a] rounded-full text-[11px] font-bold flex items-center gap-1 transition-colors"
+                        title="Auto-align suit to neck and shoulders"
+                      >
+                        <Sparkles className="w-3 h-3" /> Auto-Fit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowSuitHandles((v) => !v)}
+                        className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full text-[11px] font-bold flex items-center gap-1 transition-colors"
+                        title="Show or hide suit adjustment handles"
+                      >
+                        {showSuitHandles ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        {showSuitHandles ? 'Hide Box' : 'Show Box'}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -2468,18 +3240,25 @@ export default function PassportPhotoMaker() {
 
                   {step === 'edit' && (() => {
                     const { frameW, frameH, canvasCssW, canvasCssH } = getManualCanvasCssDims(canvasDims);
+                    const suitBox = !isManualMode && processedSuit ? getSuitFrameBox(frameW, frameH, processedSuit, suitTransform) : null;
 
                     return (
                     <div 
-                      className="relative shadow-2xl rounded-sm overflow-hidden flex items-center justify-center shrink-0"
+                      ref={editFrameRef}
+                      className="relative shadow-2xl rounded-sm overflow-visible flex items-center justify-center shrink-0 select-none"
                       style={{
                         width: `${frameW}px`,
                         height: `${frameH}px`,
-                        backgroundColor: bgColor === 'transparent' || bgColor === 'custom-image' ? 'transparent' : (bgColor === 'custom' ? customColor : bgColor),
-                        backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : 'none',
                         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.3)'
                       }}
                     >
+                      <div
+                        className="absolute inset-0 rounded-sm overflow-hidden flex items-center justify-center"
+                        style={{
+                          backgroundColor: bgColor === 'transparent' || bgColor === 'custom-image' ? 'transparent' : (bgColor === 'custom' ? customColor : bgColor),
+                          backgroundImage: bgColor === 'transparent' ? 'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%) 50% / 8px 8px' : 'none',
+                        }}
+                      >
                       {isManualMode ? (
                         <div
                           className="flex items-center justify-center w-full h-full relative"
@@ -2511,13 +3290,101 @@ export default function PassportPhotoMaker() {
                         </div>
                       ) : (
                         <>
-                          <img 
-                            src={finalImageSrc || bgRemovedImageSrc || croppedImageSrc || ''} 
-                            alt="Processed" 
-                            className={`max-w-full max-h-full object-contain block transition-opacity duration-200 ${(isProcessingFilters || !finalImageSrc) ? 'opacity-50' : 'opacity-100'}`} 
+                          <canvas
+                            ref={editLiveCanvasRef}
+                            className={`w-full h-full object-contain block transition-opacity duration-200 ${isProcessingFilters ? 'opacity-50' : 'opacity-100'}`}
                             style={{ imageRendering: 'auto' }}
                           />
-                          {(isProcessingFilters || !finalImageSrc) && (
+                        </>
+                      )}
+                      </div>
+
+                      {/* Interactive Direct-Manipulation Suit Handles (Unclipped outer layer: Move, Corner Scale, Shoulder Width, Height, Rotate) */}
+                      {!isManualMode && suitBox && showSuitHandles && !isProcessing && !isProcessingFilters && (
+                            <>
+                              {/* Magnetic Center Snap Guide Line while dragging */}
+                              {isDraggingSuit && Math.abs(suitTransform.x) < 0.1 && (
+                                <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-[1.5px] bg-[#e8501a]/80 pointer-events-none z-20" />
+                              )}
+
+                              <div
+                                onPointerDown={(e) => startSuitDrag(e, 'move', frameW, frameH)}
+                                className="absolute z-20 cursor-move touch-none"
+                                style={{
+                                  left: `${suitBox.cx}px`,
+                                  top: `${suitBox.cy}px`,
+                                  width: `${suitBox.width}px`,
+                                  height: `${suitBox.height}px`,
+                                  transform: `translate(-50%, -50%) rotate(${suitBox.rotation}deg)`,
+                                }}
+                                title="Drag to reposition suit"
+                              >
+                                {/* Selection Outline */}
+                                <div className="absolute inset-0 border-[1.5px] border-dashed border-[#e8501a]/90 shadow-[0_0_0_1px_rgba(255,255,255,0.7)] pointer-events-none" />
+
+                                {/* Collar Pivot Marker */}
+                                <div
+                                  className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-[#e8501a] border-2 border-white shadow-sm pointer-events-none"
+                                  style={{ top: `${(processedSuit?.collarAnchorNormY ?? 0.14) * 100}%` }}
+                                />
+
+                                {/* Top Rotation Handle */}
+                                <div
+                                  onPointerDown={(e) => startSuitDrag(e, 'rotate', frameW, frameH)}
+                                  className="absolute -top-7 left-1/2 -translate-x-1/2 flex flex-col items-center cursor-grab active:cursor-grabbing touch-none"
+                                  title="Drag to tilt / rotate suit"
+                                >
+                                  <div className="w-6 h-6 rounded-full bg-white border-2 border-[#e8501a] shadow-md flex items-center justify-center text-[#e8501a] hover:scale-110 transition-transform">
+                                    <RotateCw className="w-3 h-3" />
+                                  </div>
+                                  <div className="w-0.5 h-2 bg-[#e8501a]" />
+                                </div>
+
+                                {/* 4 Corner Uniform Scale Handles */}
+                                <div
+                                  onPointerDown={(e) => startSuitDrag(e, 'scale-nw', frameW, frameH)}
+                                  className="absolute -top-2 -left-2 w-4 h-4 rounded-full bg-white border-2 border-[#e8501a] shadow-md cursor-nwse-resize hover:scale-125 transition-transform touch-none"
+                                  title="Resize suit"
+                                />
+                                <div
+                                  onPointerDown={(e) => startSuitDrag(e, 'scale-ne', frameW, frameH)}
+                                  className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-white border-2 border-[#e8501a] shadow-md cursor-nesw-resize hover:scale-125 transition-transform touch-none"
+                                  title="Resize suit"
+                                />
+                                <div
+                                  onPointerDown={(e) => startSuitDrag(e, 'scale-sw', frameW, frameH)}
+                                  className="absolute -bottom-2 -left-2 w-4 h-4 rounded-full bg-white border-2 border-[#e8501a] shadow-md cursor-nesw-resize hover:scale-125 transition-transform touch-none"
+                                  title="Resize suit"
+                                />
+                                <div
+                                  onPointerDown={(e) => startSuitDrag(e, 'scale-se', frameW, frameH)}
+                                  className="absolute -bottom-2 -right-2 w-4 h-4 rounded-full bg-white border-2 border-[#e8501a] shadow-md cursor-nwse-resize hover:scale-125 transition-transform touch-none"
+                                  title="Resize suit"
+                                />
+
+                                {/* Left & Right Shoulder Width Handles */}
+                                <div
+                                  onPointerDown={(e) => startSuitDrag(e, 'width-w', frameW, frameH)}
+                                  className="absolute top-[30%] -left-2 -translate-y-1/2 w-3.5 h-6 rounded-full bg-[#e8501a] border-2 border-white shadow-md cursor-ew-resize hover:scale-110 transition-transform touch-none"
+                                  title="Adjust shoulder width"
+                                />
+                                <div
+                                  onPointerDown={(e) => startSuitDrag(e, 'width-e', frameW, frameH)}
+                                  className="absolute top-[30%] -right-2 -translate-y-1/2 w-3.5 h-6 rounded-full bg-[#e8501a] border-2 border-white shadow-md cursor-ew-resize hover:scale-110 transition-transform touch-none"
+                                  title="Adjust shoulder width"
+                                />
+
+                                {/* Bottom Torso Height Handle */}
+                                <div
+                                  onPointerDown={(e) => startSuitDrag(e, 'height-s', frameW, frameH)}
+                                  className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-7 h-3 rounded-full bg-[#e8501a] border-2 border-white shadow-md cursor-ns-resize hover:scale-110 transition-transform touch-none"
+                                  title="Adjust torso height"
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {!isManualMode && (isProcessingFilters || (!finalImageSrc && !refinedSubjectCanvasRef.current)) && (
                             <div className="absolute inset-0 flex items-center justify-center">
                               <motion.div
                                 animate={{
@@ -2560,8 +3427,6 @@ export default function PassportPhotoMaker() {
                               </motion.div>
                             </div>
                           )}
-                        </>
-                      )}
                       
                       {processingError && (
                         <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center z-50 text-white p-6 transition-all duration-300 backdrop-blur-sm">
