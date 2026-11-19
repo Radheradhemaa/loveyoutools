@@ -659,9 +659,87 @@ function drawTransformedSuitLayer(
   ctx.restore();
 }
 
+let cachedSuitMaskScratch: HTMLCanvasElement | null = null;
+let cachedHideClothesMask: HTMLCanvasElement | null = null;
+
+function getReusableCanvas(existing: HTMLCanvasElement | null, w: number, h: number): HTMLCanvasElement {
+  const c = existing || document.createElement('canvas');
+  if (c.width !== w) c.width = w;
+  if (c.height !== h) c.height = h;
+  return c;
+}
+
+function drawMaskedSuitLayer(
+  ctx: CanvasRenderingContext2D,
+  canvasW: number,
+  canvasH: number,
+  layerCanvas: HTMLCanvasElement,
+  box: SuitFrameBox,
+  suit: ProcessedSuit,
+  transform: SuitTransform,
+  addSoftCollarShadow: boolean,
+  suitEraseMask?: HTMLCanvasElement | null
+) {
+  if (!suitEraseMask || suitEraseMask.width === 0 || suitEraseMask.height === 0) {
+    drawTransformedSuitLayer(ctx, layerCanvas, box, suit, transform, addSoftCollarShadow);
+    return;
+  }
+
+  cachedSuitMaskScratch = getReusableCanvas(cachedSuitMaskScratch, canvasW, canvasH);
+  const sCtx = cachedSuitMaskScratch.getContext('2d');
+  if (!sCtx) {
+    drawTransformedSuitLayer(ctx, layerCanvas, box, suit, transform, addSoftCollarShadow);
+    return;
+  }
+
+  sCtx.clearRect(0, 0, canvasW, canvasH);
+  drawTransformedSuitLayer(sCtx, layerCanvas, box, suit, transform, addSoftCollarShadow);
+  sCtx.save();
+  sCtx.globalCompositeOperation = 'destination-out';
+  sCtx.imageSmoothingEnabled = true;
+  sCtx.imageSmoothingQuality = 'high';
+  sCtx.drawImage(suitEraseMask, 0, 0, canvasW, canvasH);
+  sCtx.restore();
+
+  ctx.drawImage(cachedSuitMaskScratch, 0, 0);
+}
+
+/**
+ * Renders the front or rear suit layer directly onto a target canvas at exact normalized coordinates,
+ * applying optional manual touchup erase mask (used for live Suit-aware Manual Touchup overlay).
+ */
+export function renderSuitLayerToCanvas(
+  targetCanvas: HTMLCanvasElement,
+  suit: ProcessedSuit | null,
+  transform: SuitTransform,
+  layer: 'front' | 'back',
+  suitEraseMask?: HTMLCanvasElement | null
+) {
+  const ctx = targetCanvas.getContext('2d');
+  if (!ctx || targetCanvas.width === 0 || targetCanvas.height === 0) return;
+  ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+  if (!suit) return;
+
+  const srcLayer = layer === 'back' ? suit.backCanvas : suit.frontCanvas;
+  if (!srcLayer) return;
+
+  const box = getSuitFrameBox(targetCanvas.width, targetCanvas.height, suit, transform);
+  drawMaskedSuitLayer(
+    ctx,
+    targetCanvas.width,
+    targetCanvas.height,
+    srcLayer,
+    box,
+    suit,
+    transform,
+    layer === 'front',
+    suitEraseMask
+  );
+}
+
 /**
  * Composites background-aware rear collar, subject (with optional clean old-shoulder masking),
- * and front photorealistic suit onto the target canvas.
+ * and front photorealistic suit (with optional manual suit erase mask) onto the target canvas.
  */
 export function compositeSubjectWithSuit(
   ctx: CanvasRenderingContext2D,
@@ -670,7 +748,8 @@ export function compositeSubjectWithSuit(
   subjectCanvas: HTMLCanvasElement,
   suit: ProcessedSuit | null,
   transform: SuitTransform,
-  hasCutoutSubject: boolean
+  hasCutoutSubject: boolean,
+  suitEraseMask?: HTMLCanvasElement | null
 ) {
   if (!suit) {
     ctx.drawImage(subjectCanvas, 0, 0, canvasW, canvasH);
@@ -681,7 +760,7 @@ export function compositeSubjectWithSuit(
 
   // 1. Rear collar band goes BEHIND the user's neck when background is removed
   if (hasCutoutSubject && suit.backCanvas) {
-    drawTransformedSuitLayer(ctx, suit.backCanvas, box, suit, transform, false);
+    drawMaskedSuitLayer(ctx, canvasW, canvasH, suit.backCanvas, box, suit, transform, false, suitEraseMask);
   }
 
   // 2. Subject layer (optionally mask out protruding wide original shoulders below collar line)
@@ -693,43 +772,64 @@ export function compositeSubjectWithSuit(
     if (mCtx) {
       mCtx.drawImage(subjectCanvas, 0, 0, canvasW, canvasH);
 
-      // Erase protruding old shoulders below the suit's collar line while keeping the center neck/chest corridor 100% intact
-      mCtx.save();
-      mCtx.globalCompositeOperation = 'destination-out';
-      mCtx.translate(box.anchorX, box.anchorY);
-      if (transform.rotation !== 0) {
-        mCtx.rotate((transform.rotation * Math.PI) / 180);
+      // Build shoulder erase region on a dedicated mask so any area where the user
+      // manually erased the suit (e.g. long hair, beard, scarf over lapels) preserves the subject
+      cachedHideClothesMask = getReusableCanvas(cachedHideClothesMask, canvasW, canvasH);
+      const cutCtx = cachedHideClothesMask.getContext('2d');
+      if (cutCtx) {
+        cutCtx.clearRect(0, 0, canvasW, canvasH);
+        cutCtx.save();
+        cutCtx.fillStyle = '#000000';
+        cutCtx.translate(box.anchorX, box.anchorY);
+        if (transform.rotation !== 0) {
+          cutCtx.rotate((transform.rotation * Math.PI) / 180);
+        }
+
+        const cutOffsetY = (transform.neckCutOffset / 100) * canvasH;
+        const neckHalfW = Math.max(box.width * suit.neckWidthNorm * 0.62, canvasW * 0.14);
+        const slopeDrop = box.height * 0.11;
+        const deepBottom = Math.max(canvasH * 1.6, box.height * 1.6);
+        const farSide = Math.max(canvasW * 1.6, box.width * 1.6);
+
+        // Left shoulder exterior erase region (smooth sloped collar-to-shoulder boundary)
+        cutCtx.beginPath();
+        cutCtx.moveTo(-neckHalfW, cutOffsetY + slopeDrop * 0.35);
+        cutCtx.quadraticCurveTo(-neckHalfW * 1.45, cutOffsetY + slopeDrop * 0.75, -farSide, cutOffsetY + slopeDrop * 0.9);
+        cutCtx.lineTo(-farSide, deepBottom);
+        cutCtx.lineTo(-neckHalfW * 0.85, deepBottom);
+        cutCtx.closePath();
+        cutCtx.fill();
+
+        // Right shoulder exterior erase region
+        cutCtx.beginPath();
+        cutCtx.moveTo(neckHalfW, cutOffsetY + slopeDrop * 0.35);
+        cutCtx.quadraticCurveTo(neckHalfW * 1.45, cutOffsetY + slopeDrop * 0.75, farSide, cutOffsetY + slopeDrop * 0.9);
+        cutCtx.lineTo(farSide, deepBottom);
+        cutCtx.lineTo(neckHalfW * 0.85, deepBottom);
+        cutCtx.closePath();
+        cutCtx.fill();
+
+        // Erase any old torso hanging below the bottom hem of the suit
+        const suitBottomLocalY = (1 - suit.collarAnchorNormY) * box.height - 2;
+        cutCtx.fillRect(-farSide, suitBottomLocalY, farSide * 2, deepBottom);
+        cutCtx.restore();
+
+        // Preserve subject pixels wherever the user explicitly erased the suit
+        if (suitEraseMask && suitEraseMask.width > 0 && suitEraseMask.height > 0) {
+          cutCtx.save();
+          cutCtx.globalCompositeOperation = 'destination-out';
+          cutCtx.imageSmoothingEnabled = true;
+          cutCtx.imageSmoothingQuality = 'high';
+          cutCtx.drawImage(suitEraseMask, 0, 0, canvasW, canvasH);
+          cutCtx.restore();
+        }
+
+        mCtx.save();
+        mCtx.globalCompositeOperation = 'destination-out';
+        mCtx.drawImage(cachedHideClothesMask, 0, 0);
+        mCtx.restore();
       }
 
-      const cutOffsetY = (transform.neckCutOffset / 100) * canvasH;
-      const neckHalfW = Math.max(box.width * suit.neckWidthNorm * 0.62, canvasW * 0.14);
-      const slopeDrop = box.height * 0.11;
-      const deepBottom = Math.max(canvasH * 1.6, box.height * 1.6);
-      const farSide = Math.max(canvasW * 1.6, box.width * 1.6);
-
-      // Left shoulder exterior erase region (smooth sloped collar-to-shoulder boundary)
-      mCtx.beginPath();
-      mCtx.moveTo(-neckHalfW, cutOffsetY + slopeDrop * 0.35);
-      mCtx.quadraticCurveTo(-neckHalfW * 1.45, cutOffsetY + slopeDrop * 0.75, -farSide, cutOffsetY + slopeDrop * 0.9);
-      mCtx.lineTo(-farSide, deepBottom);
-      mCtx.lineTo(-neckHalfW * 0.85, deepBottom);
-      mCtx.closePath();
-      mCtx.fill();
-
-      // Right shoulder exterior erase region
-      mCtx.beginPath();
-      mCtx.moveTo(neckHalfW, cutOffsetY + slopeDrop * 0.35);
-      mCtx.quadraticCurveTo(neckHalfW * 1.45, cutOffsetY + slopeDrop * 0.75, farSide, cutOffsetY + slopeDrop * 0.9);
-      mCtx.lineTo(farSide, deepBottom);
-      mCtx.lineTo(neckHalfW * 0.85, deepBottom);
-      mCtx.closePath();
-      mCtx.fill();
-
-      // Erase any old torso hanging below the bottom hem of the suit
-      const suitBottomLocalY = (1 - suit.collarAnchorNormY) * box.height - 2;
-      mCtx.fillRect(-farSide, suitBottomLocalY, farSide * 2, deepBottom);
-
-      mCtx.restore();
       ctx.drawImage(maskedSubject, 0, 0);
     } else {
       ctx.drawImage(subjectCanvas, 0, 0, canvasW, canvasH);
@@ -739,5 +839,5 @@ export function compositeSubjectWithSuit(
   }
 
   // 3. Front tailored suit + shirt collar + tie drawn cleanly over torso
-  drawTransformedSuitLayer(ctx, suit.frontCanvas, box, suit, transform, true);
+  drawMaskedSuitLayer(ctx, canvasW, canvasH, suit.frontCanvas, box, suit, transform, true, suitEraseMask);
 }

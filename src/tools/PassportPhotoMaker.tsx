@@ -13,6 +13,7 @@ import {
   loadProcessedSuit,
   detectAutoSuitPlacement,
   compositeSubjectWithSuit,
+  renderSuitLayerToCanvas,
   getSuitFrameBox,
   type SuitCategory,
   type SuitTransform,
@@ -176,9 +177,17 @@ export default function PassportPhotoMaker() {
     return () => clearTimeout(timer);
   }, [brightness, contrast, saturation, sharpness, smoothness, edgeSoftness, beautyFace, isUltraHD, borderThickness]);
   
-  // History for Undo/Redo
+  // History for Undo/Redo (Photo Cutout & Suit Touchup Mask)
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [touchupTarget, setTouchupTarget] = useState<'photo' | 'suit'>('photo');
+  const [showSuitInTouchup, setShowSuitInTouchup] = useState(true);
+  const [suitMaskHistory, setSuitMaskHistory] = useState<string[]>(['']);
+  const [suitMaskHistoryIndex, setSuitMaskHistoryIndex] = useState(0);
+  const [suitMaskVersion, setSuitMaskVersion] = useState(0);
+  const suitEraseMaskRef = useRef<HTMLCanvasElement | null>(null);
+  const touchupSuitBackRef = useRef<HTMLCanvasElement | null>(null);
+  const touchupSuitFrontRef = useRef<HTMLCanvasElement | null>(null);
 
   const addToHistory = (src: string) => {
     const newHistory = history.slice(0, historyIndex + 1);
@@ -186,6 +195,56 @@ export default function PassportPhotoMaker() {
     if (newHistory.length > 20) newHistory.shift(); // Limit history size
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
+  };
+
+  const addToSuitMaskHistory = (dataUrl: string) => {
+    const next = suitMaskHistory.slice(0, suitMaskHistoryIndex + 1);
+    next.push(dataUrl);
+    if (next.length > 21) next.shift();
+    setSuitMaskHistory(next);
+    setSuitMaskHistoryIndex(next.length - 1);
+  };
+
+  const clearSuitEraseMask = () => {
+    if (suitEraseMaskRef.current) {
+      const mCtx = suitEraseMaskRef.current.getContext('2d');
+      mCtx?.clearRect(0, 0, suitEraseMaskRef.current.width, suitEraseMaskRef.current.height);
+      suitEraseMaskRef.current = null;
+    }
+    setSuitMaskHistory(['']);
+    setSuitMaskHistoryIndex(0);
+    setSuitMaskVersion((v) => v + 1);
+  };
+
+  const restoreSuitMaskFromDataUrl = (dataUrl: string) => {
+    if (!dataUrl) {
+      if (suitEraseMaskRef.current) {
+        const mCtx = suitEraseMaskRef.current.getContext('2d');
+        mCtx?.clearRect(0, 0, suitEraseMaskRef.current.width, suitEraseMaskRef.current.height);
+      }
+      setSuitMaskVersion((v) => v + 1);
+      syncTouchupSuitOverlays();
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+      const targetW = workCanvasRef.current?.width || canvasDims?.width || img.naturalWidth || img.width;
+      const targetH = workCanvasRef.current?.height || canvasDims?.height || img.naturalHeight || img.height;
+      if (!suitEraseMaskRef.current) {
+        suitEraseMaskRef.current = document.createElement('canvas');
+      }
+      suitEraseMaskRef.current.width = targetW;
+      suitEraseMaskRef.current.height = targetH;
+      const mCtx = suitEraseMaskRef.current.getContext('2d');
+      if (mCtx) {
+        mCtx.clearRect(0, 0, targetW, targetH);
+        mCtx.drawImage(img, 0, 0, targetW, targetH);
+      }
+      setSuitMaskVersion((v) => v + 1);
+      syncTouchupSuitOverlays();
+    };
+    img.src = dataUrl;
   };
 
   const updateCanvasFromSrc = (src: string | null) => {
@@ -208,6 +267,14 @@ export default function PassportPhotoMaker() {
   };
 
   const undo = () => {
+    if (isManualMode && touchupTarget === 'suit' && processedSuit) {
+      if (suitMaskHistoryIndex > 0) {
+        const prevIndex = suitMaskHistoryIndex - 1;
+        setSuitMaskHistoryIndex(prevIndex);
+        restoreSuitMaskFromDataUrl(suitMaskHistory[prevIndex] || '');
+      }
+      return;
+    }
     if (historyIndex > 0) {
       const prevIndex = historyIndex - 1;
       setHistoryIndex(prevIndex);
@@ -222,6 +289,14 @@ export default function PassportPhotoMaker() {
   };
 
   const redo = () => {
+    if (isManualMode && touchupTarget === 'suit' && processedSuit) {
+      if (suitMaskHistoryIndex < suitMaskHistory.length - 1) {
+        const nextIndex = suitMaskHistoryIndex + 1;
+        setSuitMaskHistoryIndex(nextIndex);
+        restoreSuitMaskFromDataUrl(suitMaskHistory[nextIndex] || '');
+      }
+      return;
+    }
     if (historyIndex < history.length - 1) {
       const nextIndex = historyIndex + 1;
       setHistoryIndex(nextIndex);
@@ -307,6 +382,37 @@ export default function PassportPhotoMaker() {
     return { frameW, frameH, canvasCssW, canvasCssH };
   };
 
+  const syncTouchupSuitOverlays = (targetW?: number, targetH?: number) => {
+    const displayCanvas = touchupCanvasRef.current;
+    const w = targetW || displayCanvas?.width || 0;
+    const h = targetH || displayCanvas?.height || 0;
+    if (w <= 0 || h <= 0) return;
+
+    const backCanvas = touchupSuitBackRef.current;
+    const frontCanvas = touchupSuitFrontRef.current;
+    const shouldShow = Boolean(processedSuit && showSuitInTouchup);
+
+    if (backCanvas) {
+      if (backCanvas.width !== w) backCanvas.width = w;
+      if (backCanvas.height !== h) backCanvas.height = h;
+      if (shouldShow && bgRemovedImageSrc && processedSuit?.backCanvas) {
+        renderSuitLayerToCanvas(backCanvas, processedSuit, suitTransform, 'back', suitEraseMaskRef.current);
+      } else {
+        backCanvas.getContext('2d')?.clearRect(0, 0, w, h);
+      }
+    }
+
+    if (frontCanvas) {
+      if (frontCanvas.width !== w) frontCanvas.width = w;
+      if (frontCanvas.height !== h) frontCanvas.height = h;
+      if (shouldShow && processedSuit) {
+        renderSuitLayerToCanvas(frontCanvas, processedSuit, suitTransform, 'front', suitEraseMaskRef.current);
+      } else {
+        frontCanvas.getContext('2d')?.clearRect(0, 0, w, h);
+      }
+    }
+  };
+
   const syncDisplayCanvas = (nativeW?: number, nativeH?: number) => {
     const displayCanvas = touchupCanvasRef.current;
     const workCanvas = workCanvasRef.current;
@@ -319,6 +425,7 @@ export default function PassportPhotoMaker() {
     const targetH = Math.max(1, Math.round(canvasCssH * dpr));
 
     drawSteppedHighQuality(workCanvas, displayCanvas, targetW, targetH);
+    syncTouchupSuitOverlays(targetW, targetH);
 
     if (origImgRef.current && (origImgRef.current.naturalWidth || origImgRef.current.width) > 0) {
       if (!origDisplayCanvasRef.current) {
@@ -432,6 +539,13 @@ export default function PassportPhotoMaker() {
     }
   }, [zoom, selectedPreset, isManualMode, step]);
 
+  // Keep live suit layers synced in Manual Touchup whenever suit, transform, mask, or visibility changes
+  useEffect(() => {
+    if (isManualMode && step === 'edit') {
+      syncTouchupSuitOverlays();
+    }
+  }, [isManualMode, step, processedSuit, suitTransform, suitMaskVersion, bgRemovedImageSrc, showSuitInTouchup]);
+
   const getCoordinates = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = touchupCanvasRef.current;
     const workCanvas = workCanvasRef.current;
@@ -506,6 +620,63 @@ export default function PassportPhotoMaker() {
     }
   };
 
+  const ensureSuitEraseMask = (width: number, height: number): HTMLCanvasElement => {
+    if (!suitEraseMaskRef.current) {
+      const c = document.createElement('canvas');
+      c.width = width;
+      c.height = height;
+      suitEraseMaskRef.current = c;
+      return c;
+    }
+    const existing = suitEraseMaskRef.current;
+    if (existing.width !== width || existing.height !== height) {
+      const resized = document.createElement('canvas');
+      resized.width = width;
+      resized.height = height;
+      const rCtx = resized.getContext('2d');
+      if (rCtx && existing.width > 0 && existing.height > 0) {
+        rCtx.drawImage(existing, 0, 0, width, height);
+      }
+      suitEraseMaskRef.current = resized;
+      return resized;
+    }
+    return existing;
+  };
+
+  const paintSuitMaskDot = (
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    radius: number,
+    mode: 'erase' | 'restore'
+  ) => {
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.globalCompositeOperation = mode === 'erase' ? 'source-over' : 'destination-out';
+    ctx.fillStyle = 'rgba(0,0,0,1)';
+    ctx.fill();
+  };
+
+  const paintSuitMaskSegment = (
+    ctx: CanvasRenderingContext2D,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    lineW: number,
+    mode: 'erase' | 'restore'
+  ) => {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.lineWidth = lineW;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalCompositeOperation = mode === 'erase' ? 'source-over' : 'destination-out';
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+    ctx.stroke();
+  };
+
   const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
     if (e.cancelable) e.preventDefault();
     updateTouchupCursor(e, 'touches' in e);
@@ -515,6 +686,16 @@ export default function PassportPhotoMaker() {
     lastPosRef.current = pos;
 
     const workCanvas = workCanvasRef.current;
+    if (touchupTarget === 'suit' && processedSuit) {
+      const maskCanvas = ensureSuitEraseMask(workCanvas.width, workCanvas.height);
+      const maskCtx = maskCanvas.getContext('2d');
+      if (maskCtx) {
+        paintSuitMaskDot(maskCtx, pos.x, pos.y, brushSize / 2, brushMode);
+      }
+      syncTouchupSuitOverlays();
+      return;
+    }
+
     const displayCanvas = touchupCanvasRef.current;
     const workCtx = workCanvas.getContext('2d');
     const displayCtx = displayCanvas.getContext('2d');
@@ -540,14 +721,33 @@ export default function PassportPhotoMaker() {
     if (e.cancelable) e.preventDefault();
     updateTouchupCursor(e, 'touches' in e);
     if (!isDrawing || !lastPosRef.current || !workCanvasRef.current || !touchupCanvasRef.current) return;
-    
-    const workCanvas = workCanvasRef.current;
-    const displayCanvas = touchupCanvasRef.current;
-    const workCtx = workCanvas.getContext('2d');
-    const displayCtx = displayCanvas.getContext('2d');
 
     const currentPos = getCoordinates(e);
     if (!currentPos) return;
+
+    const workCanvas = workCanvasRef.current;
+    if (touchupTarget === 'suit' && processedSuit) {
+      const maskCanvas = ensureSuitEraseMask(workCanvas.width, workCanvas.height);
+      const maskCtx = maskCanvas.getContext('2d');
+      if (maskCtx) {
+        paintSuitMaskSegment(
+          maskCtx,
+          lastPosRef.current.x,
+          lastPosRef.current.y,
+          currentPos.x,
+          currentPos.y,
+          brushSize,
+          brushMode
+        );
+      }
+      lastPosRef.current = currentPos;
+      syncTouchupSuitOverlays();
+      return;
+    }
+
+    const displayCanvas = touchupCanvasRef.current;
+    const workCtx = workCanvas.getContext('2d');
+    const displayCtx = displayCanvas.getContext('2d');
 
     if (workCtx) {
       paintBrushSegment(
@@ -582,11 +782,18 @@ export default function PassportPhotoMaker() {
     if (isDrawing && workCanvasRef.current) {
       setIsDrawing(false);
       lastPosRef.current = null;
-      const result = workCanvasRef.current.toDataURL('image/png', 1.0);
-      isDrawingUpdateRef.current = true;
-      setBgRemovedImageSrc(result);
-      addToHistory(result);
-      syncDisplayCanvas();
+      if (touchupTarget === 'suit' && processedSuit) {
+        const maskUrl = suitEraseMaskRef.current ? suitEraseMaskRef.current.toDataURL('image/png') : '';
+        addToSuitMaskHistory(maskUrl);
+        setSuitMaskVersion((v) => v + 1);
+        syncTouchupSuitOverlays();
+      } else {
+        const result = workCanvasRef.current.toDataURL('image/png', 1.0);
+        isDrawingUpdateRef.current = true;
+        setBgRemovedImageSrc(result);
+        addToHistory(result);
+        syncDisplayCanvas();
+      }
     }
     if (cursorFadeTimerRef.current) clearTimeout(cursorFadeTimerRef.current);
     cursorFadeTimerRef.current = setTimeout(() => {
@@ -713,6 +920,8 @@ export default function PassportPhotoMaker() {
       setFinalImageSrc(null);
       setHistory([croppedUrl]);
       setHistoryIndex(0);
+      clearSuitEraseMask();
+      setTouchupTarget('photo');
       setStep('edit');
       setZoom(1);
       
@@ -845,6 +1054,8 @@ export default function PassportPhotoMaker() {
   }, [step]);
 
   useEffect(() => {
+    clearSuitEraseMask();
+    setTouchupTarget('photo');
     if (!selectedSuitId) {
       setProcessedSuit(null);
       setIsLoadingSuit(false);
@@ -1261,7 +1472,7 @@ export default function PassportPhotoMaker() {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
-    // 2. Subject + Formal Suit (rear collar behind neck + optional old-shoulder mask + front tailored suit)
+    // 2. Subject + Formal Suit (rear collar behind neck + optional old-shoulder mask + front tailored suit + manual suit touchup mask)
     compositeSubjectWithSuit(
       ctx,
       canvas.width,
@@ -1269,7 +1480,8 @@ export default function PassportPhotoMaker() {
       subjectCanvas,
       processedSuit,
       suitTransform,
-      Boolean(bgRemovedImageSrc)
+      Boolean(bgRemovedImageSrc),
+      suitEraseMaskRef.current
     );
 
     // 3. Border on opaque studio backgrounds
@@ -1324,6 +1536,7 @@ export default function PassportPhotoMaker() {
     appliedAdjustments.borderThickness,
     processedSuit,
     suitTransform,
+    suitMaskVersion,
     bgRemovedImageSrc,
     isManualMode,
     isDraggingSuit,
@@ -1634,10 +1847,76 @@ export default function PassportPhotoMaker() {
   };
 
   const handleDownloadSinglePhoto = () => {
-    if (!finalImageSrc || !printImageElement) return;
     setPrintError(null);
 
-    let rawPngUrl = finalImageSrc;
+    // Determine the freshest source canvas/image so clicking Single Photo while in Manual Touchup
+    // or right after adjusting a suit always includes the latest touchup + suit + suit mask
+    let sourceEl: HTMLCanvasElement | HTMLImageElement | null = null;
+    if (isManualMode && workCanvasRef.current && workCanvasRef.current.width > 0) {
+      const work = workCanvasRef.current;
+      const subj = document.createElement('canvas');
+      subj.width = work.width;
+      subj.height = work.height;
+      const sCtx = subj.getContext('2d');
+      if (sCtx) {
+        sCtx.filter = `brightness(${brightness}%) contrast(${contrast + (isUltraHD ? 15 : 0)}%) saturate(${saturation + (isUltraHD ? 20 : 0)}%)`;
+        sCtx.drawImage(work, 0, 0);
+      }
+
+      const comp = document.createElement('canvas');
+      comp.width = work.width;
+      comp.height = work.height;
+      const cCtx = comp.getContext('2d', { alpha: true });
+      if (cCtx) {
+        if (bgColor === 'custom-image' && customBgImgRef.current) {
+          const bgImg = customBgImgRef.current;
+          const imgRatio = bgImg.width / Math.max(1, bgImg.height);
+          const targetRatio = comp.width / Math.max(1, comp.height);
+          let drawW = comp.width, drawH = comp.height, offsetX = 0, offsetY = 0;
+          if (imgRatio > targetRatio) {
+            drawH = comp.height;
+            drawW = comp.height * imgRatio;
+            offsetX = (comp.width - drawW) / 2;
+          } else {
+            drawW = comp.width;
+            drawH = comp.width / imgRatio;
+            offsetY = (comp.height - drawH) / 2;
+          }
+          cCtx.drawImage(bgImg, offsetX, offsetY, drawW, drawH);
+        } else if (bgColor !== 'transparent') {
+          cCtx.fillStyle = bgColor === 'custom' ? customColor : bgColor;
+          cCtx.fillRect(0, 0, comp.width, comp.height);
+        }
+
+        compositeSubjectWithSuit(
+          cCtx,
+          comp.width,
+          comp.height,
+          subj,
+          processedSuit,
+          suitTransform,
+          Boolean(bgRemovedImageSrc),
+          suitEraseMaskRef.current
+        );
+
+        if (hasBorder && bgColor !== 'transparent') {
+          cCtx.strokeStyle = '#000000';
+          const thickness = Math.max(1, Math.round((borderThickness / 2) * Math.max(1, comp.width / 350)));
+          cCtx.lineWidth = thickness;
+          cCtx.strokeRect(thickness / 2, thickness / 2, comp.width - thickness, comp.height - thickness);
+        }
+        sourceEl = comp;
+      }
+      setIsManualMode(false);
+    } else if (compositeCanvasRef.current && compositeCanvasRef.current.width > 0) {
+      sourceEl = compositeCanvasRef.current;
+    } else if (printImageElement) {
+      sourceEl = printImageElement;
+    }
+
+    if (!sourceEl) return;
+
+    let rawPngUrl: string;
     if (selectedPreset.id !== 'free') {
       const photoWidth = Math.max(1, Math.round((selectedPreset.width / 25.4) * dpi));
       const photoHeight = Math.max(1, Math.round((selectedPreset.height / 25.4) * dpi));
@@ -1648,8 +1927,13 @@ export default function PassportPhotoMaker() {
       if (!ctx) return;
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(printImageElement, 0, 0, photoWidth, photoHeight);
+      ctx.drawImage(sourceEl, 0, 0, photoWidth, photoHeight);
       rawPngUrl = canvas.toDataURL('image/png', 1.0);
+    } else if (sourceEl instanceof HTMLCanvasElement) {
+      rawPngUrl = sourceEl.toDataURL('image/png', 1.0);
+    } else {
+      if (!finalImageSrc) return;
+      rawPngUrl = finalImageSrc;
     }
 
     const { bytes, mime } = dataURLtoBytes(rawPngUrl);
@@ -2080,6 +2364,10 @@ export default function PassportPhotoMaker() {
       setSuitTransform(DEFAULT_SUIT_TRANSFORM);
       hasAutoFittedSuitRef.current = false;
       refinedSubjectCanvasRef.current = null;
+      clearSuitEraseMask();
+      setTouchupTarget('photo');
+      setShowSuitInTouchup(true);
+      setIsManualMode(false);
       setSubjectVersion(0);
       setHistory([]);
       setHistoryIndex(-1);
@@ -2097,6 +2385,10 @@ export default function PassportPhotoMaker() {
       setSuitTransform(DEFAULT_SUIT_TRANSFORM);
       hasAutoFittedSuitRef.current = false;
       refinedSubjectCanvasRef.current = null;
+      clearSuitEraseMask();
+      setTouchupTarget('photo');
+      setShowSuitInTouchup(true);
+      setIsManualMode(false);
       setSubjectVersion(0);
       setHistory([]);
       setHistoryIndex(-1);
@@ -2179,17 +2471,25 @@ export default function PassportPhotoMaker() {
                         <div className="flex gap-2">
                           <button
                             onClick={undo}
-                            disabled={historyIndex <= 0}
+                            disabled={
+                              isManualMode && touchupTarget === 'suit' && processedSuit
+                                ? suitMaskHistoryIndex <= 0
+                                : historyIndex <= 0
+                            }
                             className="p-1.5 bg-white text-gray-700 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                            title="Undo"
+                            title={isManualMode && touchupTarget === 'suit' && processedSuit ? 'Undo Suit Touchup' : 'Undo'}
                           >
                             <Undo className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={redo}
-                            disabled={historyIndex >= history.length - 1}
+                            disabled={
+                              isManualMode && touchupTarget === 'suit' && processedSuit
+                                ? suitMaskHistoryIndex >= suitMaskHistory.length - 1
+                                : historyIndex >= history.length - 1
+                            }
                             className="p-1.5 bg-white text-gray-700 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                            title="Redo"
+                            title={isManualMode && touchupTarget === 'suit' && processedSuit ? 'Redo Suit Touchup' : 'Redo'}
                           >
                             <Redo className="w-3.5 h-3.5" />
                           </button>
@@ -2230,19 +2530,83 @@ export default function PassportPhotoMaker() {
                         <div className="p-3 bg-gray-50 rounded-xl mb-4 space-y-3 border border-gray-200 animate-in fade-in slide-in-from-top-2">
                           <div className="flex items-center justify-between mb-1">
                             <span className="text-[10px] font-bold text-gray-500 uppercase">Touchup Controls</span>
+                            {processedSuit && (
+                              <div className="flex items-center gap-1.5">
+                                {suitMaskHistoryIndex > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      clearSuitEraseMask();
+                                      setTimeout(() => syncTouchupSuitOverlays(), 0);
+                                    }}
+                                    className="text-[10px] font-bold text-red-500 hover:underline"
+                                    title="Restore full untouched suit"
+                                  >
+                                    Reset Suit
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setShowSuitInTouchup((v) => !v)}
+                                  className="px-1.5 py-0.5 text-[10px] font-bold rounded-md bg-white border border-gray-200 text-gray-700 hover:border-[#e8501a] flex items-center gap-1"
+                                  title="Toggle suit visibility while brushing"
+                                >
+                                  {showSuitInTouchup ? <Eye className="w-3 h-3 text-[#e8501a]" /> : <EyeOff className="w-3 h-3 text-gray-400" />}
+                                  {showSuitInTouchup ? 'Suit On' : 'Suit Off'}
+                                </button>
+                              </div>
+                            )}
                           </div>
+
+                          {processedSuit && (
+                            <div className="space-y-1.5">
+                              <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-200/70 rounded-lg">
+                                <button
+                                  type="button"
+                                  onClick={() => setTouchupTarget('photo')}
+                                  className={`py-1.5 px-2 text-[11px] font-bold rounded-md transition-all ${
+                                    touchupTarget === 'photo'
+                                      ? 'bg-white text-gray-900 shadow-xs'
+                                      : 'text-gray-600 hover:text-gray-900'
+                                  }`}
+                                >
+                                  Photo / Clothes
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTouchupTarget('suit');
+                                    setShowSuitInTouchup(true);
+                                  }}
+                                  className={`py-1.5 px-2 text-[11px] font-bold rounded-md transition-all flex items-center justify-center gap-1 ${
+                                    touchupTarget === 'suit'
+                                      ? 'bg-white text-[#e8501a] shadow-xs'
+                                      : 'text-gray-600 hover:text-gray-900'
+                                  }`}
+                                >
+                                  <Shirt className="w-3 h-3" /> Suit Layer
+                                </button>
+                              </div>
+                              <p className="text-[10px] text-gray-500 leading-snug">
+                                {touchupTarget === 'suit'
+                                  ? 'Erase suit edges so hair, beard, or neckwear naturally sits over the collar.'
+                                  : 'Erase stray old clothes or background edges while previewing the suit live.'}
+                              </p>
+                            </div>
+                          )}
+
                           <div className="flex gap-2">
                             <button
                               onClick={() => setBrushMode('erase')}
                               className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${brushMode === 'erase' ? 'bg-white shadow-sm text-[#e8501a] ring-1 ring-[#e8501a]/30' : 'text-gray-600 hover:bg-gray-200'}`}
                             >
-                              Erase
+                              {touchupTarget === 'suit' && processedSuit ? 'Erase Suit' : 'Erase'}
                             </button>
                             <button
                               onClick={() => setBrushMode('restore')}
                               className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${brushMode === 'restore' ? 'bg-white shadow-sm text-[#e8501a] ring-1 ring-[#e8501a]/30' : 'text-gray-600 hover:bg-gray-200'}`}
                             >
-                              Restore
+                              {touchupTarget === 'suit' && processedSuit ? 'Restore Suit' : 'Restore'}
                             </button>
                           </div>
                           <div className="space-y-3 pt-1">
@@ -2254,7 +2618,14 @@ export default function PassportPhotoMaker() {
                                   style={{ 
                                     width: `${Math.min(38, Math.max(8, brushSize * 0.38))}px`, 
                                     height: `${Math.min(38, Math.max(8, brushSize * 0.38))}px`,
-                                    backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.45)' : 'rgba(59, 130, 246, 0.45)'
+                                    backgroundColor:
+                                      touchupTarget === 'suit' && processedSuit
+                                        ? brushMode === 'erase'
+                                          ? 'rgba(232, 80, 26, 0.45)'
+                                          : 'rgba(16, 185, 129, 0.45)'
+                                        : brushMode === 'erase'
+                                          ? 'rgba(239, 68, 68, 0.45)'
+                                          : 'rgba(59, 130, 246, 0.45)'
                                   }}
                                 >
                                   <div className="w-1 h-1 rounded-full bg-white shadow-xs" />
@@ -3082,7 +3453,10 @@ export default function PassportPhotoMaker() {
                       <Download className="w-4 h-4" /> Single Photo
                     </button>
                     <button 
-                      onClick={() => setStep('print')}
+                      onClick={() => {
+                        if (isManualMode) setIsManualMode(false);
+                        setStep('print');
+                      }}
                       disabled={isProcessing}
                       className="px-6 py-2 bg-[#e8501a] text-white rounded-xl font-bold text-sm hover:bg-[#d04313] transition-colors flex items-center gap-2 disabled:opacity-50"
                     >
@@ -3269,24 +3643,53 @@ export default function PassportPhotoMaker() {
                           {bgColor === 'custom-image' && customBgImage && (
                             <img src={customBgImage} alt="" className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none" />
                           )}
-                          <canvas
-                            ref={touchupCanvasRef}
-                            onMouseDown={(e) => { updateTouchupCursor(e, false); startDrawing(e); }}
-                            onMouseMove={(e) => { updateTouchupCursor(e, false); draw(e); }}
-                            onMouseUp={stopDrawing}
-                            onMouseLeave={() => { setTouchupCursor(null); stopDrawing(); }}
-                            onTouchStart={(e) => { updateTouchupCursor(e, true); startDrawing(e); }}
-                            onTouchMove={(e) => { updateTouchupCursor(e, true); draw(e); }}
-                            onTouchEnd={stopDrawing}
-                            className="relative z-10 block cursor-none touch-none select-none shrink-0"
+                          <div
+                            className="relative shrink-0"
                             style={{
                               width: `${canvasCssW}px`,
                               height: `${canvasCssH}px`,
-                              filter: `brightness(${brightness}%) contrast(${contrast + (isUltraHD ? 15 : 0)}%) saturate(${saturation + (isUltraHD ? 20 : 0)}%)`,
-                              backgroundColor: 'transparent',
-                              imageRendering: 'auto'
                             }}
-                          />
+                          >
+                            {/* Rear Suit Collar Layer (behind subject cutout) */}
+                            <canvas
+                              ref={touchupSuitBackRef}
+                              className="absolute inset-0 z-[5] block pointer-events-none select-none"
+                              style={{
+                                width: `${canvasCssW}px`,
+                                height: `${canvasCssH}px`,
+                                imageRendering: 'auto',
+                              }}
+                            />
+                            {/* Interactive Subject Touchup Canvas */}
+                            <canvas
+                              ref={touchupCanvasRef}
+                              onMouseDown={(e) => { updateTouchupCursor(e, false); startDrawing(e); }}
+                              onMouseMove={(e) => { updateTouchupCursor(e, false); draw(e); }}
+                              onMouseUp={stopDrawing}
+                              onMouseLeave={() => { setTouchupCursor(null); stopDrawing(); }}
+                              onTouchStart={(e) => { updateTouchupCursor(e, true); startDrawing(e); }}
+                              onTouchMove={(e) => { updateTouchupCursor(e, true); draw(e); }}
+                              onTouchEnd={stopDrawing}
+                              className="relative z-10 block cursor-none touch-none select-none"
+                              style={{
+                                width: `${canvasCssW}px`,
+                                height: `${canvasCssH}px`,
+                                filter: `brightness(${brightness}%) contrast(${contrast + (isUltraHD ? 15 : 0)}%) saturate(${saturation + (isUltraHD ? 20 : 0)}%)`,
+                                backgroundColor: 'transparent',
+                                imageRendering: 'auto',
+                              }}
+                            />
+                            {/* Front Tailored Suit Layer (live over subject, supports suit erase/restore) */}
+                            <canvas
+                              ref={touchupSuitFrontRef}
+                              className="absolute inset-0 z-20 block pointer-events-none select-none"
+                              style={{
+                                width: `${canvasCssW}px`,
+                                height: `${canvasCssH}px`,
+                                imageRendering: 'auto',
+                              }}
+                            />
+                          </div>
                         </div>
                       ) : (
                         <>
@@ -3516,7 +3919,14 @@ export default function PassportPhotoMaker() {
                     height: `${getBrushRenderedDiameter()}px`,
                     border: '2px solid rgba(255, 255, 255, 0.95)',
                     boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.8), 0 0 12px rgba(0, 0, 0, 0.4)',
-                    backgroundColor: brushMode === 'erase' ? 'rgba(239, 68, 68, 0.35)' : 'rgba(59, 130, 246, 0.35)',
+                    backgroundColor:
+                      touchupTarget === 'suit' && processedSuit
+                        ? brushMode === 'erase'
+                          ? 'rgba(232, 80, 26, 0.38)'
+                          : 'rgba(16, 185, 129, 0.38)'
+                        : brushMode === 'erase'
+                          ? 'rgba(239, 68, 68, 0.35)'
+                          : 'rgba(59, 130, 246, 0.35)',
                   }}
                 >
                   <div className="absolute inset-0 m-auto w-1.5 h-1.5 rounded-full bg-white shadow-xs ring-1 ring-black/70" />
