@@ -9,7 +9,6 @@ import { useFocusMode } from '../contexts/FocusModeContext';
 import ToolSeoContent from '../components/ToolSeoContent';
 import PdfEditorSeo from '../components/seo/PdfEditorSeo';
 import PassportPhotoMakerSeo from '../components/seo/PassportPhotoMakerSeo';
-import AdSlot from '../components/AdSlot';
 
 // Lazy load helper with automatic retry & stale-chunk recovery
 function lazyWithRetry<T extends ComponentType<any>>(
@@ -576,12 +575,6 @@ export default function ToolPage() {
               <p className="text-sm text-text-secondary">
                 LoveYouTools runs entirely in your browser using modern Web APIs. This means it's lightning fast and your data never leaves your device.
               </p>
-            </div>
-
-            {/* Sidebar Ad */}
-            <div className="sticky top-24">
-              <span className="text-[10px] text-text-muted uppercase tracking-widest mb-2 block text-center">Advertisement</span>
-              <AdSlot adSlot="sidebar-ad" adFormat="rectangle" />
             </div>
           </div>
         )}
