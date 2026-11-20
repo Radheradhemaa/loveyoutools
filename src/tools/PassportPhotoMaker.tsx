@@ -71,6 +71,10 @@ export default function PassportPhotoMaker() {
   const [finalImageSrc, setFinalImageSrc] = useState<string | null>(null);
   const [isProcessingFilters, setIsProcessingFilters] = useState(false);
   const [printImageElement, setPrintImageElement] = useState<HTMLImageElement | null>(null);
+  const [directPrintTileSrc, setDirectPrintTileSrc] = useState<string | null>(null);
+  const directPrintTileKeyRef = useRef<string>('');
+  const directPrintTileImgRef = useRef<HTMLImageElement | null>(null);
+  const lastDirectPrintBlobUrlRef = useRef<string | null>(null);
   
   // Crop States
   const [crop, setCrop] = useState<CropType>();
@@ -87,7 +91,7 @@ export default function PassportPhotoMaker() {
   const [customBgImage, setCustomBgImage] = useState<string | null>(null);
   const customBgImgRef = useRef<HTMLImageElement | null>(null);
   const bgUploadInputRef = useRef<HTMLInputElement>(null);
-  const [dpi, setDpi] = useState(300);
+  const [dpi, setDpi] = useState(600);
   
   // Adjustments & Shoulder Extensions
   const [brightness, setBrightness] = useState(100);
@@ -318,6 +322,23 @@ export default function PassportPhotoMaker() {
   const [printOrientation, setPrintOrientation] = useState<'vertical' | 'horizontal'>('vertical');
   const [printError, setPrintError] = useState<string | null>(null);
   const [printNotice, setPrintNotice] = useState<string | null>(null);
+  const printPreviewAreaRef = useRef<HTMLDivElement | null>(null);
+  const [previewViewport, setPreviewViewport] = useState<{ width: number; height: number }>({ width: 760, height: 560 });
+
+  useEffect(() => {
+    const el = printPreviewAreaRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const updateSize = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setPreviewViewport({ width: Math.round(rect.width), height: Math.round(rect.height) });
+      }
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [step, imageSrc]);
 
   useEffect(() => {
     return () => {
@@ -872,10 +893,12 @@ export default function PassportPhotoMaker() {
     const cropWidth = (completedPercentCrop.width * naturalWidth) / 100;
     const cropHeight = (completedPercentCrop.height * naturalHeight) / 100;
 
-    // Limit cropped image resolution to 1200px for performance and to prevent AI model from getting stuck
-    const MAX_CROP_DIM = 1200;
-    let targetWidth = Math.round(cropWidth);
-    let targetHeight = Math.round(cropHeight);
+    // Preserve high-definition detail (up to 1600px ~ 900 DPI for 35x45mm) while keeping AI bg removal fast
+    const MAX_CROP_DIM = 1600;
+    const rawCropW = Math.max(1, Math.round(cropWidth));
+    const rawCropH = Math.max(1, Math.round(cropHeight));
+    let targetWidth = rawCropW;
+    let targetHeight = rawCropH;
     
     if (targetWidth > targetHeight) {
       if (targetWidth > MAX_CROP_DIM) {
@@ -895,20 +918,37 @@ export default function PassportPhotoMaker() {
     const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return;
 
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-
-    ctx.drawImage(
-      imgRef.current,
-      cropX,
-      cropY,
-      cropWidth,
-      cropHeight,
-      0,
-      0,
-      targetWidth,
-      targetHeight
-    );
+    if (rawCropW > targetWidth * 2 && rawCropH > targetHeight * 2) {
+      // Extract full-res crop first, then progressively downscale to preserve crisp studio micro-detail
+      const rawCanvas = document.createElement('canvas');
+      rawCanvas.width = rawCropW;
+      rawCanvas.height = rawCropH;
+      const rawCtx = rawCanvas.getContext('2d', { alpha: true });
+      if (rawCtx) {
+        rawCtx.imageSmoothingEnabled = true;
+        rawCtx.imageSmoothingQuality = 'high';
+        rawCtx.drawImage(imgRef.current, cropX, cropY, cropWidth, cropHeight, 0, 0, rawCropW, rawCropH);
+        drawSteppedHighQuality(rawCanvas, canvas, targetWidth, targetHeight);
+      } else {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(imgRef.current, cropX, cropY, cropWidth, cropHeight, 0, 0, targetWidth, targetHeight);
+      }
+    } else {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(
+        imgRef.current,
+        cropX,
+        cropY,
+        cropWidth,
+        cropHeight,
+        0,
+        0,
+        targetWidth,
+        targetHeight
+      );
+    }
 
     // Use toBlob for better performance
     canvas.toBlob((blob) => {
@@ -1546,11 +1586,27 @@ export default function PassportPhotoMaker() {
   useEffect(() => {
     if (!finalImageSrc) {
       setPrintImageElement(null);
+      directPrintTileKeyRef.current = '';
+      directPrintTileImgRef.current = null;
+      if (lastDirectPrintBlobUrlRef.current) {
+        URL.revokeObjectURL(lastDirectPrintBlobUrlRef.current);
+        lastDirectPrintBlobUrlRef.current = null;
+      }
+      setDirectPrintTileSrc(null);
       return;
     }
+
+    let cancelled = false;
     const img = new Image();
-    img.onload = () => setPrintImageElement(img);
+    img.onload = () => {
+      if (cancelled) return;
+      setPrintImageElement(img);
+    };
     img.src = finalImageSrc;
+
+    return () => {
+      cancelled = true;
+    };
   }, [finalImageSrc]);
 
   // --- Physical DPI & Exact Print Layout Helpers ---
@@ -1671,6 +1727,97 @@ export default function PassportPhotoMaker() {
     const baseW = isHorizontal ? targetPreset.height : targetPreset.width;
     const baseH = isHorizontal ? targetPreset.width : targetPreset.height;
 
+    const buildRowWiseTopAlignedSlots = (
+      rowCounts: number[],
+      maxCols: number,
+      maxRows: number,
+      sheetWidthMm: number,
+      sheetHeightMm: number,
+      photoWidthMm: number,
+      photoHeightMm: number,
+      gapMm: number,
+      preferredTopMm = 4
+    ) => {
+      const maxPhotos = Math.max(0, maxCols * maxRows);
+      const activeRows = rowCounts
+        .slice(0, maxRows)
+        .map((n) => Math.max(0, Math.min(maxCols, Math.round(n))))
+        .filter((n) => n > 0);
+
+      const photoCount = activeRows.reduce((sum, n) => sum + n, 0);
+      if (photoCount === 0 || maxCols <= 0 || maxRows <= 0) {
+        return {
+          slots: [] as Array<{ xMm: number; yMm: number }>,
+          startXMm: 0,
+          startYMm: 0,
+          usedCols: 0,
+          usedRows: 0,
+          usedBottomMm: 0,
+          maxPhotos,
+          photoCount: 0,
+        };
+      }
+
+      const usedRows = activeRows.length;
+      const usedCols = Math.max(...activeRows);
+      const widestRowW = usedCols * photoWidthMm + Math.max(0, usedCols - 1) * gapMm;
+      const activeGridH = usedRows * photoHeightMm + Math.max(0, usedRows - 1) * gapMm;
+      // Strictly anchored to TOP area of page (never centered vertically),
+      // with every row horizontally centered across the sheet width (never stuck on left or right side).
+      const startXMm = (sheetWidthMm - widestRowW) / 2;
+      const slackY = Math.max(0, sheetHeightMm - activeGridH);
+      const startYMm = Math.min(preferredTopMm, slackY / 2);
+
+      const slots: Array<{ xMm: number; yMm: number }> = [];
+      activeRows.forEach((rowLen, r) => {
+        const rowW = rowLen * photoWidthMm + Math.max(0, rowLen - 1) * gapMm;
+        const rowStartX = (sheetWidthMm - rowW) / 2;
+        const yMm = startYMm + r * (photoHeightMm + gapMm);
+        for (let c = 0; c < rowLen; c++) {
+          slots.push({
+            xMm: rowStartX + c * (photoWidthMm + gapMm),
+            yMm,
+          });
+        }
+      });
+
+      const usedBottomMm = startYMm + activeGridH;
+      return { slots, startXMm, startYMm, usedCols, usedRows, usedBottomMm, maxPhotos, photoCount };
+    };
+
+    const buildTopAlignedSlots = (
+      cols: number,
+      rows: number,
+      requestedCount: number,
+      sheetWidthMm: number,
+      sheetHeightMm: number,
+      photoWidthMm: number,
+      photoHeightMm: number,
+      gapMm: number,
+      preferredTopMm = 4
+    ) => {
+      const maxPhotos = Math.max(0, cols * rows);
+      const count = Math.max(0, Math.min(maxPhotos, requestedCount));
+      const rowCounts: number[] = [];
+      let remaining = count;
+      for (let r = 0; r < rows && remaining > 0; r++) {
+        const take = Math.min(cols, remaining);
+        rowCounts.push(take);
+        remaining -= take;
+      }
+      return buildRowWiseTopAlignedSlots(
+        rowCounts,
+        cols,
+        rows,
+        sheetWidthMm,
+        sheetHeightMm,
+        photoWidthMm,
+        photoHeightMm,
+        gapMm,
+        preferredTopMm
+      );
+    };
+
     if (paperSize.id === 'single') {
       return {
         isSingle: true,
@@ -1683,8 +1830,12 @@ export default function PassportPhotoMaker() {
         gapMm: 0,
         cols: 1,
         rows: 1,
+        maxPhotos: 1,
+        photoCount: 1,
         startXMm: 0,
         startYMm: 0,
+        usedBottomMm: baseH,
+        slots: [{ xMm: 0, yMm: 0 }],
         isHorizontal,
         isScaledDown: false,
         isValid: true,
@@ -1695,14 +1846,14 @@ export default function PassportPhotoMaker() {
     let sheetHeightMm = paperSize.id === 'custom' ? Math.max(10, Number(customPaper.height) || 0) : paperSize.height;
 
     if (paperSize.id === 'a5') {
-      // A5 = Half A4 (210 x 148 mm) -> strictly Row 1: 6 photos, Row 2: 6 photos, top-aligned
+      // A5 = Half A4 (210 x 148 mm) -> fixed 2 rows x 6 photos (6 + 6 = 12), top-aligned
       sheetWidthMm = 210;
       sheetHeightMm = 148;
       const cols = 6;
       const rows = 2;
       const gapMm = 1.2;
       const outerMarginX = 2.4;
-      const outerMarginY = 5;
+      const outerMarginY = 4;
       const maxFitW = (sheetWidthMm - 2 * outerMarginX - (cols - 1) * gapMm) / cols;
       const maxFitH = (sheetHeightMm - 2 * outerMarginY - (rows - 1) * gapMm) / rows;
       const scale = Math.min(1, maxFitW / baseW, maxFitH / baseH);
@@ -1710,7 +1861,17 @@ export default function PassportPhotoMaker() {
       const photoHeightMm = baseH * scale;
       const origPhotoWidthMm = targetPreset.width * scale;
       const origPhotoHeightMm = targetPreset.height * scale;
-      const gridW = cols * photoWidthMm + (cols - 1) * gapMm;
+      const placed = buildTopAlignedSlots(
+        cols,
+        rows,
+        cols * rows,
+        sheetWidthMm,
+        sheetHeightMm,
+        photoWidthMm,
+        photoHeightMm,
+        gapMm,
+        outerMarginY
+      );
       return {
         isSingle: false,
         sheetWidthMm,
@@ -1722,23 +1883,27 @@ export default function PassportPhotoMaker() {
         gapMm,
         cols,
         rows,
-        startXMm: (sheetWidthMm - gridW) / 2,
-        startYMm: outerMarginY,
+        maxPhotos: placed.maxPhotos,
+        photoCount: placed.photoCount,
+        startXMm: placed.startXMm,
+        startYMm: placed.startYMm,
+        usedBottomMm: placed.usedBottomMm,
+        slots: placed.slots,
         isHorizontal,
         isScaledDown: scale < 0.999,
-        isValid: photoWidthMm > 0 && photoHeightMm > 0,
+        isValid: photoWidthMm > 0 && photoHeightMm > 0 && placed.photoCount > 0,
       };
     }
 
     if (paperSize.id === 'custom-grid') {
-      // Anchor Custom Grid on A4 sheet (210 x 297 mm) so printer "Fit to Page" never blows up small grids
+      // Anchor Custom Grid on A4 sheet (210 x 297 mm) strictly at the TOP area to avoid paper waste
       sheetWidthMm = 210;
       sheetHeightMm = 297;
       const cols = Math.max(1, Math.min(20, Math.round(customGrid.cols || 1)));
       const rows = Math.max(1, Math.min(20, Math.round(customGrid.rows || 1)));
       const gapMm = 1.5;
       const padX = 4;
-      const padY = 8;
+      const padY = 4;
       const maxFitW = (sheetWidthMm - 2 * padX - (cols - 1) * gapMm) / cols;
       const maxFitH = (sheetHeightMm - 2 * padY - (rows - 1) * gapMm) / rows;
       const scale = Math.min(1, maxFitW / baseW, maxFitH / baseH);
@@ -1746,10 +1911,17 @@ export default function PassportPhotoMaker() {
       const photoHeightMm = baseH * scale;
       const origPhotoWidthMm = targetPreset.width * scale;
       const origPhotoHeightMm = targetPreset.height * scale;
-      const gridW = cols * photoWidthMm + (cols - 1) * gapMm;
-      const gridH = rows * photoHeightMm + (rows - 1) * gapMm;
-      const startXMm = (sheetWidthMm - gridW) / 2;
-      const startYMm = gridH <= sheetHeightMm - 24 ? 10 : (sheetHeightMm - gridH) / 2;
+      const placed = buildTopAlignedSlots(
+        cols,
+        rows,
+        cols * rows,
+        sheetWidthMm,
+        sheetHeightMm,
+        photoWidthMm,
+        photoHeightMm,
+        gapMm,
+        padY
+      );
       return {
         isSingle: false,
         sheetWidthMm,
@@ -1761,15 +1933,20 @@ export default function PassportPhotoMaker() {
         gapMm,
         cols,
         rows,
-        startXMm,
-        startYMm,
+        maxPhotos: placed.maxPhotos,
+        photoCount: placed.photoCount,
+        startXMm: placed.startXMm,
+        startYMm: placed.startYMm,
+        usedBottomMm: placed.usedBottomMm,
+        slots: placed.slots,
         isHorizontal,
         isScaledDown: scale < 0.999,
-        isValid: photoWidthMm > 0 && photoHeightMm > 0,
+        isValid: photoWidthMm > 0 && photoHeightMm > 0 && placed.photoCount > 0,
       };
     }
 
-    // Standard sheets (A4, 4x6, 5x7, Custom Size): exact true physical passport dimensions
+    // Standard sheets (A4, 4x6, 5x7, Custom Size): exact true physical passport dimensions,
+    // strictly starting from the TOP area of the page in both vertical and horizontal orientations
     const gapMm = 2;
     const edgePadMm = 3;
     const usableW = Math.max(0, sheetWidthMm - 2 * edgePadMm);
@@ -1784,8 +1961,18 @@ export default function PassportPhotoMaker() {
       rows = Math.max(0, Math.floor((sheetHeightMm - 2 + gapMm + 0.001) / (baseH + gapMm)));
     }
 
-    const gridW = cols * baseW + Math.max(0, cols - 1) * gapMm;
-    const gridH = rows * baseH + Math.max(0, rows - 1) * gapMm;
+    const maxPhotos = cols * rows;
+    const placed = buildTopAlignedSlots(
+      cols,
+      rows,
+      maxPhotos,
+      sheetWidthMm,
+      sheetHeightMm,
+      baseW,
+      baseH,
+      gapMm,
+      4
+    );
 
     return {
       isSingle: false,
@@ -1798,53 +1985,141 @@ export default function PassportPhotoMaker() {
       gapMm,
       cols,
       rows,
-      startXMm: (sheetWidthMm - gridW) / 2,
-      startYMm: (sheetHeightMm - gridH) / 2,
+      maxPhotos: placed.maxPhotos,
+      photoCount: placed.photoCount,
+      startXMm: placed.startXMm,
+      startYMm: placed.startYMm,
+      usedBottomMm: placed.usedBottomMm,
+      slots: placed.slots,
       isHorizontal,
       isScaledDown: false,
-      isValid: cols > 0 && rows > 0,
+      isValid: cols > 0 && rows > 0 && placed.photoCount > 0,
     };
   };
 
-  const createTileDataUrl = (
-    photoWidthMm: number,
-    photoHeightMm: number,
+  const createHdTileCanvas = (
     origPhotoWidthMm: number,
     origPhotoHeightMm: number,
     isHorizontal: boolean,
-    format: 'image/png' | 'image/jpeg' = 'image/jpeg'
-  ): string | null => {
+    targetDpi: number,
+    fillWhiteBg = false
+  ): HTMLCanvasElement | null => {
     if (!printImageElement) return null;
-    const wPx = Math.max(1, Math.round((photoWidthMm / 25.4) * dpi));
-    const hPx = Math.max(1, Math.round((photoHeightMm / 25.4) * dpi));
-    const origWPx = Math.max(1, Math.round((origPhotoWidthMm / 25.4) * dpi));
-    const origHPx = Math.max(1, Math.round((origPhotoHeightMm / 25.4) * dpi));
 
-    const canvas = document.createElement('canvas');
-    canvas.width = wPx;
-    canvas.height = hPx;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
+    const srcW = printImageElement.naturalWidth || printImageElement.width;
+    const srcH = printImageElement.naturalHeight || printImageElement.height;
+    if (srcW <= 0 || srcH <= 0) return null;
 
-    if (format === 'image/jpeg') {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, wPx, hPx);
+    const effectiveTileDpi = Math.max(72, Math.round(targetDpi));
+    const origWPx = Math.max(1, Math.round((origPhotoWidthMm / 25.4) * effectiveTileDpi));
+    const origHPx = Math.max(1, Math.round((origPhotoHeightMm / 25.4) * effectiveTileDpi));
+
+    // Render upright tile at exact selected DPI using stepped high-quality resampling (zero single-pass blur)
+    const uprightCanvas = document.createElement('canvas');
+    drawSteppedHighQuality(printImageElement, uprightCanvas, origWPx, origHPx);
+
+    let finalTile = uprightCanvas;
+    if (fillWhiteBg) {
+      const solidCanvas = document.createElement('canvas');
+      solidCanvas.width = origWPx;
+      solidCanvas.height = origHPx;
+      const sCtx = solidCanvas.getContext('2d');
+      if (sCtx) {
+        sCtx.fillStyle = '#ffffff';
+        sCtx.fillRect(0, 0, origWPx, origHPx);
+        sCtx.drawImage(uprightCanvas, 0, 0);
+        finalTile = solidCanvas;
+      }
     }
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
 
-    if (isHorizontal) {
-      ctx.save();
-      ctx.translate(wPx / 2, hPx / 2);
-      ctx.rotate(Math.PI / 2);
-      ctx.drawImage(printImageElement, -origWPx / 2, -origHPx / 2, origWPx, origHPx);
-      ctx.restore();
-    } else {
-      ctx.drawImage(printImageElement, 0, 0, wPx, hPx);
+    if (!isHorizontal) {
+      return finalTile;
     }
 
-    return canvas.toDataURL(format, 0.98);
+    // Exact 90° pixel-to-pixel clockwise rotation (no odd-dimension 0.5px center-offset blur)
+    const rotCanvas = document.createElement('canvas');
+    rotCanvas.width = finalTile.height;
+    rotCanvas.height = finalTile.width;
+    const rCtx = rotCanvas.getContext('2d');
+    if (!rCtx) return null;
+    if (fillWhiteBg) {
+      rCtx.fillStyle = '#ffffff';
+      rCtx.fillRect(0, 0, rotCanvas.width, rotCanvas.height);
+    }
+    rCtx.imageSmoothingEnabled = false;
+    rCtx.translate(rotCanvas.width, 0);
+    rCtx.rotate(Math.PI / 2);
+    rCtx.drawImage(finalTile, 0, 0);
+    return rotCanvas;
   };
+
+  const createTileDataUrl = (
+    _photoWidthMm: number,
+    _photoHeightMm: number,
+    origPhotoWidthMm: number,
+    origPhotoHeightMm: number,
+    isHorizontal: boolean
+  ): string | null => {
+    // Produce lossless PNG strictly at the user-selected DPI
+    const selectedDpi = Math.max(72, Math.round(dpi));
+    const tileCanvas = createHdTileCanvas(
+      origPhotoWidthMm,
+      origPhotoHeightMm,
+      isHorizontal,
+      selectedDpi,
+      bgColor !== 'transparent'
+    );
+    if (!tileCanvas) return null;
+    return tileCanvas.toDataURL('image/png');
+  };
+
+  const currentDirectPrintKey = `${finalImageSrc || ''}|${dpi}|${paperSize.id}|${customPaper.width}x${customPaper.height}|${customGrid.cols}x${customGrid.rows}|${selectedPreset.id}|${printOrientation}|${bgColor}`;
+
+  useEffect(() => {
+    if (step !== 'print' || !printImageElement || !finalImageSrc) return;
+    const layout = computePrintLayout();
+    if (!layout.isValid) return;
+
+    let cancelled = false;
+    const key = currentDirectPrintKey;
+    const selectedDpi = Math.max(72, Math.round(dpi));
+    const tileCanvas = createHdTileCanvas(
+      layout.origPhotoWidthMm,
+      layout.origPhotoHeightMm,
+      layout.isHorizontal,
+      selectedDpi,
+      bgColor !== 'transparent'
+    );
+    if (!tileCanvas) return;
+
+    tileCanvas.toBlob((blob) => {
+      if (!blob || cancelled) return;
+      const tileUrl = URL.createObjectURL(blob);
+      const preImg = new Image();
+      preImg.onload = () => {
+        if (cancelled) {
+          URL.revokeObjectURL(tileUrl);
+          return;
+        }
+        const prevUrl = lastDirectPrintBlobUrlRef.current;
+        lastDirectPrintBlobUrlRef.current = tileUrl;
+        directPrintTileImgRef.current = preImg;
+        directPrintTileKeyRef.current = key;
+        setDirectPrintTileSrc(tileUrl);
+        if (prevUrl && prevUrl !== tileUrl) {
+          setTimeout(() => URL.revokeObjectURL(prevUrl), 1500);
+        }
+      };
+      preImg.onerror = () => {
+        URL.revokeObjectURL(tileUrl);
+      };
+      preImg.src = tileUrl;
+    }, 'image/png');
+
+    return () => {
+      cancelled = true;
+    };
+  }, [step, printImageElement, currentDirectPrintKey]);
 
   const handleDownloadSinglePhoto = () => {
     setPrintError(null);
@@ -1916,33 +2191,31 @@ export default function PassportPhotoMaker() {
 
     if (!sourceEl) return;
 
+    const exportDpi = Math.max(72, Math.round(dpi));
     let rawPngUrl: string;
     if (selectedPreset.id !== 'free') {
-      const photoWidth = Math.max(1, Math.round((selectedPreset.width / 25.4) * dpi));
-      const photoHeight = Math.max(1, Math.round((selectedPreset.height / 25.4) * dpi));
+      const photoWidth = Math.max(1, Math.round((selectedPreset.width / 25.4) * exportDpi));
+      const photoHeight = Math.max(1, Math.round((selectedPreset.height / 25.4) * exportDpi));
       const canvas = document.createElement('canvas');
-      canvas.width = photoWidth;
-      canvas.height = photoHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(sourceEl, 0, 0, photoWidth, photoHeight);
-      rawPngUrl = canvas.toDataURL('image/png', 1.0);
+      drawSteppedHighQuality(sourceEl, canvas, photoWidth, photoHeight);
+      rawPngUrl = canvas.toDataURL('image/png');
     } else if (sourceEl instanceof HTMLCanvasElement) {
-      rawPngUrl = sourceEl.toDataURL('image/png', 1.0);
+      rawPngUrl = sourceEl.toDataURL('image/png');
     } else {
-      if (!finalImageSrc) return;
-      rawPngUrl = finalImageSrc;
+      const srcW = sourceEl.naturalWidth || sourceEl.width;
+      const srcH = sourceEl.naturalHeight || sourceEl.height;
+      const canvas = document.createElement('canvas');
+      drawSteppedHighQuality(sourceEl, canvas, srcW, srcH);
+      rawPngUrl = canvas.toDataURL('image/png');
     }
 
     const { bytes, mime } = dataURLtoBytes(rawPngUrl);
-    const dpiBytes = mime === 'image/png' ? injectPngDpiBytes(bytes, dpi) : bytes;
+    const dpiBytes = mime === 'image/png' ? injectPngDpiBytes(bytes, exportDpi) : bytes;
     const blob = new Blob([dpiBytes], { type: mime });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `passport-photo-${dpi}dpi-${Date.now()}.png`;
+    link.download = `passport-photo-${exportDpi}dpi-${Date.now()}.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1958,16 +2231,32 @@ export default function PassportPhotoMaker() {
     }
     setPrintError(null);
 
-    const mmToPx = (mm: number) => (mm / 25.4) * dpi;
+    // Honor exact user-selected DPI while staying safely within browser canvas limits on giant custom sheets
+    const desiredDpi = Math.max(72, Math.round(dpi));
+    const rawW = (layout.sheetWidthMm / 25.4) * desiredDpi;
+    const rawH = (layout.sheetHeightMm / 25.4) * desiredDpi;
+    const MAX_SHEET_PIXELS = 36_000_000;
+    const effectiveDpi =
+      rawW * rawH > MAX_SHEET_PIXELS
+        ? Math.max(72, Math.floor(desiredDpi * Math.sqrt(MAX_SHEET_PIXELS / (rawW * rawH))))
+        : desiredDpi;
+
+    const mmToPx = (mm: number) => (mm / 25.4) * effectiveDpi;
     const sheetWidth = Math.max(1, Math.round(mmToPx(layout.sheetWidthMm)));
     const sheetHeight = Math.max(1, Math.round(mmToPx(layout.sheetHeightMm)));
     const photoWidth = Math.max(1, Math.round(mmToPx(layout.photoWidthMm)));
     const photoHeight = Math.max(1, Math.round(mmToPx(layout.photoHeightMm)));
-    const origPhotoWidth = Math.max(1, Math.round(mmToPx(layout.origPhotoWidthMm)));
-    const origPhotoHeight = Math.max(1, Math.round(mmToPx(layout.origPhotoHeightMm)));
     const gapPx = mmToPx(layout.gapMm);
-    const startX = mmToPx(layout.startXMm);
-    const startY = mmToPx(layout.startYMm);
+
+    // Build ONE stepped-high-quality master tile at exact selected DPI and stamp it pixel-aligned onto every slot
+    const masterTile = createHdTileCanvas(
+      layout.origPhotoWidthMm,
+      layout.origPhotoHeightMm,
+      layout.isHorizontal,
+      effectiveDpi,
+      true
+    );
+    if (!masterTile) return null;
 
     const canvas = document.createElement('canvas');
     canvas.width = sheetWidth;
@@ -1980,35 +2269,30 @@ export default function PassportPhotoMaker() {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
-    for (let r = 0; r < layout.rows; r++) {
-      for (let c = 0; c < layout.cols; c++) {
-        const x = startX + c * (photoWidth + gapPx);
-        const y = startY + r * (photoHeight + gapPx);
+    for (const slot of layout.slots) {
+      const x = Math.round(mmToPx(slot.xMm));
+      const y = Math.round(mmToPx(slot.yMm));
+      ctx.drawImage(masterTile, x, y, photoWidth, photoHeight);
 
-        ctx.save();
-        if (layout.isHorizontal) {
-          ctx.translate(x + photoWidth / 2, y + photoHeight / 2);
-          ctx.rotate(Math.PI / 2);
-          ctx.drawImage(printImageElement, -origPhotoWidth / 2, -origPhotoHeight / 2, origPhotoWidth, origPhotoHeight);
-        } else {
-          ctx.drawImage(printImageElement, x, y, photoWidth, photoHeight);
-        }
-        ctx.restore();
-
-        if (hasCutLines) {
-          ctx.strokeStyle = '#bbbbbb';
-          ctx.lineWidth = Math.max(1, Math.round(dpi / 150));
-          ctx.setLineDash([Math.max(4, Math.round(dpi / 12)), Math.max(4, Math.round(dpi / 12))]);
-          ctx.strokeRect(x - gapPx / 2, y - gapPx / 2, photoWidth + gapPx, photoHeight + gapPx);
-          ctx.setLineDash([]);
-        }
+      if (hasCutLines) {
+        ctx.strokeStyle = '#9ca3af';
+        ctx.lineWidth = Math.max(1, Math.round(effectiveDpi / 180));
+        const dashLen = Math.max(6, Math.round(effectiveDpi / 16));
+        ctx.setLineDash([dashLen, dashLen]);
+        ctx.strokeRect(
+          x - gapPx / 2,
+          y - gapPx / 2,
+          photoWidth + gapPx,
+          photoHeight + gapPx
+        );
+        ctx.setLineDash([]);
       }
     }
 
-    return { canvas, layout };
+    return { canvas, layout, effectiveDpi };
   };
 
-  // --- 5. Generate Print Layout (JPG with embedded physical DPI) ---
+  // --- 5. Generate Print Layout (Exact selected DPI JPG with embedded physical DPI) ---
   const handleDownload = () => {
     if (!finalImageSrc || !printImageElement) return;
     if (paperSize.id === 'single') {
@@ -2021,19 +2305,19 @@ export default function PassportPhotoMaker() {
 
     const dataUrl = rendered.canvas.toDataURL('image/jpeg', 1.0);
     const { bytes } = dataURLtoBytes(dataUrl);
-    const dpiBytes = injectJpegDpiBytes(bytes, dpi);
+    const dpiBytes = injectJpegDpiBytes(bytes, rendered.effectiveDpi);
     const blob = new Blob([dpiBytes], { type: 'image/jpeg' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `passport-print-${paperSize.id}-${dpi}dpi.jpg`;
+    link.download = `passport-print-${paperSize.id}-${rendered.effectiveDpi}dpi.jpg`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  // --- 6. Exact-Size Vector PDF Download ---
+  // --- 6. Exact-Size Lossless Vector PDF Download at Selected DPI ---
   const handleDownloadPdf = () => {
     if (!finalImageSrc || !printImageElement) return;
     const layout = computePrintLayout();
@@ -2043,55 +2327,63 @@ export default function PassportPhotoMaker() {
     }
     setPrintError(null);
 
-    const tileFormat = bgColor === 'transparent' ? 'image/png' : 'image/jpeg';
+    const selectedDpi = Math.max(72, Math.round(dpi));
+    // Lossless PNG tile at exact selected DPI, embedded ONCE via shared jsPDF alias
     const tileDataUrl = createTileDataUrl(
       layout.photoWidthMm,
       layout.photoHeightMm,
       layout.origPhotoWidthMm,
       layout.origPhotoHeightMm,
-      layout.isHorizontal,
-      tileFormat
+      layout.isHorizontal
     );
     if (!tileDataUrl) return;
 
-    // For single photo PDF, place at exact mm size centered near top of A4 so printers don't scale it to fill paper
+    // For single photo PDF, place at exact mm size centered at the TOP of A4 to avoid paper waste
     const pageW = layout.isSingle ? 210 : layout.sheetWidthMm;
     const pageH = layout.isSingle ? 297 : layout.sheetHeightMm;
-    const startX = layout.isSingle ? (pageW - layout.photoWidthMm) / 2 : layout.startXMm;
-    const startY = layout.isSingle ? 15 : layout.startYMm;
 
     const pdf = new jsPDF({
       orientation: pageW >= pageH ? 'landscape' : 'portrait',
       unit: 'mm',
       format: [pageW, pageH],
+      compress: true,
     });
 
-    const imgType = tileFormat === 'image/png' ? 'PNG' : 'JPEG';
+    const pdfSlots = layout.isSingle
+      ? [{ xMm: (pageW - layout.photoWidthMm) / 2, yMm: 5 }]
+      : layout.slots;
 
-    for (let r = 0; r < layout.rows; r++) {
-      for (let c = 0; c < layout.cols; c++) {
-        const x = startX + c * (layout.photoWidthMm + layout.gapMm);
-        const y = startY + r * (layout.photoHeightMm + layout.gapMm);
-        pdf.addImage(tileDataUrl, imgType, x, y, layout.photoWidthMm, layout.photoHeightMm, undefined, 'NONE');
+    for (const slot of pdfSlots) {
+      const x = slot.xMm;
+      const y = slot.yMm;
+      pdf.addImage(
+        tileDataUrl,
+        'PNG',
+        x,
+        y,
+        layout.photoWidthMm,
+        layout.photoHeightMm,
+        'passport-hd-tile',
+        'NONE'
+      );
 
-        if (hasCutLines && !layout.isSingle) {
-          pdf.setDrawColor(180, 180, 180);
-          pdf.setLineWidth(0.2);
-          pdf.setLineDashPattern([1.5, 1.5], 0);
-          pdf.rect(
-            x - layout.gapMm / 2,
-            y - layout.gapMm / 2,
-            layout.photoWidthMm + layout.gapMm,
-            layout.photoHeightMm + layout.gapMm
-          );
-        }
+      if (hasCutLines && !layout.isSingle) {
+        pdf.setDrawColor(160, 160, 160);
+        pdf.setLineWidth(0.2);
+        pdf.setLineDashPattern([1.5, 1.5], 0);
+        pdf.rect(
+          x - layout.gapMm / 2,
+          y - layout.gapMm / 2,
+          layout.photoWidthMm + layout.gapMm,
+          layout.photoHeightMm + layout.gapMm
+        );
       }
     }
 
-    pdf.save(`passport-print-${paperSize.id}-${Math.round(layout.photoWidthMm)}x${Math.round(layout.photoHeightMm)}mm.pdf`);
+    pdf.save(`passport-print-${paperSize.id}-${selectedDpi}dpi-${Math.round(layout.photoWidthMm)}x${Math.round(layout.photoHeightMm)}mm.pdf`);
   };
 
-  // --- 7. Direct Browser Print (Synchronous @media print canvas + sandbox PDF fallback) ---
+  // --- 7. Direct Browser Print (Native Lossless Exact-DPI <img> + Vector Cut Lines + Sandbox PDF Fallback) ---
   const handlePrintSheet = () => {
     if (!finalImageSrc || !printImageElement) {
       setPrintError('Photo is still preparing. Please wait a moment and try Print again.');
@@ -2109,42 +2401,26 @@ export default function PassportPhotoMaker() {
     const pageW = layout.isSingle ? 210 : layout.sheetWidthMm;
     const pageH = layout.isSingle ? 297 : layout.sheetHeightMm;
 
-    let sheetCanvas: HTMLCanvasElement | null = null;
-    if (layout.isSingle) {
-      const printDpi = Math.max(300, Math.min(600, dpi));
-      const mmToPx = (mm: number) => (mm / 25.4) * printDpi;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(mmToPx(pageW)));
-      canvas.height = Math.max(1, Math.round(mmToPx(pageH)));
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-
-      const wPx = mmToPx(layout.photoWidthMm);
-      const hPx = mmToPx(layout.photoHeightMm);
-      const origWPx = mmToPx(layout.origPhotoWidthMm);
-      const origHPx = mmToPx(layout.origPhotoHeightMm);
-      const startX = (canvas.width - wPx) / 2;
-      const startY = mmToPx(15);
-
-      ctx.save();
-      if (layout.isHorizontal) {
-        ctx.translate(startX + wPx / 2, startY + hPx / 2);
-        ctx.rotate(Math.PI / 2);
-        ctx.drawImage(printImageElement, -origWPx / 2, -origHPx / 2, origWPx, origHPx);
-      } else {
-        ctx.drawImage(printImageElement, startX, startY, wPx, hPx);
-      }
-      ctx.restore();
-      sheetCanvas = canvas;
-    } else {
-      const rendered = renderSheetCanvas();
-      if (!rendered) return;
-      sheetCanvas = rendered.canvas;
+    // Use pre-decoded lossless PNG tile generated at the exact selected DPI so Direct Print
+    // matches the chosen DPI cleanly with zero <canvas> print blur
+    let printImgSrc: string | null =
+      directPrintTileSrc && directPrintTileKeyRef.current === currentDirectPrintKey
+        ? directPrintTileSrc
+        : null;
+    if (!printImgSrc) {
+      printImgSrc = createTileDataUrl(
+        layout.photoWidthMm,
+        layout.photoHeightMm,
+        layout.origPhotoWidthMm,
+        layout.origPhotoHeightMm,
+        layout.isHorizontal
+      );
     }
+    if (!printImgSrc) return;
+
+    const printSlots = layout.isSingle
+      ? [{ xMm: (pageW - layout.photoWidthMm) / 2, yMm: 5 }]
+      : layout.slots;
 
     document.getElementById('passport-direct-print-sheet')?.remove();
     document.getElementById('passport-direct-print-style')?.remove();
@@ -2177,25 +2453,58 @@ export default function PassportPhotoMaker() {
         }
         #passport-direct-print-sheet {
           display: block !important;
-          position: relative !important;
+          position: fixed !important;
+          top: 0 !important;
+          left: 0 !important;
           width: ${pageW}mm !important;
           height: ${pageH}mm !important;
           margin: 0 !important;
           padding: 0 !important;
           background: #ffffff !important;
           overflow: hidden !important;
+          page-break-after: avoid !important;
+          break-after: avoid !important;
         }
-        #passport-direct-print-sheet canvas {
+        #passport-direct-print-sheet img {
           display: block !important;
-          width: ${pageW}mm !important;
-          height: ${pageH}mm !important;
+          max-width: none !important;
+          max-height: none !important;
+          image-rendering: auto !important;
         }
       }
     `;
 
     const container = document.createElement('div');
     container.id = 'passport-direct-print-sheet';
-    container.appendChild(sheetCanvas);
+
+    for (const slot of printSlots) {
+      const photoImg = document.createElement('img');
+      photoImg.src = printImgSrc;
+      photoImg.alt = '';
+      photoImg.style.position = 'absolute';
+      photoImg.style.left = `${slot.xMm}mm`;
+      photoImg.style.top = `${slot.yMm}mm`;
+      photoImg.style.width = `${layout.photoWidthMm}mm`;
+      photoImg.style.height = `${layout.photoHeightMm}mm`;
+      photoImg.style.objectFit = 'fill';
+      photoImg.style.margin = '0';
+      photoImg.style.padding = '0';
+      photoImg.style.border = '0';
+      container.appendChild(photoImg);
+
+      if (hasCutLines && !layout.isSingle) {
+        const cutBox = document.createElement('div');
+        cutBox.style.position = 'absolute';
+        cutBox.style.left = `${slot.xMm - layout.gapMm / 2}mm`;
+        cutBox.style.top = `${slot.yMm - layout.gapMm / 2}mm`;
+        cutBox.style.width = `${layout.photoWidthMm + layout.gapMm}mm`;
+        cutBox.style.height = `${layout.photoHeightMm + layout.gapMm}mm`;
+        cutBox.style.border = '0.2mm dashed #9ca3af';
+        cutBox.style.boxSizing = 'border-box';
+        cutBox.style.pointerEvents = 'none';
+        container.appendChild(cutBox);
+      }
+    }
 
     document.head.appendChild(styleEl);
     document.body.appendChild(container);
@@ -2240,24 +2549,28 @@ export default function PassportPhotoMaker() {
     if (!finalImageSrc) return null;
     const layout = computePrintLayout();
 
+    const availW = Math.max(220, previewViewport.width - 56);
+    const availH = Math.max(200, previewViewport.height - 110);
+
     if (layout.isSingle) {
       const targetPreset = selectedPreset.id === 'free' ? PRESETS[1] : selectedPreset;
+      const singleBaseH = Math.min(availH, 420);
       return (
-        <div className="p-4 flex flex-col items-center">
+        <div className="p-2 flex flex-col items-center">
+          <div className="mb-2.5 text-[11px] font-bold text-gray-600 bg-white/90 px-3 py-1 rounded-full border border-gray-200 shadow-xs">
+            Single Photo • {selectedPreset.id === 'free' ? 'Custom Crop' : `${targetPreset.width} × ${targetPreset.height} mm`} • {dpi} DPI
+          </div>
           <img
             src={finalImageSrc}
             alt="Single Print"
-            className="object-contain shadow-2xl border border-gray-200 transition-all duration-300 mx-auto"
+            className="object-contain shadow-2xl border border-gray-300 transition-all duration-200 mx-auto bg-white"
             style={{
-              zoom: zoom,
-              height: '55vh',
-              maxWidth: '100%',
+              height: `${Math.round(singleBaseH * zoom)}px`,
+              width: 'auto',
+              maxWidth: 'none',
               imageRendering: 'high-quality',
             }}
           />
-          <div className="mt-4 text-xs text-gray-600 font-bold uppercase tracking-wider text-center">
-            Single Photo • {selectedPreset.id === 'free' ? 'Custom Crop' : `${targetPreset.width} × ${targetPreset.height} mm`} • {dpi} DPI
-          </div>
         </div>
       );
     }
@@ -2270,71 +2583,91 @@ export default function PassportPhotoMaker() {
       );
     }
 
-    // Proportional real-world preview scale anchored to A4 height (297mm), so A5/4x6/5x7 never appear inflated
-    const maxPreviewHeightPx = typeof window !== 'undefined' ? Math.min(540, Math.max(320, window.innerHeight * 0.65)) : 460;
-    const a4RefScale = maxPreviewHeightPx / 297;
-    const pxPerMm = layout.sheetWidthMm > 240 ? Math.min(a4RefScale, 620 / layout.sheetWidthMm) : a4RefScale;
-    const sheetPxW = Math.round(layout.sheetWidthMm * pxPerMm);
-    const sheetPxH = Math.round(layout.sheetHeightMm * pxPerMm);
+    // Responsive aspect-exact fit inside the live preview viewport (scales every paper sheet cleanly without CSS zoom bugs)
+    const fitScale = Math.min(availW / layout.sheetWidthMm, availH / layout.sheetHeightMm);
+    const baseSheetPxW = Math.max(120, Math.round(layout.sheetWidthMm * fitScale));
+    const baseSheetPxH = Math.max(96, Math.round(layout.sheetHeightMm * fitScale));
+    const sheetPxW = Math.max(80, Math.round(baseSheetPxW * zoom));
+    const sheetPxH = Math.max(64, Math.round(baseSheetPxH * zoom));
+    const unusedBottomMm = Math.max(0, layout.sheetHeightMm - layout.usedBottomMm);
+    const showSavedPaperGuide = unusedBottomMm >= 18;
 
     return (
-      <div className="p-4 flex flex-col items-center">
+      <div className="p-2 flex flex-col items-center">
+        <div className="mb-2.5 flex items-center gap-2 text-[11px] font-bold text-gray-700 bg-white/90 px-3 py-1 rounded-full border border-gray-200 shadow-xs">
+          <span>{paperSize.name}</span>
+          <span className="text-gray-300">•</span>
+          <span className="text-[#e8501a]">
+            {layout.photoCount} {layout.photoCount === 1 ? 'Photo' : 'Photos'}
+          </span>
+          <span className="text-gray-300">•</span>
+          <span className="text-gray-500">{layout.sheetWidthMm} × {layout.sheetHeightMm} mm</span>
+        </div>
+
         <div
-          className="bg-white shadow-2xl relative transition-all duration-300 mx-auto border border-gray-300"
+          className="bg-white shadow-2xl relative transition-all duration-200 mx-auto border border-gray-300 overflow-hidden shrink-0"
           style={{
-            zoom: zoom,
             width: `${sheetPxW}px`,
             height: `${sheetPxH}px`,
           }}
         >
-          {Array.from({ length: layout.rows }).map((_, r) =>
-            Array.from({ length: layout.cols }).map((_, c) => {
-              const x = layout.startXMm + c * (layout.photoWidthMm + layout.gapMm);
-              const y = layout.startYMm + r * (layout.photoHeightMm + layout.gapMm);
-              return (
+          {layout.slots.map((slot, idx) => (
+            <div
+              key={idx}
+              className="absolute flex items-center justify-center overflow-visible"
+              style={{
+                left: `${(slot.xMm / layout.sheetWidthMm) * 100}%`,
+                top: `${(slot.yMm / layout.sheetHeightMm) * 100}%`,
+                width: `${(layout.photoWidthMm / layout.sheetWidthMm) * 100}%`,
+                height: `${(layout.photoHeightMm / layout.sheetHeightMm) * 100}%`,
+              }}
+            >
+              {hasCutLines && (
                 <div
-                  key={`${r}-${c}`}
-                  className="absolute flex items-center justify-center overflow-visible"
+                  className="absolute border border-dashed border-gray-400 pointer-events-none"
                   style={{
-                    left: `${(x / layout.sheetWidthMm) * 100}%`,
-                    top: `${(y / layout.sheetHeightMm) * 100}%`,
-                    width: `${(layout.photoWidthMm / layout.sheetWidthMm) * 100}%`,
-                    height: `${(layout.photoHeightMm / layout.sheetHeightMm) * 100}%`,
+                    left: `-${((layout.gapMm / 2) / layout.photoWidthMm) * 100}%`,
+                    top: `-${((layout.gapMm / 2) / layout.photoHeightMm) * 100}%`,
+                    width: `${((layout.photoWidthMm + layout.gapMm) / layout.photoWidthMm) * 100}%`,
+                    height: `${((layout.photoHeightMm + layout.gapMm) / layout.photoHeightMm) * 100}%`,
+                    zIndex: 10,
                   }}
-                >
-                  {hasCutLines && (
-                    <div
-                      className="absolute border border-dashed border-gray-400 pointer-events-none"
-                      style={{
-                        left: `-${((layout.gapMm / 2) / layout.photoWidthMm) * 100}%`,
-                        top: `-${((layout.gapMm / 2) / layout.photoHeightMm) * 100}%`,
-                        width: `${((layout.photoWidthMm + layout.gapMm) / layout.photoWidthMm) * 100}%`,
-                        height: `${((layout.photoHeightMm + layout.gapMm) / layout.photoHeightMm) * 100}%`,
-                        zIndex: 10,
-                      }}
-                    />
-                  )}
-                  <img
-                    src={finalImageSrc}
-                    alt="Copy"
-                    className="shadow-sm absolute block"
-                    style={{
-                      imageRendering: 'high-quality',
-                      width: layout.isHorizontal ? `${(layout.origPhotoWidthMm / layout.photoWidthMm) * 100}%` : '100%',
-                      height: layout.isHorizontal ? `${(layout.origPhotoHeightMm / layout.photoHeightMm) * 100}%` : '100%',
-                      top: '50%',
-                      left: '50%',
-                      transform: layout.isHorizontal ? 'translate(-50%, -50%) rotate(90deg)' : 'translate(-50%, -50%)',
-                      objectFit: 'fill',
-                    }}
-                  />
-                </div>
-              );
-            })
+                />
+              )}
+              <img
+                src={finalImageSrc}
+                alt="Copy"
+                className="shadow-xs absolute block"
+                style={{
+                  imageRendering: 'high-quality',
+                  width: layout.isHorizontal ? `${(layout.origPhotoWidthMm / layout.photoWidthMm) * 100}%` : '100%',
+                  height: layout.isHorizontal ? `${(layout.origPhotoHeightMm / layout.photoHeightMm) * 100}%` : '100%',
+                  top: '50%',
+                  left: '50%',
+                  transform: layout.isHorizontal ? 'translate(-50%, -50%) rotate(90deg)' : 'translate(-50%, -50%)',
+                  objectFit: 'fill',
+                }}
+              />
+            </div>
+          ))}
+
+          {/* Visual-only reusable paper area cue (not printed) */}
+          {showSavedPaperGuide && (
+            <div
+              className="absolute inset-x-0 bottom-0 pointer-events-none flex items-center justify-center border-t border-dashed border-emerald-400/70 bg-emerald-50/25"
+              style={{
+                top: `${Math.min(96, ((layout.usedBottomMm + Math.max(1.5, layout.gapMm)) / layout.sheetHeightMm) * 100)}%`,
+              }}
+            >
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700/80 bg-white/85 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                Reusable Blank Paper ({Math.round(unusedBottomMm)} mm saved)
+              </span>
+            </div>
           )}
         </div>
-        <div className="mt-4 text-xs text-gray-600 font-bold uppercase tracking-wider text-center">
-          Preview: {layout.cols} × {layout.rows} ({layout.cols * layout.rows} photos) • Sheet: {layout.sheetWidthMm} × {layout.sheetHeightMm} mm • Photo: {layout.photoWidthMm.toFixed(1)} × {layout.photoHeightMm.toFixed(1)} mm
+
+        <div className="mt-2.5 text-[11px] text-gray-600 font-bold uppercase tracking-wider text-center">
+          Photo: {layout.photoWidthMm.toFixed(1)} × {layout.photoHeightMm.toFixed(1)} mm • Top Area Print ({printOrientation === 'horizontal' ? 'Horizontal' : 'Vertical'})
         </div>
       </div>
     );
@@ -3274,7 +3607,11 @@ export default function PassportPhotoMaker() {
                         {PAPER_SIZES.map(paper => (
                           <button
                             key={paper.id}
-                            onClick={() => { setPaperSize(paper); setPrintError(null); setPrintNotice(null); }}
+                            onClick={() => {
+                              setPaperSize(paper);
+                              setPrintError(null);
+                              setPrintNotice(null);
+                            }}
                             className={`p-3 rounded-xl border text-left transition-all ${
                               paperSize.id === paper.id ? 'border-[#e8501a] bg-[#e8501a]/5 ring-1 ring-[#e8501a]' : 'border-gray-200 hover:border-gray-300'
                             }`}
@@ -3316,7 +3653,9 @@ export default function PassportPhotoMaker() {
                           <div className="mt-3 p-3 bg-orange-50/70 border border-orange-200/80 rounded-xl space-y-1">
                             <div className="flex justify-between text-[11px] font-bold text-gray-800">
                               <span>Sheet: {layout.isSingle ? 'A4 Print / Exact Photo' : `${layout.sheetWidthMm} × ${layout.sheetHeightMm} mm`}</span>
-                              <span className="text-[#e8501a]">{layout.cols} × {layout.rows} ({layout.cols * layout.rows} photos)</span>
+                              <span className="text-[#e8501a]">
+                                {layout.photoCount} {layout.photoCount === 1 ? 'photo' : 'photos'} • Top-Aligned
+                              </span>
                             </div>
                             <div className="text-[11px] text-gray-600 font-medium">
                               Photo Size: <strong className="text-gray-800">{layout.photoWidthMm.toFixed(1)} × {layout.photoHeightMm.toFixed(1)} mm</strong> ({dpi} DPI)
@@ -3344,24 +3683,35 @@ export default function PassportPhotoMaker() {
                     <div className="pt-4 border-t border-gray-100 space-y-3">
                       <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Options</h3>
                       
-                      <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl">
-                        <div className="flex justify-between text-sm font-bold text-gray-700 mb-2">
+                      <div className="p-3 bg-gray-50 border border-gray-200 rounded-xl space-y-2">
+                        <div className="flex justify-between text-sm font-bold text-gray-700">
                           <span>Print Resolution (DPI)</span>
-                          <span>{dpi} DPI</span>
+                          <span className="text-[#e8501a] tabular-nums">{dpi} DPI</span>
                         </div>
                         <input 
                           type="range" 
-                          min="72" 
+                          min="150" 
                           max="600" 
                           step="1"
                           value={dpi} 
                           onChange={(e) => setDpi(Number(e.target.value))}
                           className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
                         />
-                        <div className="flex justify-between text-[10px] text-gray-500 mt-1">
-                          <span>Web (72)</span>
-                          <span>Print (300)</span>
-                          <span>High (600)</span>
+                        <div className="grid grid-cols-4 gap-1.5 pt-0.5">
+                          {[150, 300, 450, 600].map((presetDpi) => (
+                            <button
+                              key={presetDpi}
+                              type="button"
+                              onClick={() => setDpi(presetDpi)}
+                              className={`py-1 px-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                                dpi === presetDpi
+                                  ? 'bg-[#e8501a] text-white border-[#e8501a] shadow-xs'
+                                  : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
+                              }`}
+                            >
+                              {presetDpi} DPI
+                            </button>
+                          ))}
                         </div>
                       </div>
 
@@ -3409,7 +3759,9 @@ export default function PassportPhotoMaker() {
                         <span className="text-sm font-bold text-gray-700">Photo Orientation</span>
                         <select 
                           value={printOrientation} 
-                          onChange={(e) => setPrintOrientation(e.target.value as 'vertical' | 'horizontal')}
+                          onChange={(e) => {
+                            setPrintOrientation(e.target.value as 'vertical' | 'horizontal');
+                          }}
                           className="bg-white border border-gray-300 text-gray-700 text-sm rounded-lg focus:ring-[#e8501a] focus:border-[#e8501a] block p-2"
                         >
                           <option value="vertical">Vertical</option>
@@ -3455,6 +3807,7 @@ export default function PassportPhotoMaker() {
                     <button 
                       onClick={() => {
                         if (isManualMode) setIsManualMode(false);
+                        setZoom(1);
                         setStep('print');
                       }}
                       disabled={isProcessing}
@@ -3544,7 +3897,7 @@ export default function PassportPhotoMaker() {
                   </span>
                   
                   <button 
-                    onClick={() => setZoom(0.8)} 
+                    onClick={() => setZoom(step === 'print' ? 1 : 0.8)} 
                     className="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors" 
                     title="Reset Zoom"
                   >
@@ -3577,7 +3930,7 @@ export default function PassportPhotoMaker() {
               </div>
 
               {/* Preview Container - Darker background for focus */}
-              <div className="flex-1 w-full overflow-auto p-8 sm:p-12 min-h-0 bg-gray-200/50">
+              <div ref={printPreviewAreaRef} className="flex-1 w-full overflow-auto p-4 sm:p-8 min-h-0 bg-gray-200/50">
                 <div className="min-h-full flex items-center justify-center m-auto w-max min-w-full">
                   
                   {step === 'crop' && imageSrc && (() => {
