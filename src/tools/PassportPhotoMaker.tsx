@@ -2734,7 +2734,7 @@ export default function PassportPhotoMaker() {
           <div className="flex flex-col lg:flex-row-reverse w-full h-full bg-gray-50 overflow-hidden">
             
             {/* --- SIDEBAR (STEPS & CONTROLS) --- */}
-            <aside className="w-full lg:w-[320px] bg-white border-l border-gray-200 flex flex-col h-[40vh] lg:h-full z-10 shadow-lg order-2 lg:order-2">
+            <aside className="w-full lg:w-[320px] bg-white border-t lg:border-t-0 lg:border-l border-gray-200 flex flex-col h-[42dvh] sm:h-[40vh] lg:h-full z-10 shadow-lg order-2 lg:order-2">
               
               {/* Stepper Header */}
               <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center shrink-0">
@@ -3859,78 +3859,95 @@ export default function PassportPhotoMaker() {
             </aside>
 
             {/* --- MAIN PREVIEW AREA --- */}
-            <main className="flex-1 relative bg-[#e5e7eb] flex flex-col h-full overflow-hidden max-h-[600px] lg:max-h-none order-1 lg:order-1">
+            <main className="flex-1 min-h-0 relative bg-[#e5e7eb] flex flex-col h-full overflow-hidden max-h-[600px] lg:max-h-none order-1 lg:order-1">
               
-              {/* Toolbar (Zoom) - Improved with slider */}
-              <div className="w-full pt-2 pb-1 flex justify-center items-center shrink-0 z-20 relative">
-                <div className="flex items-center gap-3 bg-white/95 backdrop-blur-sm px-4 py-2 rounded-full shadow-md border border-gray-200">
-                  <button 
-                    onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} 
-                    className="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"
-                    title="Zoom Out"
-                  >
-                    <ZoomOut className="w-4 h-4" />
-                  </button>
-                  
-                  <input 
-                    type="range" 
-                    min="0.1" 
-                    max="3" 
-                    step="0.1" 
-                    value={zoom} 
-                    onChange={(e) => setZoom(parseFloat(e.target.value))}
-                    className="w-24 sm:w-32 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
-                  />
-
-                  <button 
-                    onClick={() => setZoom(z => Math.min(3, z + 0.1))} 
-                    className="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"
-                    title="Zoom In"
-                  >
-                    <ZoomIn className="w-4 h-4" />
-                  </button>
-                  
-                  <div className="w-px h-4 bg-gray-300 mx-1" />
-                  
-                  <span className="text-[10px] font-bold w-10 text-center text-gray-500 tabular-nums">
-                    {Math.round(zoom * 100)}%
-                  </span>
-                  
-                  <button 
-                    onClick={() => setZoom(step === 'print' ? 1 : 0.8)} 
-                    className="p-1.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors" 
-                    title="Reset Zoom"
-                  >
-                    <Maximize2 className="w-4 h-4" />
-                  </button>
-
-                  {step === 'edit' && selectedSuitId && !isManualMode && (
-                    <>
-                      <div className="w-px h-4 bg-gray-300 mx-1" />
-                      <button
-                        type="button"
-                        onClick={handleAutoFitSuit}
-                        className="px-2.5 py-1 bg-[#e8501a]/10 hover:bg-[#e8501a]/20 text-[#e8501a] rounded-full text-[11px] font-bold flex items-center gap-1 transition-colors"
-                        title="Auto-align suit to neck and shoulders"
+              {/* Top Toolbar (Zoom + Suit Quick Actions + Responsive Close Button) */}
+              <div className="w-full px-2 sm:px-4 pt-2 pb-1 flex items-start justify-center gap-1.5 shrink-0 z-20 relative">
+                <div className="flex-1 min-w-0 flex justify-center lg:px-12">
+                  <div className="max-w-full flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 sm:gap-x-3 sm:gap-y-2 bg-white/95 backdrop-blur-sm px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-2xl sm:rounded-full shadow-md border border-gray-200">
+                    <div className="flex items-center gap-1 sm:gap-2.5 shrink-0">
+                      <button 
+                        onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} 
+                        className="p-1 sm:p-1.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"
+                        title="Zoom Out"
                       >
-                        <Sparkles className="w-3 h-3" /> Auto-Fit
+                        <ZoomOut className="w-4 h-4" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowSuitHandles((v) => !v)}
-                        className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full text-[11px] font-bold flex items-center gap-1 transition-colors"
-                        title="Show or hide suit adjustment handles"
+                      
+                      <input 
+                        type="range" 
+                        min="0.1" 
+                        max="3" 
+                        step="0.1" 
+                        value={zoom} 
+                        onChange={(e) => setZoom(parseFloat(e.target.value))}
+                        className="w-20 sm:w-32 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#e8501a]"
+                      />
+
+                      <button 
+                        onClick={() => setZoom(z => Math.min(3, z + 0.1))} 
+                        className="p-1 sm:p-1.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"
+                        title="Zoom In"
                       >
-                        {showSuitHandles ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                        {showSuitHandles ? 'Hide Box' : 'Show Box'}
+                        <ZoomIn className="w-4 h-4" />
                       </button>
-                    </>
-                  )}
+                      
+                      <div className="w-px h-4 bg-gray-300 mx-0.5 sm:mx-1" />
+                      
+                      <span className="text-[10px] font-bold w-8 sm:w-10 text-center text-gray-500 tabular-nums">
+                        {Math.round(zoom * 100)}%
+                      </span>
+                      
+                      <button 
+                        onClick={() => setZoom(step === 'print' ? 1 : 0.8)} 
+                        className="p-1 sm:p-1.5 hover:bg-gray-100 rounded-full text-gray-600 transition-colors" 
+                        title="Reset Zoom"
+                      >
+                        <Maximize2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {step === 'edit' && selectedSuitId && !isManualMode && (
+                      <div className="basis-full sm:basis-auto flex items-center justify-center gap-2 pt-1.5 border-t border-gray-200/80 sm:border-t-0 sm:pt-0 sm:border-l sm:border-gray-300 sm:pl-3">
+                        <button
+                          type="button"
+                          onClick={handleAutoFitSuit}
+                          className="px-2.5 py-1 bg-[#e8501a]/10 hover:bg-[#e8501a]/20 text-[#e8501a] rounded-full text-[11px] font-bold flex items-center gap-1 transition-colors whitespace-nowrap"
+                          title="Auto-align suit to neck and shoulders"
+                        >
+                          <Sparkles className="w-3 h-3" /> Auto-Fit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowSuitHandles((v) => !v)}
+                          className={`px-2.5 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 transition-colors whitespace-nowrap ${
+                            showSuitHandles
+                              ? 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                              : 'bg-[#e8501a] hover:bg-[#d04313] text-white shadow-xs'
+                          }`}
+                          title="Show or hide suit adjustment handles"
+                        >
+                          {showSuitHandles ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                          {showSuitHandles ? 'Hide Box' : 'Show Box'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {/* Exit Button: inline top-right on mobile so it never overlaps toolbar pills, absolute top-right on desktop */}
+                <button 
+                  onClick={onReset}
+                  className="shrink-0 mt-0.5 lg:mt-0 lg:absolute lg:top-4 lg:right-4 p-2 bg-white/95 hover:bg-white rounded-full shadow-md lg:shadow-lg border border-gray-200 transition-all z-30 text-gray-500 hover:text-red-500"
+                  title="Close Editor"
+                  aria-label="Close Editor"
+                >
+                  <X className="w-4 h-4 sm:w-5 sm:h-5" />
+                </button>
               </div>
 
               {/* Preview Container - Darker background for focus */}
-              <div ref={printPreviewAreaRef} className="flex-1 w-full overflow-auto p-4 sm:p-8 min-h-0 bg-gray-200/50">
+              <div ref={printPreviewAreaRef} className="flex-1 w-full overflow-auto pt-8 pb-5 px-4 sm:p-8 min-h-0 bg-gray-200/50">
                 <div className="min-h-full flex items-center justify-center m-auto w-max min-w-full">
                   
                   {step === 'crop' && imageSrc && (() => {
@@ -4297,14 +4314,6 @@ export default function PassportPhotoMaker() {
                 </div>
               )}
 
-              {/* Exit Button */}
-              <button 
-                onClick={onReset}
-                className="absolute top-4 right-4 p-2 bg-white/90 hover:bg-white rounded-full shadow-lg border border-gray-200 transition-all z-20 text-gray-500 hover:text-red-500"
-                title="Close Editor"
-              >
-                <X className="w-5 h-5" />
-              </button>
             </main>
 
           </div>
